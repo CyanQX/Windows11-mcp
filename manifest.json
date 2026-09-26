@@ -1,0 +1,189 @@
+{
+  "manifest_version": "0.4",
+  "name": "Windows-MCP",
+  "version": "0.9.0",
+  "description": "Operate the real Windows desktop: genuine mouse/keyboard input and UI Automation actions, verified after every step",
+  "long_description": "Windows-MCP connects AI agents to the real Windows desktop. Agents launch apps, click buttons, fill forms, pick list and combo-box items, press shortcuts and manage windows and files -- with genuine input, on real applications.\n\n**KEY FEATURES**\n- **Real interaction, verified**: Find locates live controls through UI Automation; Act operates them with real mouse/keyboard input first (so applications run their own handlers) and UIA patterns as fallback, then reads the control back and reports Verified / NOT verified plus the visible effects (windows opened/closed, focus changes).\n- **Precise input**: SendInput with virtual-desktop absolute coordinates, atomic key chords, correct extended keys, exact Unicode text (CJK, emoji) that input methods do not intercept.\n- **Stable references**: Snapshot labels and element references are re-located, scrolled into view and hit-tested before every action, so moved or covered windows are handled instead of mis-clicked.\n- **Safe by default**: keyboard input only reaches a window confirmed in the foreground; critical system processes cannot be killed; telemetry is off unless enabled.\n- **Fast**: scoped Snapshots, ~40 ms element searches, no startup delay.\n\n**MINIMUM REQUIREMENTS**\n- **Windows 10/11, Python 3.12+**\n",
+  "author": {
+    "name": "CursorTouch (upstream) and contributors",
+    "url": "https://github.com/CursorTouch/Windows-MCP"
+  },
+  "homepage": "https://github.com/CyanQX/Windows11-mcp",
+  "documentation": "https://github.com/CyanQX/Windows11-mcp",
+  "icon": "assets/logo.png",
+  "screenshots": [
+    "assets/screenshots/screenshot_1.png",
+    "assets/screenshots/screenshot_2.png",
+    "assets/screenshots/screenshot_3.png"
+  ],
+  "server": {
+    "type": "uv",
+    "entry_point": "src/windows_mcp/__main__.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "${__dirname}",
+        "run",
+        "windows-mcp",
+        "serve"
+      ],
+      "env": {
+        "UV_NO_SYNC": "1",
+        "ANONYMIZED_TELEMETRY": "${user_config.anonymized_telemetry}",
+        "WINDOWS_MCP_PROFILE_SNAPSHOT": "${user_config.profile_snapshot}",
+        "WINDOWS_MCP_SCREENSHOT_BACKEND": "${user_config.screenshot_backend}",
+        "WINDOWS_MCP_DEBUG": "${user_config.debug}",
+        "WINDOWS_MCP_WATCHDOG": "${user_config.watchdog}"
+      }
+    }
+  },
+  "user_config": {
+    "anonymized_telemetry": {
+      "type": "boolean",
+      "title": "Anonymized Telemetry",
+      "description": "Off by default. When enabled, sends tool names, success/failure, duration and client name to the upstream PostHog project -- never tool arguments or outputs.",
+      "required": false,
+      "default": false
+    },
+    "profile_snapshot": {
+      "type": "boolean",
+      "title": "Profile Snapshot Performance",
+      "description": "Enable detailed performance logging for desktop snapshots and screenshots in the server console/logs. Useful for troubleshooting latency.",
+      "required": false,
+      "default": false
+    },
+    "screenshot_backend": {
+      "type": "string",
+      "title": "Screenshot Backend",
+      "description": "The engine used to capture screenshots. 'auto' automatically selects the fastest available backend (DXGI -> MSS -> Pillow). Use 'pillow' if you encounter capture issues.",
+      "required": false,
+      "default": "auto"
+    },
+    "debug": {
+      "type": "boolean",
+      "title": "Debug Mode",
+      "description": "Enable debug mode to provide verbose logging for troubleshooting.",
+      "required": false,
+      "default": false
+    },
+    "watchdog": {
+      "type": "boolean",
+      "title": "UIA Focus WatchDog",
+      "description": "Run the UIAutomation focus watchdog that keeps the accessibility tree current. Disable if the watchdog degrades or crashes on unstable UIA environments after long uptime.",
+      "required": false,
+      "default": true
+    }
+  },
+  "tools": [
+    {
+      "name": "Screenshot",
+      "description": "Fast screenshot with cursor position and window list; the quickest way to look at the screen."
+    },
+    {
+      "name": "Snapshot",
+      "description": "Live UI tree of one window (window=) or the desktop; every element carries a #N label usable in Click/Type/Act. Optional screenshot, browser DOM mode and word-level nodes."
+    },
+    {
+      "name": "Find",
+      "description": "Search a real window for controls by name / control type / automation id; returns references (e1 ...) with coordinates, supported actions and current state."
+    },
+    {
+      "name": "Act",
+      "description": "Operate a real control (click, toggle, select item, expand, set/append text, set slider, invoke, focus) with real input first and UIA as fallback (via=auto|input|uia); reads the control back and reports the effects."
+    },
+    {
+      "name": "Click",
+      "description": "Real mouse click at [x, y] or on a Snapshot label (re-located and hit-tested live); left/right/middle, 0-3 clicks; reports the element hit and the effects."
+    },
+    {
+      "name": "Type",
+      "description": "Click a field, confirm its window holds the keyboard, type exact Unicode text (clear / press_enter / caret_position / method), then read the field back."
+    },
+    {
+      "name": "Scroll",
+      "description": "Real mouse-wheel scrolling (vertical or horizontal) at a point or label; reports the scroll position before/after."
+    },
+    {
+      "name": "Move",
+      "description": "Glide the pointer to [x, y] or a label, or drag-and-drop (drag=True, optional from_loc and duration)."
+    },
+    {
+      "name": "Shortcut",
+      "description": "Atomic keyboard shortcuts and chord sequences (\"ctrl+s\", \"ctrl+k ctrl+s\"), optional repeat and target window; reports the effects."
+    },
+    {
+      "name": "Wait",
+      "description": "Pause for a number of seconds."
+    },
+    {
+      "name": "WaitFor",
+      "description": "Poll until text, a window, an element or a focused element appears."
+    },
+    {
+      "name": "App",
+      "description": "Launch apps (waits for and reports the new window), launch an exact executable, switch (verified), resize, minimize, maximize, restore or close windows (by name or handle)."
+    },
+    {
+      "name": "MultiSelect",
+      "description": "Select several items with Ctrl held (always released), by coordinates or labels."
+    },
+    {
+      "name": "MultiEdit",
+      "description": "Fill several input fields at once, by coordinates or labels."
+    },
+    {
+      "name": "Clipboard",
+      "description": "Read or set the clipboard text."
+    },
+    {
+      "name": "PowerShell",
+      "description": "Execute PowerShell commands."
+    },
+    {
+      "name": "FileSystem",
+      "description": "Read, write, copy, move, delete, list, search and inspect files and directories."
+    },
+    {
+      "name": "Registry",
+      "description": "Read, write, delete and list Windows Registry values and keys."
+    },
+    {
+      "name": "Process",
+      "description": "List processes or terminate them by PID or name; critical system processes and the server itself are protected."
+    },
+    {
+      "name": "Notification",
+      "description": "Send a Windows toast notification."
+    },
+    {
+      "name": "DisplayInventory",
+      "description": "Display layout, work areas, effective DPI and scale."
+    },
+    {
+      "name": "Scrape",
+      "description": "Fetch a web page, or read the active browser tab's DOM text."
+    }
+  ],
+  "compatibility": {
+    "platforms": [
+      "win32"
+    ],
+    "runtimes": {
+      "python": ">=3.12"
+    }
+  },
+  "keywords": [
+    "windows",
+    "automation",
+    "ai",
+    "mcp",
+    "computer-use",
+    "ui-automation"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CyanQX/Windows11-mcp"
+  }
+}

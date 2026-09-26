@@ -59,7 +59,7 @@ uv tool install --force E:\path\to\Windows-mcp
 或者直接从 GitHub 安装：
 
 ```powershell
-uv tool install --force git+https://github.com/CyanQX/Windows-mcp
+uv tool install --force git+https://github.com/CyanQX/Windows11-mcp
 ```
 
 > PyPI 上的 `windows-mcp` 是上游原版；本版本请用上面两种方式安装。之前装过原版的，用 `--force` 覆盖即可，客户端配置不用改。
