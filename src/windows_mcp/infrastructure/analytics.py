@@ -195,12 +195,22 @@ def with_analytics(
                 pass
 
             try:
+                def checked_call():
+                    # Recheck at execution time: an approved call can be queued behind a
+                    # slow provider when its client cancels. It must not execute later.
+                    from windows_mcp.engine.sessions import _bound
+
+                    state = _bound.get()
+                    if state:
+                        state.check()
+                    return func(*args, **kwargs)
+
                 if inspect.iscoroutinefunction(func):
                     result = await func(*args, **kwargs)
                 elif offload == "desktop":
-                    result = await run_on_desktop(func, *args, **kwargs)
+                    result = await run_on_desktop(checked_call)
                 else:
-                    result = await asyncio.to_thread(func, *args, **kwargs)
+                    result = await asyncio.to_thread(checked_call)
 
                 duration_ms = int((time.time() - start) * 1000)
 

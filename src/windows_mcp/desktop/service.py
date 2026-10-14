@@ -58,11 +58,35 @@ class Desktop:
 
     @property
     def element_registry(self) -> "elements.ElementRegistry":
+        from windows_mcp.engine.sessions import _bound
+
+        session = _bound.get()
+        if session:
+            if session.legacy_registry is None:
+                session.legacy_registry = elements.ElementRegistry()
+            return session.legacy_registry
         # Created lazily as well, because tests build Desktop via __new__ without __init__.
         registry = getattr(self, "_element_registry", None)
         if registry is None:
             registry = self._element_registry = elements.ElementRegistry()
         return registry
+
+    @property
+    def desktop_state(self):
+        from windows_mcp.engine.sessions import _bound
+
+        session = _bound.get()
+        return session.desktop_state if session else getattr(self, "_default_desktop_state", None)
+
+    @desktop_state.setter
+    def desktop_state(self, value):
+        from windows_mcp.engine.sessions import _bound
+
+        session = _bound.get()
+        if session:
+            session.desktop_state = value
+        else:
+            self._default_desktop_state = value
 
     def label_node(self, label: int):
         """The Snapshot node behind a label (interactive nodes first, then scrollable ones)."""

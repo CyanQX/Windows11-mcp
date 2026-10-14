@@ -1,0 +1,9 @@
+"""Browser backend contract; the MCP gateway owns authorization."""
+
+from typing import Protocol
+
+
+class BrowserPort(Protocol):
+    async def run(self, session_id: str, operation: str, **arguments) -> dict: ...
+    async def close_session(self, session_id: str) -> None: ...
+    async def close_all(self) -> None: ...

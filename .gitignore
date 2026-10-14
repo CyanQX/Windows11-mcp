@@ -124,6 +124,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-*/
 env/
 venv/
 ENV/
@@ -143,6 +144,7 @@ venv.bak/
 # mypy / ruff
 .mypy_cache/
 .ruff_cache/
+NVIDIA Corporation/
 .dmypy.json
 dmypy.json
 
@@ -171,3 +173,7 @@ sandbox
 .idea/
 node_modules
 experiment
+
+# Local environments and qualification output
+reports/
+*-tests.xml

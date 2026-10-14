@@ -1,7 +1,7 @@
 """Real mouse and keyboard input through ``SendInput``.
 
-Everything here produces genuine input events -- the same kind a physical mouse or keyboard
-produces -- so applications react exactly as they would to a person.
+This injects Windows input events; applications may distinguish injected input.
+UIPI, foreground focus, session boundaries and secure desktops still apply.
 
 Design points (each one fixes a problem of the old ``mouse_event``/``keybd_event`` path):
 
@@ -115,6 +115,18 @@ class InputBlockedError(RuntimeError):
 def _send(inputs: Sequence[INPUT]) -> None:
     if not inputs:
         return
+    from windows_mcp.engine.sessions import _bound
+
+    session = _bound.get()
+    if session and session.cancelled.is_set():
+        # Always allow cleanup releases so cancellation cannot leave a drag/modifier held.
+        releases = all(
+            (item.type == INPUT_KEYBOARD and item.u.ki.dwFlags & KEYEVENTF_KEYUP)
+            or (item.type == INPUT_MOUSE and item.u.mi.dwFlags in {MOUSEEVENTF_LEFTUP, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_MIDDLEUP})
+            for item in inputs
+        )
+        if not releases:
+            raise InputBlockedError("CANCELLED: input stopped by the owning session")
     array = (INPUT * len(inputs))(*inputs)
     inserted = _user32.SendInput(len(inputs), array, ctypes.sizeof(INPUT))
     if inserted != len(inputs):

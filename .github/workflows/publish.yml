@@ -9,8 +9,15 @@ on:
 # upstream project (CursorTouch/Windows-MCP). Publish under a new package name if this fork is
 # ever released to PyPI.
 jobs:
+  tests:
+    name: Verify Windows release source
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
   release:
     name: Build and create GitHub Release
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,11 +29,20 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "latest"
+          python-version: "3.13"
 
       - name: Build package
         run: uv build
 
+      - name: Verify tag, package metadata and complete runtime source
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          uv run --no-project python scripts/verify_distribution.py --dist dist --tag "$RELEASE_TAG" > dist/distribution-verification.json
+          uv run --no-project python -c "import os; from pathlib import Path; text = Path('README.md').read_text(encoding='utf-8'); section = text.split('### ' + os.environ['RELEASE_TAG'][1:] + '\n', 1)[1].split('\n## ', 1)[0]; Path('release-notes.md').write_text(section.strip() + '\n', encoding='utf-8')"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create ${{ github.ref_name }} dist/* --title "Release ${{ github.ref_name }}" --generate-notes
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Windows-MCP $RELEASE_TAG" --notes-file release-notes.md --latest

@@ -1,9 +1,9 @@
 {
   "manifest_version": "0.4",
   "name": "Windows-MCP",
-  "version": "0.9.0",
-  "description": "Operate the real Windows desktop: genuine mouse/keyboard input and UI Automation actions, verified after every step",
-  "long_description": "Windows-MCP connects AI agents to the real Windows desktop. Agents launch apps, click buttons, fill forms, pick list and combo-box items, press shortcuts and manage windows and files -- with genuine input, on real applications.\n\n**KEY FEATURES**\n- **Real interaction, verified**: Find locates live controls through UI Automation; Act operates them with real mouse/keyboard input first (so applications run their own handlers) and UIA patterns as fallback, then reads the control back and reports Verified / NOT verified plus the visible effects (windows opened/closed, focus changes).\n- **Precise input**: SendInput with virtual-desktop absolute coordinates, atomic key chords, correct extended keys, exact Unicode text (CJK, emoji) that input methods do not intercept.\n- **Stable references**: Snapshot labels and element references are re-located, scrolled into view and hit-tested before every action, so moved or covered windows are handled instead of mis-clicked.\n- **Safe by default**: keyboard input only reaches a window confirmed in the foreground; critical system processes cannot be killed; telemetry is off unless enabled.\n- **Fast**: scoped Snapshots, ~40 ms element searches, no startup delay.\n\n**MINIMUM REQUIREMENTS**\n- **Windows 10/11, Python 3.12+**\n",
+  "version": "1.1.1",
+  "description": "Semantic Windows automation with independent verification, scoped permissions and managed Playwright",
+  "long_description": "Semantic-first Observe/Execute/Verify, bounded multi-subscriber Watch, isolated Playwright browser contexts, native scoped text files and window-bound visual fallback. Legacy tools remain registered and pass through the same PolicyGate. R2 requires an exact, session-bound, expiring, one-use local operator approval; R3 is disabled by default. Tested on Windows 11; application coverage, mixed-DPI multi-monitor and Windows 10 qualification limits are documented in README.",
   "author": {
     "name": "CursorTouch (upstream) and contributors",
     "url": "https://github.com/CursorTouch/Windows-MCP"
@@ -77,92 +77,128 @@
   },
   "tools": [
     {
-      "name": "Screenshot",
-      "description": "Fast screenshot with cursor position and window list; the quickest way to look at the screen."
-    },
-    {
-      "name": "Snapshot",
-      "description": "Live UI tree of one window (window=) or the desktop; every element carries a #N label usable in Click/Type/Act. Optional screenshot, browser DOM mode and word-level nodes."
-    },
-    {
-      "name": "Find",
-      "description": "Search a real window for controls by name / control type / automation id; returns references (e1 ...) with coordinates, supported actions and current state."
-    },
-    {
-      "name": "Act",
-      "description": "Operate a real control (click, toggle, select item, expand, set/append text, set slider, invoke, focus) with real input first and UIA as fallback (via=auto|input|uia); reads the control back and reports the effects."
-    },
-    {
-      "name": "Click",
-      "description": "Real mouse click at [x, y] or on a Snapshot label (re-located and hit-tested live); left/right/middle, 0-3 clicks; reports the element hit and the effects."
-    },
-    {
-      "name": "Type",
-      "description": "Click a field, confirm its window holds the keyboard, type exact Unicode text (clear / press_enter / caret_position / method), then read the field back."
-    },
-    {
-      "name": "Scroll",
-      "description": "Real mouse-wheel scrolling (vertical or horizontal) at a point or label; reports the scroll position before/after."
-    },
-    {
-      "name": "Move",
-      "description": "Glide the pointer to [x, y] or a label, or drag-and-drop (drag=True, optional from_loc and duration)."
-    },
-    {
-      "name": "Shortcut",
-      "description": "Atomic keyboard shortcuts and chord sequences (\"ctrl+s\", \"ctrl+k ctrl+s\"), optional repeat and target window; reports the effects."
-    },
-    {
-      "name": "Wait",
-      "description": "Pause for a number of seconds."
-    },
-    {
-      "name": "WaitFor",
-      "description": "Poll until text, a window, an element or a focused element appears."
-    },
-    {
       "name": "App",
-      "description": "Launch apps (waits for and reports the new window), launch an exact executable, switch (verified), resize, minimize, maximize, restore or close windows (by name or handle)."
-    },
-    {
-      "name": "MultiSelect",
-      "description": "Select several items with Ctrl held (always released), by coordinates or labels."
-    },
-    {
-      "name": "MultiEdit",
-      "description": "Fill several input fields at once, by coordinates or labels."
-    },
-    {
-      "name": "Clipboard",
-      "description": "Read or set the clipboard text."
-    },
-    {
-      "name": "PowerShell",
-      "description": "Execute PowerShell commands."
-    },
-    {
-      "name": "FileSystem",
-      "description": "Read, write, copy, move, delete, list, search and inspect files and directories."
-    },
-    {
-      "name": "Registry",
-      "description": "Read, write, delete and list Windows Registry values and keys."
-    },
-    {
-      "name": "Process",
-      "description": "List processes or terminate them by PID or name; critical system processes and the server itself are protected."
-    },
-    {
-      "name": "Notification",
-      "description": "Send a Windows toast notification."
+      "description": "Open/start/launch applications and manage real windows. Keywords: open, start, launch, program, application, window, foreground, focus, resize, minimize, maximize, close. Modes: 'launch' (Start Menu name or a program on PATH such as notepad/calc/mspaint; waits for the app's window and reports its title and handle), 'launch_executable' (exactly one executable path with separated argv and optional cwd), 'switch' (bring a window to the foreground, verified), 'resize' (window_loc/window_size), 'minimize', 'maximize', 'restore', 'close' (polite WM_CLOSE like clicking X -- the app may ask to save; confirm with the user first if work could be lost). Target a window by name (title/process) or exactly by handle."
     },
     {
       "name": "DisplayInventory",
-      "description": "Display layout, work areas, effective DPI and scale."
+      "description": "Read active display layout and DPI metadata. Reports display index, device name, monitor/work-area bounds, resolution, orientation, primary flag, effective DPI, and scale."
+    },
+    {
+      "name": "PowerShell",
+      "description": "Shell/command execution. Keywords: shell, run, execute, cmd, terminal, command line, script. A comprehensive system tool for executing any PowerShell commands. Use it to navigate the file system, manage files and processes, and execute system-level operations. Capable of accessing web content (e.g., via Invoke-WebRequest), interacting with network resources, and performing complex administrative tasks. This tool provides full access to the underlying operating system capabilities, making it the primary interface for system automation, scripting, and deep system interaction."
+    },
+    {
+      "name": "FileSystem",
+      "description": "Manages file system operations with eight modes: 'read' (read text file contents with optional line offset/limit), 'write' (create or overwrite a file, set append=True to append), 'copy' (copy file or directory to destination), 'move' (move or rename file/directory), 'delete' (delete file or directory, set recursive=True for non-empty dirs), 'list' (list directory contents with optional pattern filter), 'search' (find files matching a glob pattern), 'info' (get file/directory metadata like size, dates, type). Relative paths are resolved from the user's Desktop folder. Use absolute paths to access other locations."
+    },
+    {
+      "name": "Snapshot",
+      "description": "Inspect the live UI of real windows. Keywords: screenshot, screen capture, see screen, observe, look, inspect, UI elements, what's on screen. Captures focused/opened windows, interactive elements (buttons, text fields, links, menus with coordinates) and scrollable areas; every element carries a #N label usable as label= in Click/Type/Scroll/Move or target= in Act (labels are re-located live before use, so they survive window moves). Set window='title', a process name like 'notepad', or a handle to capture only that window (much faster, recommended). Set use_vision=True to include a screenshot with cursor highlight; use_annotation=False for a clean screenshot without boxes. Set use_ui_tree=False for a screenshot-only capture. Set width_reference_line/height_reference_line to overlay a grid (vision only). Set use_dom=True for browser page content instead of browser UI. Set use_words=True to also list every word of text fields/documents as clickable 'word' nodes (off by default: in editors it floods the element budget). Set display=[0] or [0,1] to limit to zero-based displays. For a quick targeted lookup of one control prefer Find."
+    },
+    {
+      "name": "Screenshot",
+      "description": "Captures a fast screenshot-first desktop snapshot with cursor position, desktop/window summaries, and an image. This path skips UI tree extraction for speed. Use Snapshot when you need interactive element ids, scrollable regions, or browser DOM extraction. Note: the returned image may be downscaled for efficiency; when it is, multiply image coordinates by the ratio of original size to displayed size to get the actual screen coordinates for mouse actions (Click, Move, etc.)."
+    },
+    {
+      "name": "Find",
+      "description": "Find controls in a REAL window by name / control type / automation id, live through UI Automation (one fast query, no screenshot). Keywords: find button, locate field, search element, which controls, inspect window. Returns references like e5 with type, name, center coordinates, supported actions ([invoke,toggle,select,expand,value,range,scroll]) and current state (value, checked, selected, expanded, disabled). window: title text, process name ('notepad'), handle, 'taskbar', '*' for all windows; default = the foreground window. Use the references with Act."
+    },
+    {
+      "name": "Act",
+      "description": "Operate a REAL control the way a person would and verify the result. target: an element reference from Find (e5), a Snapshot label (12), or the control's name ('Save'). Actions: click / double_click / right_click / hover (real mouse, after scrolling the control into view, bringing its window forward and hit-testing the exact point), toggle (value on/off optional; clicks until the state matches), select (value = item name for combo boxes / lists / tabs: opens the drop-down and clicks the item), expand / collapse, set_value (replace text; value), type (append text; value), set_range (slider/spinner number; value), invoke, focus, scroll_into_view. via: 'auto' (default: real mouse/keyboard first so the app runs its own handlers, UIA pattern as fallback), 'input' (real input only), 'uia' (UIA patterns only: works on covered windows and never moves the user's pointer). Returns the method used, whether the new state was verified by reading the control back, and the visible effects (windows opened/closed, focus). Keyboard text is only sent when the control's window is confirmed in the foreground."
+    },
+    {
+      "name": "Click",
+      "description": "Real mouse click on the desktop at [x, y] (physical screen pixels) or on a Snapshot label. With label=, the element is re-located live, scrolled into view, its window brought forward and the exact point hit-tested before clicking, so moved windows are still hit correctly. button: left / right (context menu) / middle. clicks: 0=hover only, 1=single, 2=double, 3=triple. Reports which element was under the pointer and the visible effects (windows opened/closed, focus change). Prefer Act for named controls."
+    },
+    {
+      "name": "Type",
+      "description": "Type text into a real field at [x, y] or a Snapshot label: clicks it, confirms its window really holds the keyboard (otherwise nothing is typed), then sends genuine Unicode key events -- exact for any language/emoji and not intercepted by Chinese/Japanese IMEs. clear=True replaces the existing text, False appends. press_enter=True submits. caret_position: 'start' (Home), 'end' (End) or 'idle'. method: 'auto' (real keys; paste for >2000 chars), 'keys', 'paste' (clipboard, previous text restored afterwards), 'value' (set through UIA ValuePattern without typing; needs label and clear=True). Reads the field back afterwards and reports whether the text is really there."
+    },
+    {
+      "name": "Scroll",
+      "description": "Real mouse-wheel scrolling at coordinates [x, y], a Snapshot label, or the current pointer position if loc=None. Type: vertical (default) or horizontal (tilt wheel). Direction: up/down for vertical, left/right for horizontal. wheel_times controls amount (1 notch ≈ 3 lines). Reports the scroll position of the container under the pointer before/after, so you know whether it actually moved or is already at the end."
+    },
+    {
+      "name": "Move",
+      "description": "Moves mouse cursor to coordinates [x, y] or passing a UI element's label/id. Set drag=True to perform a drag-and-drop operation from the current mouse position to the target coordinates, or provide from_loc=[x, y] to make the drag explicit-start and atomic in one tool call. Optional duration controls bounded intermediate movement. Default (drag=False) is a simple cursor move (hover). Provide either loc or label."
+    },
+    {
+      "name": "Shortcut",
+      "description": "Presses real keyboard shortcuts: keys joined by +, several chords separated by spaces. Examples: \"ctrl+c\", \"ctrl+v\", \"alt+tab\", \"win+r\", \"win\", \"ctrl+shift+esc\", \"f5\", \"enter\", \"ctrl+k ctrl+s\" (a two-step chord), \"ctrl++\" (ctrl and the + key). Each chord is sent atomically, so modifiers can never stay stuck. repeat presses it N times (e.g. \"down\" x5). window (title / process / handle) first brings that window to the foreground and refuses to send keys if it cannot -- use it to avoid shortcuts landing in the wrong app. Reports visible effects (windows opened/closed, focus)."
+    },
+    {
+      "name": "Wait",
+      "description": "Pauses execution for specified duration in seconds. Use when waiting for: applications to launch/load, UI animations to complete, page content to render, dialogs to appear, or between rapid actions. Helps ensure UI is ready before next interaction."
+    },
+    {
+      "name": "WaitFor",
+      "description": "Waits until a UI condition is satisfied, polling the Windows accessibility tree inside the tool to avoid repeated Snapshot calls. Conditions: text_exists, active_window, element_exists, element_enabled, focused_element. Provide text and/or window_name depending on the condition. Set use_dom=True for browser DOM text."
     },
     {
       "name": "Scrape",
-      "description": "Fetch a web page, or read the active browser tab's DOM text."
+      "description": "Fetch/scrape web page content from a URL. Keywords: scrape, fetch, browse, web, URL, extract, download, read webpage. By default (use_dom=False), performs a lightweight HTTP request to the URL and returns a clean LLM-processed summary of the page to avoid context bloat. Provide query to focus extraction on specific information. Set use_dom=True to extract from the active browser tab's DOM instead (required when site blocks HTTP requests; supported in Chrome, Edge, and Firefox). Set use_sampling=False to get raw content without LLM processing."
+    },
+    {
+      "name": "MultiSelect",
+      "description": "Selects multiple items such as files, folders, or checkboxes if press_ctrl=True, or performs multiple clicks if False. Pass locs (list of coordinates) or labels (list of UI element labels/ids)."
+    },
+    {
+      "name": "MultiEdit",
+      "description": "Enters text into multiple input fields at specified coordinates locs=[[x,y,text], ...] or using labels=[[label,text], ...]. Provide either locs or labels."
+    },
+    {
+      "name": "Clipboard",
+      "description": "Copy/paste clipboard operations. Keywords: copy, paste, cut, clipboard, text transfer. Use mode=\"get\" to read current clipboard content, mode=\"set\" to set clipboard text."
+    },
+    {
+      "name": "Process",
+      "description": "List and kill running processes. Keywords: task manager, running tasks, kill, terminate, stop process, PID, CPU, memory usage. Use mode=\"list\" to list running processes with filtering and sorting options. Use mode=\"kill\" to terminate processes by PID or name."
+    },
+    {
+      "name": "Notification",
+      "description": "Sends a Windows toast notification with a title and message."
+    },
+    {
+      "name": "Registry",
+      "description": "Read and write the Windows Registry. Keywords: regedit, registry key, HKEY, HKCU, HKLM, Windows settings, registry value. Use mode=\"get\" to read a value, mode=\"set\" to create/update a value, mode=\"delete\" to remove a value or key, mode=\"list\" to list values and sub-keys under a path. Paths use PowerShell format (e.g. \"HKCU:\\Software\\MyApp\", \"HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\")."
+    },
+    {
+      "name": "Observe",
+      "description": "Read a bounded semantic observation with source/session/revision. UIA is default; playwright reads only this client's managed page. since_revision returns a delta; refresh_targets means obtain a full observation before acting. Screen coordinates and browser CSS pixels are separate."
+    },
+    {
+      "name": "Execute",
+      "description": "Act on a server-issued Observe target. auto chooses supported UIA patterns then physical input; semantic/physical can be explicit. Results distinguish VERIFIED from DISPATCHED_UNVERIFIED. Supply a business postcondition in expected. This tool never retries dispatched input automatically."
+    },
+    {
+      "name": "Verify",
+      "description": "Independently verify file_exists/file_content/file_sha256, element_state or window_exists. File checks obey workspace scope. Unknown postconditions fail; UI changes alone are not business evidence."
+    },
+    {
+      "name": "Watch",
+      "description": "Wait up to 30 seconds for scoped UIA changes or a postcondition. Events are hints; periodically read back state so dropped events cannot hang a request. Concurrent subscribers are independent, expire and are removed on cancellation; queue overflow is reported."
+    },
+    {
+      "name": "Browser",
+      "description": "Start/status/close an isolated Playwright browser; navigate/new_page/observe/read managed pages; click/fill/check/select semantic targets. No user browser profile, CDP/evaluate, credentials or arbitrary JS API. Every mutation requires the same operator approval as desktop actions; use expected for independent postconditions."
+    },
+    {
+      "name": "NativeAPI",
+      "description": "Whitelisted native filesystem provider: read/info/write UTF-8 files inside operator-configured workspace roots. New files use exclusive creation; overwrite needs explicit approval and overwrite=True. Writes are read back and verified. No dynamic provider registration or shell/COM execution."
+    },
+    {
+      "name": "Session",
+      "description": "Read this client's session state or cancel/resume it. Cancel blocks subsequent actions and stops cooperative input/Watch waits. Browser contexts can be closed explicitly. Session ids are generated by the server and cannot be selected by an agent."
+    },
+    {
+      "name": "RequestApproval",
+      "description": "Create an expiring approval request for an exact tool/argument object. This tool cannot grant permission. A local human operator reviews it using windows-mcp approve REQUEST_ID. The approved call is session-bound, consumed once, and cannot be changed or replayed."
+    },
+    {
+      "name": "Visual",
+      "description": "Capture only a foreground target window when semantic observation cannot locate the target. Declare fallback_reason=no_semantic_target/canvas/provider_failure. Returns a screenshot and a short-lived window/process/geometry-bound visual target. Execute(mode='visual',target=...,action='click',value='[image_x,image_y]') rechecks identity, geometry, foreground and occlusion before approved physical input."
     }
   ],
   "compatibility": {

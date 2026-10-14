@@ -121,6 +121,16 @@ def tools(desktop):
 @pytest.fixture
 def call(tools):
     def run(tool_name: str, /, **kwargs):
+        # The harness is the local operator and approves each exact fixture action;
+        # it does not bypass the server gateway or permit arbitrary R3 commands.
+        from windows_mcp.engine.sessions import get_runtime
+
+        runtime = get_runtime()
+        arguments = runtime.normalize(tool_name, kwargs)
+        risk = runtime.policy.risk(tool_name, arguments)
+        if risk >= 2:
+            request = runtime.policy.approvals.request(runtime.current().session_id, tool_name, arguments, risk, "Authorized fixture-only regression action")
+            runtime.policy.approvals.approve(request["request_id"])
         return asyncio.run(tools[tool_name](**kwargs))
 
     return run

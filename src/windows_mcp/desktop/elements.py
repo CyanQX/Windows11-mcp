@@ -25,7 +25,6 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wt
 import logging
-import math
 import os
 import threading
 import time
@@ -202,10 +201,12 @@ def call_with_timeout(func: Callable[[], Any], timeout: float = 5.0) -> tuple[bo
     box: dict[str, Any] = {}
 
     def runner() -> None:
+        initialized = False
         try:
             import comtypes
 
             comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+            initialized = True
         except OSError:
             pass
         try:
@@ -213,6 +214,8 @@ def call_with_timeout(func: Callable[[], Any], timeout: float = 5.0) -> tuple[bo
         except BaseException as exc:  # noqa: BLE001 -- re-raised in the caller
             box["error"] = exc
         finally:
+            if initialized:
+                comtypes.CoUninitialize()
             done.set()
 
     threading.Thread(target=runner, name="wmcp-pattern-call", daemon=True).start()
@@ -692,6 +695,50 @@ def children_named(container: Element, name: str | None, limit: int = 50) -> lis
     return matches
 
 
+def walk_bounded(window: TopWindow, *, limit: int, max_depth: int,
+                 include_offscreen: bool = False) -> tuple[list[Element], bool, list[str]]:
+    """Breadth-first cached traversal with an explicit depth, output and time budget."""
+    from collections import deque
+
+    client = _client()
+    root = client.ElementFromHandle(window.handle)
+    cache = _cache_request()
+    queue = deque([(root, 0)])
+    found, diagnostics = [], []
+    scanned, truncated = 0, False
+    deadline = time.monotonic() + 5.0
+    while queue:
+        raw, depth = queue.popleft()
+        if depth >= max_depth:
+            truncated = True
+            continue
+        if time.monotonic() >= deadline or scanned >= 2000:
+            truncated = True
+            diagnostics.append("Traversal reached its time/scan budget")
+            break
+        try:
+            children = raw.FindAllBuildCache(TreeScope.TreeScope_Children, client.CreateTrueCondition(), cache)
+        except (COMError, OSError) as exc:
+            diagnostics.append(f"UIA provider failed: {type(exc).__name__}")
+            continue
+        for index in range(children.Length):
+            if len(found) >= limit or scanned >= 2000 or time.monotonic() >= deadline:
+                truncated = True
+                break
+            child = children.GetElement(index)
+            scanned += 1
+            node = element_from_raw(child, cached=True, window_handle=window.handle, window_title=window.title)
+            if include_offscreen or (not node.offscreen and node.has_area):
+                found.append(node)
+            queue.append((child, depth + 1))
+        if len(found) >= limit:
+            truncated = bool(queue) or truncated
+            break
+    if truncated:
+        diagnostics.append("Some descendants were omitted by limit/max_depth; refine the observation scope")
+    return found, truncated, diagnostics[:10]
+
+
 # --------------------------------------------------------------------------------------------
 # Stable references
 # --------------------------------------------------------------------------------------------
@@ -711,7 +758,8 @@ class ElementRegistry:
 
     def register(self, element: Element) -> str:
         ref = None
-        known = self._by_runtime_id.get(element.runtime_id) if element.runtime_id else None
+        identity = (element.window_handle, element.pid, element.runtime_id)
+        known = self._by_runtime_id.get(identity) if element.runtime_id else None
         if known and known in self._by_ref:
             ref = known
         elif element.ref and element.ref in self._by_ref:
@@ -723,11 +771,12 @@ class ElementRegistry:
         self._by_ref[ref] = element
         self._by_ref.move_to_end(ref)
         if element.runtime_id:
-            self._by_runtime_id[element.runtime_id] = ref
+            self._by_runtime_id[identity] = ref
         while len(self._by_ref) > self.capacity:
             old_ref, old = self._by_ref.popitem(last=False)
-            if old.runtime_id and self._by_runtime_id.get(old.runtime_id) == old_ref:
-                del self._by_runtime_id[old.runtime_id]
+            old_identity = (old.window_handle, old.pid, old.runtime_id)
+            if old.runtime_id and self._by_runtime_id.get(old_identity) == old_ref:
+                del self._by_runtime_id[old_identity]
         return ref
 
     def get(self, ref: str) -> Element | None:
@@ -743,8 +792,12 @@ def relocate(element: Element) -> Element | None:
     info = window_info(element.window_handle) if element.window_handle else None
     if info:
         windows = [info]
+        if element.pid and info.pid != element.pid:
+            return None  # HWND reused by another process
+    elif element.window_handle:
+        return None  # Do not follow a title into another window lifetime.
     elif element.window_title:
-        windows = resolve_windows(element.window_title)
+        windows = [w for w in resolve_windows(element.window_title) if w.pid == element.pid]
     if not windows:
         return None
     candidates, _ = search(
@@ -759,8 +812,12 @@ def relocate(element: Element) -> Element | None:
     pool = exact or candidates
     if not pool:
         return None
-    cx, cy = element.center
-    best = min(pool, key=lambda c: math.dist(c.center, (cx, cy)))
+    same_runtime = [c for c in pool if element.runtime_id and c.runtime_id == element.runtime_id]
+    if len(same_runtime) == 1:
+        pool = same_runtime
+    if len(pool) > 1:
+        raise AmbiguousTarget("AMBIGUOUS_TARGET: multiple replacement controls match; use Find again")
+    best = pool[0]
     best.ref = element.ref
     return best
 
@@ -848,13 +905,11 @@ def resolve_snapshot_node(node: Any) -> Element | None:
     candidates, _ = search(windows, name=name, include_offscreen=True, limit=10)
     exact = [c for c in candidates if c.name == name]
     if exact:
-        width, height = node_rect[2] - node_rect[0], node_rect[3] - node_rect[1]
-
-        def distance(c: Element) -> float:
-            size_penalty = abs((c.rect[2] - c.rect[0]) - width) + abs((c.rect[3] - c.rect[1]) - height)
-            return math.dist(c.center, (x, y)) + size_penalty
-
-        return min(exact, key=distance)
+        same_type = [c for c in exact if c.control_type == node.control_type]
+        exact = same_type or exact
+        if len(exact) != 1:
+            raise AmbiguousTarget("AMBIGUOUS_TARGET: Snapshot label matches multiple controls; use Find")
+        return exact[0]
     raise StaleTarget(
         f'{node.control_type} "{name}" from the last Snapshot is no longer on screen (window '
         f'"{node.window_name}"). Call Snapshot or Find again.'

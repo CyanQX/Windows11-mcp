@@ -33,10 +33,17 @@ async def test_find_and_act_through_the_mcp_protocol(app):
         found = _text(await client.call_tool("Find", {"name": "Save", "window": app.title}))
         ref = re.search(r"^(e\d+)\s+Button \"Save\"", found, re.M).group(1)
         since = app.mark()
+        approval = await client.call_tool("RequestApproval", {"tool": "Act", "arguments": {"target": ref, "action": "click"}, "description": "Click the owned test fixture button"})
+        import json
+        from windows_mcp.engine.sessions import get_runtime
+
+        get_runtime().policy.approvals.approve(json.loads(_text(approval))["request_id"])
         acted = _text(await client.call_tool("Act", {"target": ref, "action": "click"}))
         assert "real left click" in acted
         assert app.wait_for(lambda e: e.get("control") == "save", since)
 
+        approval = await client.call_tool("RequestApproval", {"tool": "Act", "arguments": {"target": "No Such Button", "window": app.title}, "description": "Prove a nonexistent target safely fails"})
+        get_runtime().policy.approvals.approve(json.loads(_text(approval))["request_id"])
         missing = await client.call_tool(
             "Act", {"target": "No Such Button", "window": app.title}, raise_on_error=False
         )

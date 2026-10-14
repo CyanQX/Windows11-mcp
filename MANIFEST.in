@@ -1,0 +1,8 @@
+include README.md LICENSE.md CLAUDE.md pyproject.toml manifest.json uv.lock .gitignore .mcpbignore
+recursive-include src/windows_mcp *.py
+recursive-include assets *.png
+recursive-include tests *.py
+recursive-include scripts *.py
+recursive-include .github *.yml
+recursive-include .claude *.md
+global-exclude __pycache__ *.py[cod]

@@ -76,7 +76,7 @@ def test_readme_is_the_only_user_document():
     markdown = sorted(
         str(p.relative_to(ROOT)).replace("\\", "/")
         for p in ROOT.rglob("*.md")
-        if not any(part.startswith(".venv") or part == "node_modules" for part in p.parts)
+        if not any(part.startswith(".venv") or part in {"node_modules", ".pytest_cache"} for part in p.parts)
     )
     assert markdown == [".claude/skills/windows-mcp-tool-tester/SKILL.md", "CLAUDE.md", "LICENSE.md", "README.md"]
 
@@ -86,4 +86,8 @@ def test_manifest_lists_every_tool_and_matches_the_package_version():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     assert {tool["name"] for tool in manifest["tools"]} == set(registered_tools())
     assert manifest["version"] == project["version"]
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked_project = next(package for package in lock["package"] if package["name"] == project["name"])
+    assert locked_project["version"] == project["version"]
+    assert f'<h1>Windows-MCP {project["version"]}</h1>' in README
     assert manifest["user_config"]["anonymized_telemetry"]["default"] is False

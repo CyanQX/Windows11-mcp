@@ -95,6 +95,8 @@ def test_both_ssl_and_both_oauth_accepted(monkeypatch, tmp_path):
             "9123",
             "--auth-key",
             "token",
+            "--ip-allowlist",
+            "127.0.0.1",
             "--ssl-certfile",
             str(cert),
             "--ssl-keyfile",

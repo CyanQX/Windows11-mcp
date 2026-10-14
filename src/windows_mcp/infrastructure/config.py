@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomllib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,10 +40,18 @@ class ToolsConfig:
 
 
 @dataclass
+class PolicyConfig:
+    workspace_roots: list[str] = field(default_factory=list)
+    allow_r3: bool = False
+    allow_private_browser: bool = False
+
+
+@dataclass
 class WindowsMCPConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    policy: PolicyConfig = field(default_factory=PolicyConfig)
     source_path: Path | None = None
 
 
@@ -104,6 +113,9 @@ def load_config(path: Path | None) -> WindowsMCPConfig:
     server = data.get("server", {})
     security = data.get("security", {})
     tools = data.get("tools", {})
+    policy = data.get("policy", {})
+    if any(not isinstance(section, dict) for section in (server, security, tools, policy)):
+        raise ValueError("server, security, tools and policy must be TOML tables")
 
     _VALID_TRANSPORTS = {"stdio", "sse", "streamable-http"}
     if "transport" in server:
@@ -154,6 +166,18 @@ def load_config(path: Path | None) -> WindowsMCPConfig:
     if "exclude" in tools:
         cfg.tools.exclude = _list_of_strings(tools["exclude"], "tools.exclude")
 
+    unknown_policy = policy.keys() - {"workspace_roots", "allow_r3", "allow_private_browser"}
+    if unknown_policy:
+        raise ValueError(f"Unknown policy settings: {sorted(unknown_policy)}")
+    if "workspace_roots" in policy:
+        roots = _list_of_strings(policy["workspace_roots"], "policy.workspace_roots")
+        if any(not root.strip() for root in roots):
+            raise ValueError("policy.workspace_roots cannot contain empty paths")
+        cfg.policy.workspace_roots = [str((path.parent / Path(root).expanduser()).resolve()) for root in roots]
+    for key in ("allow_r3", "allow_private_browser"):
+        if key in policy:
+            setattr(cfg.policy, key, _strict_bool(policy[key], f"policy.{key}"))
+
     cfg.source_path = path
     return cfg
 
@@ -201,5 +225,15 @@ def write_config(cfg: WindowsMCPConfig, path: Path) -> None:
     if cfg.tools.exclude:
         items = ", ".join(f'"{t}"' for t in cfg.tools.exclude)
         lines += ["[tools]", f"exclude = [{items}]", ""]
+
+    policy_lines = []
+    if cfg.policy.workspace_roots:
+        policy_lines.append("workspace_roots = " + json.dumps(cfg.policy.workspace_roots, ensure_ascii=False))
+    if cfg.policy.allow_r3:
+        policy_lines.append("allow_r3 = true")
+    if cfg.policy.allow_private_browser:
+        policy_lines.append("allow_private_browser = true")
+    if policy_lines:
+        lines += ["[policy]"] + policy_lines + [""]
 
     path.write_text("\n".join(lines), encoding="utf-8")

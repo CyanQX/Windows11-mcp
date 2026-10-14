@@ -1,5 +1,9 @@
 # Virtual environment (uses uv run at runtime)
 .venv/
+.venv-*/
+reports/
+scripts/
+*-tests.xml
 
 # Demo videos (too large for bundle)
 assets/demo*.mov
@@ -12,6 +16,10 @@ assets/*.mov
 tests/
 
 # Development files
+build/
+*.egg-info/
+.ruff_cache/
+NVIDIA Corporation/
 __pycache__/
 *.pyc
 .pytest_cache/

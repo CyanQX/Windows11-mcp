@@ -1,6 +1,6 @@
 """
 Unified WatchDog Service for monitoring UI Automation events.
-Allows single instantiation to handle multiple monitors (Focus, Structure) safely in one STA thread.
+Allows multiple bounded subscriptions backed by a dedicated COM MTA worker.
 """
 
 from windows_mcp.uia.core import _AutomationClient
@@ -15,6 +15,7 @@ from .event_handlers import (
     StructureChangedEventHandler,
     PropertyChangedEventHandler,
 )
+from .subscription import SubscriptionHub
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -38,6 +39,8 @@ class WatchDog:
         self.is_running = Event()
         self.thread = None
         self._needs_rebuild = Event()
+        self._stopping = Event()
+        self.subscriptions = SubscriptionHub()
 
         # Callbacks
         self._focus_callback = None
@@ -72,6 +75,7 @@ class WatchDog:
         if self.is_running.is_set():
             return
         self.is_running.set()
+        self._stopping.clear()
         self.thread = Thread(target=self._run, name="WatchDogThread")
         self.thread.daemon = True
         self.thread.start()
@@ -81,6 +85,7 @@ class WatchDog:
         if not self.is_running.is_set():
             return
         self.is_running.clear()
+        self._stopping.set()
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)
 
@@ -116,7 +121,7 @@ class WatchDog:
         )
 
     def _run(self):
-        """Main event loop running in a dedicated STA thread.
+        """Main event loop running in a dedicated MTA thread.
 
         Outer loop rebuilds the IUIAutomation client and all event
         subscriptions from scratch whenever they're flagged as degraded
@@ -126,7 +131,7 @@ class WatchDog:
         """
         backoff = 1.0
         while self.is_running.is_set():
-            comtypes.CoInitialize()
+            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
             try:
                 self.uia = self._create_uia()
                 self._needs_rebuild.clear()
@@ -142,21 +147,23 @@ class WatchDog:
                 comtypes.CoUninitialize()
 
             if self.is_running.is_set():
-                self.is_running.wait(backoff)
+                self._stopping.wait(backoff)
                 backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
 
     def _event_loop(self):
         """Pump UIA events against the current self.uia client until stopped
         or a rebuild is requested."""
         while self.is_running.is_set() and not self._needs_rebuild.is_set():
+            self.subscriptions.prune()
+            listening = self.subscriptions.active > 0
             # --- Focus Monitoring ---
-            if self._focus_callback and not self._focus_handler:
+            if (self._focus_callback or listening) and not self._focus_handler:
                 try:
                     self._focus_handler = FocusChangedEventHandler(self)
                     self.uia.AddFocusChangedEventHandler(None, self._focus_handler)
                 except Exception as e:
                     logger.debug(f"Failed to add focus handler: {e}")
-            elif not self._focus_callback and self._focus_handler:
+            elif not self._focus_callback and not listening and self._focus_handler:
                 try:
                     self.uia.RemoveFocusChangedEventHandler(self._focus_handler)
                 except Exception as e:
@@ -165,9 +172,9 @@ class WatchDog:
 
             # --- Structure Monitoring ---
             # Check if we need to UNREGISTER because configuration changed or disabled
-            config_changed = self._structure_element != self._active_structure_element
+            config_changed = self._structure_element is not None and self._structure_element != self._active_structure_element
 
-            should_be_active = self._structure_callback is not None
+            should_be_active = self._structure_callback is not None or listening
             is_active = self._structure_handler is not None
 
             if is_active and (not should_be_active or config_changed):
@@ -202,11 +209,11 @@ class WatchDog:
                     logger.debug(f"Failed to add structure handler: {e}")
 
             # --- Property Monitoring ---
-            config_changed = (self._property_element != self._active_property_element) or (
-                self._property_ids != self._active_property_ids
+            config_changed = (self._property_element is not None and self._property_element != self._active_property_element) or (
+                self._property_ids is not None and self._property_ids != self._active_property_ids
             )
 
-            should_be_active = self._property_callback is not None
+            should_be_active = self._property_callback is not None or listening
             is_active = self._property_handler is not None
 
             if is_active and (not should_be_active or config_changed):
@@ -250,7 +257,7 @@ class WatchDog:
                     logger.debug(f"Failed to add property handler: {e}")
 
             # Pump events for this thread
-            comtypes.client.PumpEvents(0.1)
+            self._stopping.wait(0.1)
 
         if self._needs_rebuild.is_set():
             logger.warning("WatchDog event pipeline degraded, rebuilding UIA client")

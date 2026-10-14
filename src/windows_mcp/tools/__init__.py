@@ -13,6 +13,7 @@ from windows_mcp.tools import (
     registry,
     scrape,
     shell,
+    semantic,
     snapshot,
 )
 
@@ -30,6 +31,7 @@ _MODULES = [
     process,
     notification,
     registry,
+    semantic,
 ]
 
 
@@ -40,5 +42,8 @@ def register_all(mcp, *, get_desktop, get_analytics):
     current ``Desktop`` and ``PostHogAnalytics`` instances (resolved lazily so
     that tools can be registered before ``lifespan`` initializes the singletons).
     """
+    from windows_mcp.tools.gateway import ToolGateway
+
+    gateway = ToolGateway(mcp)
     for mod in _MODULES:
-        mod.register(mcp, get_desktop=get_desktop, get_analytics=get_analytics)
+        mod.register(gateway, get_desktop=get_desktop, get_analytics=get_analytics)

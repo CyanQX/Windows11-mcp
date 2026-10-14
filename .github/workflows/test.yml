@@ -1,6 +1,7 @@
 name: Tests
 
 on:
+  workflow_call:
   push:
     branches:
       - main
@@ -34,9 +35,30 @@ jobs:
         run: uv sync --frozen --extra dev
 
       - name: Lint
-        run: uv run --frozen --extra dev ruff check src tests
+        run: uv run --frozen --extra dev ruff check src tests scripts
 
       # tests/desktop (real mouse/keyboard input) is skipped here: it needs an interactive
       # desktop and runs only with WINDOWS_MCP_DESKTOP_TESTS=1.
       - name: Run unit tests
         run: uv run --frozen --extra dev pytest
+
+  compatibility:
+    name: Current FastMCP 4 / MCP 2 and headless browser
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: Install current dependency generation in an isolated environment
+        shell: pwsh
+        run: |
+          uv venv .venv-compat
+          uv pip install --python .venv-compat/Scripts/python.exe -e ".[dev,browser]" "fastmcp>=4,<5" "mcp>=2,<3" "pydantic-settings>=2.14.2"
+          .venv-compat/Scripts/python.exe -m playwright install chromium
+      - name: Check source and run tests without physical desktop input
+        shell: pwsh
+        run: |
+          .venv-compat/Scripts/ruff.exe check src tests scripts
+          .venv-compat/Scripts/python.exe -m compileall -q src/windows_mcp
+          .venv-compat/Scripts/python.exe -m pytest
