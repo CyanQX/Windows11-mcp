@@ -1,0 +1,44 @@
+name: Windows EXE setup
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'installer/**'
+      - 'skills/**'
+      - 'scripts/build_setup.py'
+      - 'scripts/smoke_setup.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/setup.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+      - name: Install locked build dependencies
+        run: uv sync --frozen --extra dev --extra browser --extra installer --group build
+      - name: Check installer source and configuration rollback
+        run: |
+          uv run --frozen --extra dev --extra browser --extra installer --group build ruff check src tests scripts installer
+          uv run --frozen --extra dev --extra browser --extra installer --group build pytest tests/test_installer.py tests/test_docs.py
+      - name: Build standalone GUI and MCP service
+        run: uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/build_setup.py
+      - name: Verify actual EXE installation and stdio connection
+        shell: pwsh
+        run: |
+          $setupExe = Get-ChildItem -LiteralPath dist/setup -Filter '*.exe' | Select-Object -First 1
+          uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/smoke_setup.py $setupExe.FullName --output dist/setup/setup-validation.json
+      - name: Save executable and validation record
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-mcp-setup
+          path: dist/setup/*

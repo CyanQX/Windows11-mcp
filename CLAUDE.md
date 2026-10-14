@@ -1,8 +1,9 @@
 # CLAUDE.md
 
 Guidance for Claude Code when working in this repository. User-facing documentation lives in
-`README.md` (Chinese); keep it in sync -- `tests/test_docs.py` enforces the tool list, the
-environment variables and the internal links.
+`README.md` (Chinese); keep its four overview/install/catalog sections in sync. Detailed
+parameters and environment settings live in `skills/windows-mcp/references/advanced.md`.
+`tests/test_docs.py` checks the catalog, reference settings and internal links.
 
 ## Project
 

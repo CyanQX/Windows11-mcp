@@ -5,4 +5,6 @@ recursive-include tests *.py
 recursive-include scripts *.py
 recursive-include .github *.yml
 recursive-include .claude *.md
+recursive-include skills *.md
+recursive-include installer *.py
 global-exclude __pycache__ *.py[cod]

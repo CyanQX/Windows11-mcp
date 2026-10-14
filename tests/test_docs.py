@@ -29,7 +29,7 @@ def registered_tools() -> dict[str, dict]:
 
 
 def _section(title: str) -> str:
-    match = re.search(rf"^## {re.escape(title)}\n(.*?)(?=^## )", README, flags=re.S | re.M)
+    match = re.search(rf"^## {re.escape(title)}\n(.*?)(?=^## |\Z)", README, flags=re.S | re.M)
     assert match, f"README section '## {title}' is missing"
     return match.group(1)
 
@@ -56,7 +56,8 @@ def test_every_environment_variable_the_code_reads_is_documented():
     source = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "src").rglob("*.py"))
     used = set(re.findall(r"\b((?:WINDOWS_MCP|POSTHOG)_[A-Z_]+|ANONYMIZED_TELEMETRY)\b", source))
     used.add("WINDOWS_MCP_DESKTOP_TESTS")  # read by tests/desktop/conftest.py
-    missing = sorted(name for name in used if f"`{name}`" not in README)
+    reference = (ROOT / "skills/windows-mcp/references/advanced.md").read_text(encoding="utf-8")
+    missing = sorted(name for name in used if f"`{name}`" not in reference)
     assert missing == [], f"undocumented environment variables: {missing}"
 
 
@@ -78,7 +79,7 @@ def test_readme_is_the_only_user_document():
         for p in ROOT.rglob("*.md")
         if not any(part.startswith(".venv") or part in {"node_modules", ".pytest_cache"} for part in p.parts)
     )
-    assert markdown == [".claude/skills/windows-mcp-tool-tester/SKILL.md", "CLAUDE.md", "LICENSE.md", "README.md"]
+    assert markdown == [".claude/skills/windows-mcp-tool-tester/SKILL.md", "CLAUDE.md", "LICENSE.md", "README.md", "skills/windows-mcp/SKILL.md", "skills/windows-mcp/references/advanced.md"]
 
 
 def test_manifest_lists_every_tool_and_matches_the_package_version():
