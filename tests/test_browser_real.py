@@ -4,6 +4,7 @@ No existing user browser is attached. Optional: skipped without the browser extr
 """
 
 import asyncio
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -36,6 +37,7 @@ def test_site():
             body = '<label>Nested <input data-testid="nested"></label>' if self.path == "/frame" else _HTML
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body.encode())))
             self.end_headers()
             self.wfile.write(body.encode())
 
@@ -59,7 +61,9 @@ def test_site():
 @pytest_asyncio.fixture
 async def browser(tmp_path, test_site):
     backend = PlaywrightBackend(allow_private=True, profile_root=tmp_path / "profiles")
-    channel = "msedge" if Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe").exists() else "chromium"
+    # CI provisions a pinned Playwright Chromium. Do not accidentally substitute
+    # the runner's independently updated system Edge for that isolated runtime.
+    channel = "chromium" if os.environ.get("CI") else "msedge" if Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe").exists() else "chromium"
     try:
         try:
             await backend.run("test-owner", "start", headless=True, channel=channel)
