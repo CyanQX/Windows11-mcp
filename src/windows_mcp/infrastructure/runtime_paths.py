@@ -32,7 +32,9 @@ def portable_data_directory(executable: Path | None = None, *, frozen: bool | No
                 raise PermissionError("Portable storage cannot use links or junctions")
         if marker.stat().st_size > 1024 or json.loads(marker.read_text(encoding="utf-8")) != PORTABLE_MODE:
             raise ValueError("Invalid Windows-MCP portable marker; extract the complete official ZIP")
-        return data
+        # Expand Win32 8.3 aliases (for example RUNNER~1) after rejecting
+        # links. Ownership and scope checks compare canonical user paths.
+        return data.resolve()
     return None
 
 

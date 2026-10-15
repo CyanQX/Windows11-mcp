@@ -17,11 +17,11 @@ ENV_KEYS = {"CODEX_HOME", "CLAUDE_CONFIG_DIR", "DSH_HOME", "XDG_CONFIG_HOME", "O
 
 class SettingsService:
     def __init__(self, home: Path, *, env=None, portable_data: Path | None = None):
-        self.home = home.absolute()
+        self.home = check_path(home).resolve()
         self.env = dict(os.environ if env is None else env)
         self.portable_data = portable_data if portable_data is not None else (portable_data_directory() if env is None else None)
         if self.portable_data is not None:
-            self.portable_data = check_path(self.portable_data)
+            self.portable_data = check_path(self.portable_data).resolve()
         self.path = (self.portable_data / "config" if self.portable_data is not None else self.home / ".windows-mcp") / "manager.json"
         self.defaults = {"schema": 1, "theme": "light", "data_dir": str(Path(self.env.get("LOCALAPPDATA", str(home / "AppData" / "Local"))) / "WindowsMCP"), "environment_overrides": {}, "client_executables": {}, "health_timeout": 60, "log_retention_days": 30, "log_max_mb": 50}
         if self.portable_data is not None:
@@ -44,7 +44,7 @@ class SettingsService:
             raise ManagerError("SETTINGS_INVALID", "管理器设置无法读取，原文件已保留") from exc
 
     def scoped_directory(self, path: Path):
-        check_path(path)
+        path = check_path(path).resolve()
         if not path.is_absolute() or path == Path(path.anchor):
             raise ManagerError("INVALID_DIRECTORY", "请选择当前用户的有效目录")
         users = Path(self.env.get("SystemDrive", "C:") + "/Users")

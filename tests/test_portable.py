@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -36,6 +37,21 @@ def test_portable_marker_cannot_redirect_to_an_arbitrary_directory(tmp_path):
     (root / PORTABLE_MARKER).write_text(json.dumps({**PORTABLE_MODE, "data": "../outside"}))
     with pytest.raises(ValueError, match="portable marker"):
         portable_data_directory(root / "Windows-MCP.exe", frozen=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 short paths")
+def test_win32_short_path_alias_stays_in_the_same_user_scope(tmp_path):
+    import ctypes
+    root = bundle(tmp_path)
+    buffer = ctypes.create_unicode_buffer(32768)
+    assert ctypes.windll.kernel32.GetShortPathNameW(str(root), buffer, len(buffer))
+    if "~" not in buffer.value:
+        pytest.skip("8.3 aliases are disabled on this volume")
+    data = portable_data_directory(Path(buffer.value) / "Windows-MCP.exe", frozen=True)
+    assert data == (root / "data").resolve()
+    settings = SettingsService(tmp_path, env={}, portable_data=data)
+    settings.save(settings.value)
+    assert settings.path.is_file()
 
 
 def test_portable_settings_do_not_import_user_preferences_or_move_client_paths(tmp_path):

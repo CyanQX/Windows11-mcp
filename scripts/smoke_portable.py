@@ -29,7 +29,10 @@ def main():
         executable = bundle / "Windows-MCP.exe"
         assert hashlib.sha256(executable.read_bytes()).hexdigest() == result["payload_sha256"]
         contract = Path(temporary) / "portable-contract.json"
-        subprocess.run([str(executable), "--portable-check", str(contract)], check=True, timeout=60)
+        completed = subprocess.run([str(executable), "--portable-check", str(contract)], timeout=90)
+        if completed.returncode:
+            error = contract.with_suffix(".error.json")
+            raise RuntimeError(error.read_text(encoding="utf-8") if error.is_file() else f"Portable acceptance exit {completed.returncode}")
         result["portable_contract"] = json.loads(contract.read_text())
         smoke = Path(temporary) / "stdio-validation.json"
         subprocess.run([sys.executable, str(ROOT / "scripts/smoke_setup.py"), str(executable), "--output", str(smoke)], check=True, timeout=420, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

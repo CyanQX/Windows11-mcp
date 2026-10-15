@@ -227,6 +227,20 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
+        if getattr(sys, "frozen", False):
+            # A windowed PyInstaller bootloader shows an error dialog for an
+            # unhandled exception. Acceptance commands must fail and report,
+            # so a headless runner never hangs waiting for that dialog.
+            for flag in ("--portable-check", "--ui-smoke", "--self-test"):
+                if flag in sys.argv:
+                    destination = Path(sys.argv[sys.argv.index(flag) + 1])
+                    if flag == "--self-test":
+                        destination = destination / "acceptance-error.json"
+                    else:
+                        destination = destination.with_suffix(".error.json")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_text(json.dumps({"error": type(exc).__name__, "message": str(exc)}, ensure_ascii=True), encoding="utf-8")
+                    raise SystemExit(1) from exc
         if getattr(sys, "frozen", False) and not any(arg in sys.argv for arg in ("--serve", "serve", "auth", "--self-test", "--portable-check", "--apply-update", "--ui-smoke")):
             ctypes.windll.user32.MessageBoxW(None, f"管理器未能启动：{exc}\n原配置与文件已保留。", "Windows MCP", 16)
         raise
