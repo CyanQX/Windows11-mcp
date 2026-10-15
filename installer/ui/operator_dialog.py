@@ -37,9 +37,11 @@ class OperatorCenter(Detail):
         self.rows = {row["request_id"]: row for row in self.store.pending()}
         self.mapping = {f"{row['tool']} · {'已批准待使用' if row['approved'] else '等待确认'} · {key[:10]}": key for key, row in self.rows.items()}
         self.selector.configure(values=list(self.mapping) or ["暂无待审请求"])
-        if self.request_id not in self.rows:
+        # Never switch an expired/consumed explicit request to another action
+        # while the operator is reading. A different request needs a new choice.
+        if self.request_id is None:
             self.request_id = next(iter(self.rows), None)
-        title = next((title for title, key in self.mapping.items() if key == self.request_id), "暂无待审请求")
+        title = next((title for title, key in self.mapping.items() if key == self.request_id), "指定请求已失效" if self.request_id else "暂无待审请求")
         self.selector.set(title)
         self.show()
 
@@ -52,7 +54,7 @@ class OperatorCenter(Detail):
         active = bool(row and not row["approved"] and row["expires_at"] > time.time())
         for widget in (self.approve_button, self.reject_button):
             widget.configure(state="normal" if active else "disabled")
-        value = "暂无待审请求。AI 请求受保护操作时，此窗口会自动打开。"
+        value = "指定请求已过期、已使用或不存在，请让 AI 重新申请。其他请求需要你手动选择并核对。" if self.request_id else "暂无待审请求。AI 请求受保护操作时，此窗口会自动打开。"
         if row:
             try:
                 arguments = self.store.operator_arguments(self.request_id)

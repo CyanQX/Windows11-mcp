@@ -73,3 +73,15 @@ def test_refresh_clears_installed_selection_without_switching_client(window):
     window.accept_states(window.service.inspect_all())
     assert not window.selection.selected
     assert window.install_button.cget("state") == "disabled"
+
+
+def test_expired_explicit_approval_never_switches_to_another_pending_action(window, tmp_path):
+    from installer.ui.operator_dialog import OperatorCenter
+    from windows_mcp.infrastructure.approvals import ApprovalStore
+    store = ApprovalStore(tmp_path / "approval-fixture")
+    other = store.request("synthetic-session", "Files", {"operation": "write"}, 2, "isolated fixture")
+    dialog = OperatorCenter(window, store, "0" * 32)
+    assert dialog.request_id == "0" * 32
+    assert dialog.approve_button.cget("state") == "disabled"
+    assert not store.read(other["request_id"])["approved"]
+    dialog.destroy()
