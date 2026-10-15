@@ -28,6 +28,7 @@ class MultiSelect(ctk.CTkFrame):
             return
         popup = self.popup = ctk.CTkToplevel(self)
         popup.title("选择安装目标")
+        popup.overrideredirect(True)
         popup.configure(fg_color=COLORS["panel"])
         popup.transient(self.winfo_toplevel())
         popup.resizable(False, False)

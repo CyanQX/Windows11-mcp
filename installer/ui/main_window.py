@@ -48,7 +48,8 @@ class MainWindow(ctk.CTk):
         header = ctk.CTkFrame(self, fg_color="transparent", height=62)
         header.grid(row=0, column=0, sticky="ew", padx=22, pady=(12, 5))
         label(header, "当前用户安装", size=12, color="secondary").pack(side="left", padx=4)
-        button(header, "设置", lambda: SettingsHub(self), icon=self.icons.get("settings", 19), width=100).pack(side="right")
+        self.settings_button = button(header, "设置", lambda: SettingsHub(self), icon=self.icons.get("settings", 19), width=100)
+        self.settings_button.pack(side="right")
         self.approval_button = button(header, "操作审批", self.open_operator, icon=self.icons.get("shield", 19), width=125)
         self.approval_button.pack(side="right", padx=10)
 

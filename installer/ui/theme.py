@@ -58,7 +58,7 @@ def label(parent, text, *, size=14, bold=False, color="text", **kwargs):
 
 
 def button(parent, text, command, *, primary=False, icon=None, **kwargs):
-    widget = ctk.CTkButton(parent, text=text, command=command, height=42, corner_radius=8, font=(FONT, 13), fg_color=COLORS["accent"] if primary else COLORS["panel"], hover_color=("#0048D8", "#256CDD") if primary else COLORS["hover"], text_color="#FFFFFF" if primary else COLORS["text"], text_color_disabled=COLORS["secondary"], border_width=0 if primary else 1, border_color=COLORS["border"], image=icon, compound="left", **kwargs)
+    widget = ctk.CTkButton(parent, text=text, command=command, height=42, corner_radius=8, font=(FONT, 14), fg_color=COLORS["accent"] if primary else COLORS["panel"], hover_color=("#0048D8", "#256CDD") if primary else COLORS["hover"], text_color="#FFFFFF" if primary else COLORS["text"], text_color_disabled=COLORS["secondary"], border_width=0 if primary else 1, border_color=COLORS["border"], image=icon, compound="left", **kwargs)
     widget._canvas.configure(takefocus=True)
     def invoke(_event):
         if widget.cget("state") == "normal":

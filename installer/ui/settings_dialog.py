@@ -10,16 +10,24 @@ import customtkinter as ctk
 
 from installer.settings import ENV_KEYS
 from installer.ui.dialogs import Detail, Diagnostics, Preview, Targets, text_box
-from installer.ui.theme import COLORS, FONT, button, label
+from installer.ui.theme import COLORS, FONT, button, label, work_area
 from installer.updates import UpdateService, start_update
 
 
 class SettingsHub(Detail):
     def __init__(self, owner):
         super().__init__(owner, "设置", "660x650")
-        label(self, "设置", size=23, bold=True).pack(anchor="w", padx=26, pady=(22, 12))
-        body = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=16, pady=(0, 14))
+        self.overrideredirect(True)
+        self.minsize(230, 300)
+        self.resizable(False, False)
+        left, top, right, bottom = work_area(self)
+        scale = self._get_window_scaling()
+        width, height = 240, min(350, int((bottom - top - 60) / scale))
+        x = min(int(right - width * scale - 15), owner.settings_button.winfo_rootx() + owner.settings_button.winfo_width() - int(width * scale))
+        y = min(owner.settings_button.winfo_rooty() + owner.settings_button.winfo_height() + 8, int(bottom - height * scale - 15))
+        self.geometry(f"{width}x{height}+{max(left + 10, x)}+{max(top + 10, y)}")
+        body = ctk.CTkFrame(self, fg_color="transparent") if height >= 350 else ctk.CTkScrollableFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=6, pady=6)
         for name, icon, action in [
             ("检查更新", "refresh", lambda: check_updates(owner)),
             ("版本与升级", "update", lambda: versions(owner)),
@@ -31,7 +39,15 @@ class SettingsHub(Detail):
             ("高级设置", "settings", lambda: preferences(owner)),
             ("许可证与关于", "info", lambda: about(owner)),
         ]:
-            button(body, name, lambda a=action: (self.destroy(), a()), icon=owner.icons.get(icon), anchor="w").pack(fill="x", padx=10, pady=5)
+            item = button(body, name, lambda a=action: (self.destroy(), a()), icon=owner.icons.get(icon), anchor="w")
+            item.configure(height=32, border_width=0, fg_color="transparent")
+            item.pack(fill="x", padx=2, pady=2)
+        self.after(100, self.grab_set)
+        self.bind("<ButtonPress-1>", self.dismiss_outside, add=True)
+
+    def dismiss_outside(self, event):
+        if not (self.winfo_rootx() <= event.x_root <= self.winfo_rootx() + self.winfo_width() and self.winfo_rooty() <= event.y_root <= self.winfo_rooty() + self.winfo_height()):
+            self.destroy()
 
 
 def paths(owner):
