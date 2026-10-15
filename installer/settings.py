@@ -10,24 +10,34 @@ from installer.backend import Installer, atomic_write, profiles
 from installer.detection import ClientDiscovery
 from installer.models import ManagerError
 from installer.storage import check_path, private_directory
+from windows_mcp.infrastructure.runtime_paths import portable_data_directory
 
 ENV_KEYS = {"CODEX_HOME", "CLAUDE_CONFIG_DIR", "DSH_HOME", "XDG_CONFIG_HOME", "OPENCODE_CONFIG"}
 
 
 class SettingsService:
-    def __init__(self, home: Path, *, env=None):
+    def __init__(self, home: Path, *, env=None, portable_data: Path | None = None):
         self.home = home.absolute()
         self.env = dict(os.environ if env is None else env)
-        self.path = self.home / ".windows-mcp" / "manager.json"
+        self.portable_data = portable_data if portable_data is not None else (portable_data_directory() if env is None else None)
+        if self.portable_data is not None:
+            self.portable_data = check_path(self.portable_data)
+        self.path = (self.portable_data / "config" if self.portable_data is not None else self.home / ".windows-mcp") / "manager.json"
         self.defaults = {"schema": 1, "theme": "light", "data_dir": str(Path(self.env.get("LOCALAPPDATA", str(home / "AppData" / "Local"))) / "WindowsMCP"), "environment_overrides": {}, "client_executables": {}, "health_timeout": 60, "log_retention_days": 30, "log_max_mb": 50}
+        if self.portable_data is not None:
+            self.defaults["data_dir"] = str(self.portable_data)
         self.value = self.load()
 
     def load(self):
         if not self.path.exists():
             return dict(self.defaults)
-        check_path(self.path, self.home)
+        check_path(self.path, self.portable_data or self.home)
         try:
             value = {**self.defaults, **json.loads(self.path.read_text(encoding="utf-8"))}
+            if self.portable_data is not None and value["data_dir"] != str(self.portable_data):
+                if any((self.portable_data / "receipts").glob("*.json")):
+                    raise ManagerError("PORTABLE_DIRECTORY_MOVED", "便携目录已移动且仍有受管接入；请移回原目录卸载后再移动")
+                value["data_dir"] = str(self.portable_data)
             self.validate(value)
             return value
         except (ValueError, TypeError, OSError) as exc:
@@ -60,6 +70,8 @@ class SettingsService:
                 raise ManagerError("DIRECTORY_OWNER_UNKNOWN", "自定义目录须属于当前用户，请选择自己创建的文件夹")
 
     def validate(self, value: dict):
+        if self.portable_data is not None and Path(value["data_dir"]).absolute() != self.portable_data:
+            raise ManagerError("PORTABLE_DATA_FIXED", "便携版的数据目录固定为程序旁的 data 文件夹")
         if value.get("theme") not in {"light", "dark", "system"}:
             raise ManagerError("INVALID_THEME", "主题设置无效")
         for name, lower, upper in (("health_timeout", 5, 180), ("log_retention_days", 1, 365), ("log_max_mb", 5, 500)):

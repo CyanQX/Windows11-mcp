@@ -73,6 +73,8 @@ def preferences(owner, paths=False):
 
     if paths:
         field("data_dir", "MCP 共享数据目录（备份、收据、日志、运行时）", value["data_dir"])
+        if owner.settings.portable_data is not None:
+            fields["data_dir"].configure(state="disabled")
         for key in sorted(ENV_KEYS):
             field(key, f"{key}（留空沿用系统环境 / 官方默认）", value["environment_overrides"].get(key, ""))
         button(body, "查看当前实际路径", lambda: globals()["paths"](owner), icon=owner.icons.get("folder")).pack(anchor="w", padx=5, pady=14)
@@ -157,7 +159,7 @@ def versions(owner):
 
 
 def check_updates(owner):
-    updater = UpdateService(owner.service.backend.data, owner.version)
+    updater = UpdateService(owner.service.backend.data, owner.version, portable=owner.settings.portable_data is not None)
 
     def checked(release):
         if not release["available"]:
@@ -170,6 +172,12 @@ def check_updates(owner):
         def downloaded(path):
             if not getattr(sys, "frozen", False):
                 messagebox.showinfo("下载完成", f"已校验：{path}\n源码运行模式不替换 Python，请使用 EXE 更新。", parent=owner)
+                return
+            if release.get("kind") == "installer":
+                def install():
+                    updater.launch_installer(path, release)
+                    owner.destroy()
+                Preview(owner, "确认启动新版安装向导", {"版本": release["latest"], "安装包": str(path), "SHA-256": release["sha256"], "说明": "关闭管理器并启动安装向导，可选择原安装位置升级。完成后在版本与升级中处理现有 Skill 和 MCP 接入。"}, install)
                 return
             try:
                 managed = owner.service.upgrade_targets()

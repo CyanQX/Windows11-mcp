@@ -9,6 +9,7 @@ from typing import Any
 
 from windows_mcp.infrastructure.approvals import ApprovalStore
 from windows_mcp.infrastructure.config import CONFIG_DIR
+from windows_mcp.infrastructure.runtime_paths import portable_data_directory
 
 
 class PolicyBlocked(PermissionError):
@@ -27,6 +28,11 @@ class PolicyGate:
         self.approvals = approvals or ApprovalStore(CONFIG_DIR / "approvals")
         self.protected = [CONFIG_DIR.resolve(), Path("~/.codex").expanduser().resolve(),
                           Path("~/.ssh").expanduser().resolve(), self.approvals.directory]
+        portable = portable_data_directory()
+        self.workspace_storage = {CONFIG_DIR.resolve()}
+        if portable is not None:
+            self.protected.extend([portable.resolve(), (Path.home() / ".windows-mcp").resolve()])
+            self.workspace_storage.add(portable.resolve())
         # Backups can contain client credentials. They and update plans/runtime
         # are operator-owned data even if the workspace is configured broadly.
         self.protected.append((Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "WindowsMCP").resolve())
@@ -50,7 +56,7 @@ class PolicyGate:
         # The dedicated workspace is the sole allowed subtree inside CONFIG_DIR.
         for protected in self.protected:
             if path.is_relative_to(protected) and not (
-                protected == CONFIG_DIR.resolve()
+                protected in self.workspace_storage
                 and path.is_relative_to((CONFIG_DIR / "workspace").resolve())
             ):
                 raise PolicyBlocked("Credentials, server configuration and approval storage are protected")

@@ -7,5 +7,6 @@ recursive-include .github *.yml
 recursive-include .claude *.md
 recursive-include skills *.md
 recursive-include installer *.py
+recursive-include installer *.iss
 recursive-include installer/resources *.png *.svg *.json *.txt
 global-exclude __pycache__ *.py[cod]

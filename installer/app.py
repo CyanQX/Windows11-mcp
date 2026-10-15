@@ -197,6 +197,7 @@ def main():
         return
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", type=Path)
+    parser.add_argument("--portable-check", type=Path)
     parser.add_argument("--review-request")
     parser.add_argument("--apply-update", type=Path)
     parser.add_argument("--finish-update", type=Path)
@@ -209,6 +210,9 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         isolated_test(args.self_test)
+    elif args.portable_check:
+        from installer.portable_check import check
+        check(args.portable_check)
     elif args.apply_update:
         from installer.updates import apply_update
         apply_update(args.apply_update, args.update_nonce)
@@ -223,6 +227,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        if getattr(sys, "frozen", False) and not any(arg in sys.argv for arg in ("--serve", "serve", "auth", "--self-test", "--apply-update", "--ui-smoke")):
+        if getattr(sys, "frozen", False) and not any(arg in sys.argv for arg in ("--serve", "serve", "auth", "--self-test", "--portable-check", "--apply-update", "--ui-smoke")):
             ctypes.windll.user32.MessageBoxW(None, f"管理器未能启动：{exc}\n原配置与文件已保留。", "Windows MCP", 16)
         raise

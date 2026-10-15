@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -20,6 +21,7 @@ from packaging.version import Version
 
 from installer.backend import atomic_write
 from installer.models import ManagerError
+from installer.distribution import portable_name, setup_name, verify_portable
 from installer.storage import ProcessLock, check_path, file_hash, private_directory
 
 REPOSITORY = "CyanQX/Windows11-mcp"
@@ -34,9 +36,10 @@ def official_url(url):
 
 
 class UpdateService:
-    def __init__(self, data: Path, version: str, session=None):
+    def __init__(self, data: Path, version: str, session=None, *, portable=False):
         self.data, self.version = data, version
         self.session = session or requests.Session()
+        self.portable = portable
 
     def check(self):
         try:
@@ -50,8 +53,14 @@ class UpdateService:
                 raise ValueError("not a stable release")
             if Version(version) <= Version(self.version):
                 return {"available": False, "current": self.version, "latest": version}
-            name = f"Windows-MCP-Setup-{version}.exe"
+            name = portable_name(version) if self.portable else setup_name(version)
             asset = next((a for a in row["assets"] if a["name"] == name), None)
+            kind = "portable" if self.portable else "installer"
+            if not asset:
+                # Earlier releases published the manager itself as this EXE.
+                name = f"Windows-MCP-Setup-{version}.exe"
+                asset = next((a for a in row["assets"] if a["name"] == name), None)
+                kind = "manager"
             if not asset:
                 raise ManagerError("UPDATE_ASSET_MISSING", "新版本尚未提供完整 Windows EXE，请稍后重试")
             official_url(asset["browser_download_url"])
@@ -73,7 +82,7 @@ class UpdateService:
                         expected = match[1].lower()
             if not expected or not re.fullmatch(r"[a-fA-F0-9]{64}", expected):
                 raise ManagerError("UPDATE_CHECKSUM_MISSING", "发布资产缺少 SHA-256 校验，已禁止自动替换")
-            return {"available": True, "current": self.version, "latest": version, "name": name, "size": size, "sha256": expected.lower(), "url": asset["browser_download_url"], "notes": str(row.get("body", ""))[:12000]}
+            return {"available": True, "current": self.version, "latest": version, "kind": kind, "name": name, "size": size, "sha256": expected.lower(), "url": asset["browser_download_url"], "notes": str(row.get("body", ""))[:12000]}
         except ManagerError:
             raise
         except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
@@ -101,16 +110,29 @@ class UpdateService:
                         digest.update(block)
             with partial.open("rb") as stream:
                 signature = stream.read(2)
-            if total != release["size"] or digest.hexdigest() != release["sha256"] or signature != b"MZ":
+            expected_signature = b"PK" if release.get("kind") == "portable" else b"MZ"
+            if total != release["size"] or digest.hexdigest() != release["sha256"] or signature != expected_signature:
                 raise ManagerError("UPDATE_VERIFY_FAILED", "下载大小、程序格式或 SHA-256 不符，未替换当前版本")
+            if release.get("kind") == "portable":
+                verified = verify_portable(partial, release["latest"])
+                with zipfile.ZipFile(partial) as archive:
+                    with archive.open(verified["payload_entry"]) as source, target.open("wb") as destination:
+                        shutil.copyfileobj(source, destination)
+                if file_hash(target) != verified["payload_sha256"]:
+                    target.unlink(missing_ok=True)
+                    raise ValueError("Portable payload hash mismatch")
+                release["archive_sha256"], release["sha256"] = release["sha256"], verified["payload_sha256"]
+                return target
             os.replace(partial, target)
             return target
-        except (requests.RequestException, ValueError) as exc:
+        except (requests.RequestException, ValueError, zipfile.BadZipFile) as exc:
             raise ManagerError("UPDATE_DOWNLOAD_FAILED", "下载未完成，当前版本已保留") from exc
         finally:
             partial.unlink(missing_ok=True)
 
     def prepare(self, staged: Path, release: dict, target: Path, nonce=None):
+        if release.get("kind") == "installer":
+            raise ManagerError("UPDATE_INSTALLER_REQUIRED", "安装版更新通过已校验的安装向导执行")
         staged = check_path(staged, self.data / "updates")
         target = check_path(target)
         if file_hash(staged) != release["sha256"] or not target.is_file() or target == staged:
@@ -126,6 +148,12 @@ class UpdateService:
         path = staged.parent / "plan.json"
         atomic_write(path, json.dumps(row, indent=2).encode())
         return path, row["nonce"]
+
+    def launch_installer(self, staged: Path, release: dict):
+        check_path(staged, self.data / "updates")
+        if release.get("kind") != "installer" or file_hash(staged) != release["sha256"]:
+            raise ManagerError("UPDATE_VERIFY_FAILED", "安装包校验失败，未启动")
+        return subprocess.Popen([str(staged)], **background_args())
 
 
 def load_plan(path: Path, nonce: str):

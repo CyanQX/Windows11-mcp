@@ -7,6 +7,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from windows_mcp.infrastructure.runtime_paths import configuration_directory
+
 
 @dataclass
 class ServerConfig:
@@ -55,7 +57,7 @@ class WindowsMCPConfig:
     source_path: Path | None = None
 
 
-CONFIG_DIR = Path("~/.windows-mcp").expanduser()
+CONFIG_DIR = configuration_directory()
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 

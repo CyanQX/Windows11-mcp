@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Windows-MCP 1.2.1</h1>
+  <h1>Windows-MCP 1.2.2</h1>
   <p>给编程 AI 接入真实 Windows 桌面操作能力</p>
 </div>
 
@@ -21,23 +21,34 @@ Windows-MCP 是面向 Claude Code、Codex、DeepSeek Harness 等 AI 编程工具
 - **一键接入客户端**：支持 Codex 桌面端、Claude Code、官方 DeepSeek Harness、OpenCode 和 Gemini CLI。已安装项禁用重复安装，卸载目标在独立窗口选择；保留其他 MCP、个人配置与仍被使用的共享服务。
 - **维护与诊断**：真实连接验证、事务备份与回滚、智能修复、外部接管预览、脱敏错误报告、主题和自定义安装目录。
 - **可视化审批**：受保护操作自动打开本机审批窗口，由你核对参数并批准一次或拒绝，无需反复输入 PowerShell 命令。
-- **校验后更新**：从官方 Release 检查和下载，核对 SHA-256 后确认升级；独立助手替换、重启并验证，失败保留回滚副本。更新记录见 [CHANGELOG](CHANGELOG.md)。
+- **校验后更新**：从官方 Release 检查和下载，核对 SHA-256 后确认升级；安装版启动安装向导，便携版由独立助手替换、重启并验证，失败保留回滚副本。更新记录见 [CHANGELOG](CHANGELOG.md)。
 
 Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验证范围见 Skill 的[按需参考](skills/windows-mcp/references/advanced.md)。
 
 ## 安装指南
 
-### EXE 安装与维护管理器（推荐）
+### Windows x64 安装版与便携版
 
-1. 从 [1.2.1 Releases](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.2.1) 下载 **Windows-MCP-Setup-1.2.1.exe**。
-2. 双击打开，在左侧下拉框选择已检测到、尚未接入的编程端，可多选。Codex 桌面端可安装时首次默认选中。
-3. 点击底部“安装 Skill + MCP”，核对路径与文件预览后确认。右侧显示实际执行日志，安装完成自动核对版本、31 个工具和 Session READY。
-4. 重启对应客户端或新建会话，使用 Windows-MCP。需要再次验证时，点击“验证 MCP 连接”，选择受管目标。
-5. 卸载从底部“卸载 Skill + MCP”进入独立窗口；修复从右侧进入，备份、恢复、日志、路径与版本管理从“设置”进入。
+从 [1.2.2 Releases](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.2.2) 选择一种下载。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python。
 
-EXE 内置 Python、MCP 服务和依赖，默认安装在 `%LOCALAPPDATA%\WindowsMCP`，**无需管理员权限、无需另装 Python**。普通桌面与已安装的 Edge 无需额外下载；其他 Playwright 浏览器通道需提供相应浏览器。MCP 由客户端按需启动，界面只展示最近一次真实验证结果及时间。
+| 下载 | 使用方法 | 管理数据位置 |
+|---|---|---|
+| [Windows-MCP-Setup-v1.2.2-x64.exe](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.2.2/Windows-MCP-Setup-v1.2.2-x64.exe) | 运行安装向导，选择安装位置；完成后从开始菜单打开 Windows-MCP | 当前用户的 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [Windows-MCP-Portable-v1.2.2-x64.zip](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.2.2/Windows-MCP-Portable-v1.2.2-x64.zip) | 完整解压后双击 `Windows-MCP.exe`，直接打开管理页面 | 解压目录旁的 `data`，包含设置、日志、备份、收据、运行时和审批数据 |
 
-修改前创建私有备份；失败执行基于散列的回滚。JSONC 注释及其他配置会保留。手动修改过的接入卸载时保留冲突并提示部分完成；没有收据的外部接入需先预览并确认接管。多个客户端共享运行时，统一升级；存在其他或未知引用时保留运行时。修改数据目录前需卸载原目录的受管接入，旧日志与备份保留。
+安装版提供路径选择、开始菜单入口和系统卸载程序，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Windows-MCP`，无需管理员权限。可从 Windows“设置 → 应用 → 已安装的应用”卸载管理器；**Skill 与 MCP 接入在管理器页面中单独卸载**，卸载管理器会保留这些接入和个人数据。
+
+便携版无需安装管理器；请保留 `WindowsMCP.portable.json` 和整个文件夹，不要在 ZIP 内直接运行。完成客户端接入后需保持文件夹位置，移动或删除前先卸载对应接入。维护时仍使用用户目录中的共享维护锁，避免安装版与便携版同时修改客户端配置；加密审批数据仅供原 Windows 用户使用。
+
+打开管理页面后的步骤：
+
+1. 在左侧选择已检测到、尚未接入的编程端，可多选。**Codex 目标为桌面端**，不安装或调用 Codex CLI。
+2. 点击“安装 Skill + MCP”，核对路径与文件预览后确认。Skill 和客户端配置始终安装到下表的官方用户目录，便携模式也一样。
+3. 安装完成会真实验证服务版本、全部 31 个工具及 Session READY。重启对应客户端或新建会话后使用。
+4. 检查、验证连接、修复使用右侧按钮；卸载从底部独立窗口进入。日志、备份、恢复、外部接管和更新位于“设置”。
+5. 已有旧版接入时，从“设置 → 版本与升级”预览并升级受管接入。安装版更新启动经过校验的安装向导；便携版更新校验 ZIP 后替换程序，保留旁边的数据。
+
+修改前创建私有备份，失败执行散列校验回滚；保留其他 MCP、JSONC 注释与个人配置。多个客户端共享服务，仍有引用时保留运行时。界面显示最近一次真实验证结果及时间，MCP 由客户端按需启动。普通桌面与已安装 Edge 无需额外下载；其他 Playwright 通道需提供相应浏览器。
 
 | 编程工具 | 默认 Skill 目录 | MCP 配置 |
 |---|---|---|
@@ -49,14 +60,16 @@ EXE 内置 Python、MCP 服务和依赖，默认安装在 `%LOCALAPPDATA%\Window
 
 `~` 表示当前用户主目录。界面显示实际目录，支持 `CODEX_HOME`、`DSH_HOME` 等环境变量。DeepSeek 桌面版和 CLI 使用同一个 Harness Home。目录规则参照 [Claude Code](https://code.claude.com/docs/en/skills)、[Codex](https://learn.chatgpt.com/docs/build-skills)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/skills.md)、[OpenCode](https://opencode.ai/docs/skills/) 和 [Gemini CLI](https://geminicli.com/docs/cli/using-agent-skills/) 的官方文档。
 
-接入的是当前用户的本地编程工具；网页聊天页面和云端会话需提供能连接本机的客户端。Codex 桌面端使用用户级 `config.toml`；同一用户的其他 Codex 客户端也会读取这份配置。服务请求审批时会打开“本机操作审批”，核对原会话、参数、期限后批准一次，再让 AI 重试相同调用。审批窗口打开期间暂停 MCP 桌面输入，避免 AI 操作自己的审批界面。旧请求缺少完整参数时需重新申请。
+接入的是当前用户的本地编程工具；网页聊天与云端会话需有能连接本机的客户端。Codex 桌面端使用用户级 `config.toml`，同一用户其他 Codex 客户端也会读取它。受保护操作自动打开“本机操作审批”，由你核对会话、参数和期限后批准一次或拒绝，再让 AI 重试相同调用；审批窗口打开期间暂停 MCP 桌面输入。
+
+源码位于 [main 分支](https://github.com/CyanQX/Windows11-mcp/tree/main)，版本变化见 [CHANGELOG](CHANGELOG.md)。发布 `v<版本>` 标签后，GitHub Actions 自动运行测试、构建安装包和便携 ZIP、验证安装及卸载，再上传到 Releases；校验值见对应 Release 的 `SHA256SUMS.txt`。
 
 ### Python 服务安装（可选）
 
 已有 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/) 时，可继续安装固定版本：
 
 ```powershell
-uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.2.1"
+uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.2.2"
 ```
 
 将 `%USERPROFILE%\.local\bin\windows-mcp.exe` 作为客户端 MCP 命令，参数为 `["serve"]`。使用 Skill 可从本仓库 `main` 的 `skills/windows-mcp` 复制到上表相应目录。工具参数与可选设置见 [Skill 参考](skills/windows-mcp/references/advanced.md)。

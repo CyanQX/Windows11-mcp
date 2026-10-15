@@ -1,6 +1,6 @@
 # Windows-MCP 按需参考
 
-安装器的服务命令为 `%LOCALAPPDATA%\WindowsMCP\Windows-MCP.exe --serve`。1.2.1 打包版在请求审批时自动打开本机审批窗口；同一 EXE 的 `approve <request_id>` 也会打开窗口。由用户核对具体参数后批准一次或拒绝，AI 不得操作自己的审批界面。下文的 `windows-mcp` 示例适用于独立控制台服务。
+安装器的服务命令为 `%LOCALAPPDATA%\WindowsMCP\Windows-MCP.exe --serve`。1.2.2 打包版在请求审批时自动打开本机审批窗口；同一 EXE 的 `approve <request_id>` 也会打开窗口。由用户核对具体参数后批准一次或拒绝，AI 不得操作自己的审批界面。便携版完整解压后通过 `WindowsMCP.portable.json` 启用程序旁 `data`，服务配置位于 `data/config/config.toml`，默认文件范围为 `data/config/workspace`；安装版仍使用用户目录。下文的 `windows-mcp` 示例适用于独立控制台服务。
 
 ## 工作方式
 

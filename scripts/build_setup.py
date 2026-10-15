@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", type=Path, default=ROOT / "dist" / "setup")
+    parser.add_argument("--out", type=Path, default=ROOT / "build" / "payload")
     parser.add_argument("--work", type=Path, default=ROOT / "build" / "setup")
     args = parser.parse_args()
     if sys.platform != "win32":
@@ -26,7 +26,7 @@ def main():
     import PyInstaller.__main__
 
     args.work.mkdir(parents=True, exist_ok=True)
-    options = [str(ROOT / "installer" / "app.py"), "--onefile", "--windowed", "--clean", "--noconfirm", "--name", f"Windows-MCP-Setup-{version}", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
+    options = [str(ROOT / "installer" / "app.py"), "--onefile", "--windowed", "--clean", "--noconfirm", "--name", "Windows-MCP", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
     for module in ("windows_mcp", "fastmcp", "playwright", "customtkinter", "comtypes"):
         options += ["--collect-all", module]
     for module in ("mcp.client", "mcp.server", "mcp.shared"):
@@ -43,7 +43,7 @@ def main():
     # A version label alone cannot detect stale PyInstaller module caches.
     sys.path.insert(0, str(ROOT))
     from scripts.verify_setup_source import verify
-    result = verify(args.out / f"Windows-MCP-Setup-{version}.exe")
+    result = verify(args.out / "Windows-MCP.exe")
     (args.out / "setup-source-verification.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 
