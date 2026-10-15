@@ -29,7 +29,7 @@ LicenseFile={#RepositoryRoot}\LICENSE.md
 SetupLogging=yes
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "{#RepositoryRoot}\installer\resources\inno-languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
