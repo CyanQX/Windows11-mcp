@@ -47,7 +47,7 @@ class HealthChecker:
         self.arguments = ["--serve"] if arguments is None else arguments
         self.home = home
 
-    async def probe(self, executable: Path) -> HealthResult:
+    async def probe(self, executable: Path, *, progress=None) -> HealthResult:
         started = time.monotonic()
         now = datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -69,18 +69,26 @@ class HealthChecker:
                     env.update(USERPROFILE=str(self.home), HOMEDRIVE=self.home.drive, HOMEPATH=str(self.home)[len(self.home.drive):], APPDATA=str(self.home / "AppData" / "Roaming"), LOCALAPPDATA=str(self.home / "AppData" / "Local"))
                 transport = StdioTransport(command=str(executable), args=self.arguments, env=env)
                 async with Client(transport, timeout=self.timeout) as client:
+                    if progress:
+                        progress(0.3, "MCP stdio 初始化握手已完成")
                     tools = await client.list_tools()
                     expected = {item["name"] for item in self.manifest["tools"]}
                     if {tool.name for tool in tools} != expected:
                         return result(False, "TOOL_LIST_MISMATCH", "实际工具清单与当前版本不一致", tool_count=len(tools))
+                    if progress:
+                        progress(0.6, "实际工具清单已逐项核对")
                     response = await client.call_tool("Session", {"operation": "status"})
                     state = session_data(response)
                     if response.is_error or state.get("status") != "READY":
                         return result(False, "SESSION_NOT_READY", "MCP 会话未就绪", tool_count=len(tools), session_status=state.get("status"))
+                    if progress:
+                        progress(0.85, "Session READY 已确认，正在核对服务版本")
                     info = client.initialize_result.serverInfo
                     version = info.version
                     if version != self.manifest["version"]:
                         return result(False, "VERSION_MISMATCH", "服务版本与安装助手期望版本不一致，请通过版本与升级处理", tool_count=len(tools), server_version=version, session_status="READY")
+                    if progress:
+                        progress(1, "MCP 版本、工具清单与会话状态均已核验")
                     return result(True, "VERIFIED", "最近一次 MCP 连接验证通过", tool_count=len(tools), server_version=version, session_status="READY")
         except TimeoutError:
             return result(False, "MCP_TIMEOUT", "连接验证超时，检查进程已关闭")

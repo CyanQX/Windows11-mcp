@@ -1,4 +1,4 @@
-"""Installation facts and UI selection rules, independent of Tk and network I/O."""
+"""Installation facts and UI selection rules, independent of widgets and network I/O."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ STATUS_LABELS = {
     IntegrationStatus.INSTALLED_MANAGED: "已安装",
     IntegrationStatus.PARTIAL: "部分安装 · 需要修复",
     IntegrationStatus.BROKEN: "异常 · 查看详情",
-    IntegrationStatus.EXTERNAL: "外部接入 · 可申请接管",
+    IntegrationStatus.EXTERNAL: "外部接入 · 未纳入管理",
     IntegrationStatus.UNKNOWN: "状态未知",
 }
 

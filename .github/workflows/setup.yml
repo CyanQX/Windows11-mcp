@@ -13,6 +13,7 @@ on:
       - 'scripts/build_windows_installer.py'
       - 'scripts/smoke_setup.py'
       - 'scripts/smoke_portable.py'
+      - 'scripts/smoke_gui.py'
       - 'scripts/smoke_windows_installer.py'
       - 'scripts/verify_setup_source.py'
       - 'pyproject.toml'
@@ -58,6 +59,13 @@ jobs:
           uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/smoke_windows_installer.py $wizardPackage.FullName --payload build/payload/Windows-MCP.exe --output dist/setup/installer-validation.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/smoke_portable.py $portablePackage.FullName --output dist/setup/portable-validation.json
+      - name: Verify real Qt pages in isolated temporary homes
+        run: uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/smoke_gui.py build/payload/Windows-MCP.exe --out build/visual
+      - name: Save native visual acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-mcp-ui
+          path: build/visual/*
       - name: Save executable and validation record
         uses: actions/upload-artifact@v4
         with:

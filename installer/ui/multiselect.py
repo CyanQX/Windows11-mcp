@@ -1,79 +1,81 @@
-"""One installation selector; disabled state is enforced by the selection model."""
-
-import customtkinter as ctk
-
-from installer.models import Presence, IntegrationStatus
-from installer.ui.theme import COLORS, FONT, button, label, accessible_checkbox, work_area
+"""Persistent multi-selection in an elevated, distinct glass popup."""
+from PySide6.QtCore import Qt, QPoint
+from PySide6.QtWidgets import QCheckBox, QDialog, QScrollArea, QWidget
+from installer.ui.theme import GlassFrame, button, column, label, row
 
 
-class MultiSelect(ctk.CTkFrame):
-    def __init__(self, parent, model, icons, changed):
-        super().__init__(parent, fg_color="transparent")
-        self.model, self.icons, self.changed = model, icons, changed
-        self.popup = None
-        self.trigger = button(self, "选择编程端", self.toggle, icon=icons.get("chevron", 18), anchor="w", width=200)
-        self.trigger.pack(fill="x")
+class MultiSelect(QWidget):
+    def __init__(self, parent, model, on_change):
+        super().__init__(parent)
+        self.model, self.on_change = model, on_change
+        self.popup, self.checks = None, {}
+        self.trigger = button("选择可安装的编程端", self.toggle, icon="chevron")
+        self.trigger.setAccessibleName("选择可安装的编程端，可多选")
+        column(self, 0, 0).addWidget(self.trigger)
 
     def refresh(self):
-        names = [self.model.states[key].display_name for key in self.model.selected]
-        self.trigger.configure(text=names[0] if len(names) == 1 else f"已选择 {len(names)} 个编程端" if names else "选择可安装的编程端")
-        if self.popup and self.popup.winfo_exists():
-            self.popup.destroy()
-            self.popup = None
+        count = len(self.model.selected)
+        self.trigger.setText(self.model.states[next(iter(self.model.selected))].display_name if count == 1 else f"已选择 {count} 个编程端" if count else "选择可安装的编程端")
+        for key, checkbox in self.checks.items():
+            state = self.model.states.get(key)
+            checkbox.blockSignals(True)
+            checkbox.setChecked(key in self.model.selected)
+            checkbox.setEnabled(bool(state and state.install_eligible))
+            checkbox.blockSignals(False)
 
     def toggle(self):
-        if self.popup and self.popup.winfo_exists():
-            self.popup.destroy()
-            self.popup = None
+        if self.popup and self.popup.isVisible():
+            self.popup.close()
             return
-        popup = self.popup = ctk.CTkToplevel(self)
-        popup.title("选择安装目标")
-        popup.overrideredirect(True)
-        popup.configure(fg_color=COLORS["panel"])
-        popup.transient(self.winfo_toplevel())
-        popup.resizable(False, False)
-        width = max(360, self.winfo_width())
-        left, top, right, bottom = work_area(popup)
-        scaling = popup._get_window_scaling()
-        height = min(430, int((bottom - top - 65) / scaling))
-        x = min(self.winfo_rootx(), int(right - width * scaling - 10))
-        y = self.winfo_rooty() + self.winfo_height() + 8
-        if y + height * scaling + 40 > bottom:
-            y = max(top + 10, int(self.winfo_rooty() - height * scaling - 40))
-        popup.geometry(f"{width}x{height}+{x}+{y}")
-        label(popup, "可多选 · 已接入目标请使用维护功能", size=12, color="secondary").pack(anchor="w", padx=18, pady=(15, 8))
-        body = ctk.CTkScrollableFrame(popup, fg_color="transparent", height=265)
-        body.pack(fill="both", expand=True, padx=8)
+        popup = QDialog(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        popup.setWindowTitle("选择安装目标")
+        frame = GlassFrame(popup, popup=True)
+        column(popup, 5, 0).addWidget(frame)
+        body = column(frame, 18, 10)
+        body.addWidget(label("添加编程端", size=16, bold=True))
+        body.addWidget(label("仅对已检测到、尚未接入的客户端安装", role="secondary", wrap=True))
+        scroll, content = QScrollArea(), QWidget()
+        scroll.setWidgetResizable(True)
+        items = column(content, 0, 7)
         self.checks = {}
         for key, state in self.model.states.items():
-            row = ctk.CTkFrame(body, fg_color=COLORS["card"], corner_radius=8)
-            row.pack(fill="x", pady=4, padx=4)
-            variable = ctk.BooleanVar(value=key in self.model.selected)
-            available = state.install_eligible
-            status = state.label if state.status != IntegrationStatus.AVAILABLE else "可安装" if available else "路径无效" if state.presence == Presence.PATH_INVALID else "未检测到客户端"
-            checkbox = ctk.CTkCheckBox(row, text=f"{state.display_name}\n{status}", variable=variable, state="normal" if available else "disabled", command=lambda k=key, v=variable: self.choose(k, v.get()), font=(FONT, 13), checkbox_width=19, checkbox_height=19, text_color=COLORS["text"], text_color_disabled=COLORS["secondary"], fg_color=COLORS["accent"], border_color=COLORS["border"])
-            checkbox.pack(fill="x", padx=14, pady=12)
-            accessible_checkbox(checkbox)
-            self.checks[key] = checkbox, variable
-        actions = ctk.CTkFrame(popup, fg_color="transparent")
-        actions.pack(fill="x", padx=18, pady=12)
-        button(actions, "全选可安装项", self.select_all, width=145).pack(side="left")
-        button(actions, "完成", self.finish, primary=True, width=110).pack(side="right")
-        popup.bind("<Escape>", lambda _: self.finish())
-        popup.bind("<Control-a>", lambda _: self.select_all())
-        popup.after(50, lambda: (popup.lift(), popup.focus_force()))
+            entry = GlassFrame()
+            stack = column(entry, 8, 0)
+            checkbox = QCheckBox(state.display_name)
+            checkbox.setChecked(key in self.model.selected)
+            checkbox.setEnabled(state.install_eligible)
+            checkbox.toggled.connect(lambda checked, k=key: self.choose(k, checked))
+            stack.addWidget(checkbox)
+            stack.addWidget(label(state.label, size=11, role="secondary"))
+            items.addWidget(entry)
+            self.checks[key] = checkbox
+        items.addStretch()
+        scroll.setWidget(content)
+        body.addWidget(scroll, 1)
+        body.addWidget(row(button("全选可安装项", self.select_all, compact=True), None, button("完成", popup.close, primary=True, compact=True)))
+        available = self.screen().availableGeometry()
+        popup.resize(min(max(self.width() + 36, 350), available.width() - 20), min(545, available.height() - 30))
+        position = self.mapToGlobal(QPoint(0, self.height() + 7))
+        x = max(available.left() + 5, min(position.x(), available.right() - popup.width() - 5))
+        y = position.y() if position.y() + popup.height() < available.bottom() else max(available.top() + 5, self.mapToGlobal(QPoint()).y() - popup.height() - 7)
+        popup.move(x, y)
+        self.popup = popup
+        popup.finished.connect(self._closed)
+        popup.show()
 
-    def choose(self, key, selected):
-        if not self.model.choose(key, selected):
-            self.checks[key][1].set(False)
-        self.changed()
+    def _closed(self):
+        self.checks = {}
+        if self.popup:
+            self.popup.deleteLater()
+        self.popup = None
+
+    def choose(self, key, checked):
+        self.model.choose(key, checked)
+        self.refresh()
+        self.on_change()
 
     def select_all(self):
         self.model.select_all()
-        for key, (_, variable) in self.checks.items():
-            variable.set(key in self.model.selected)
-        self.changed()
-
-    def finish(self):
         self.refresh()
-        self.changed()
+        self.on_change()

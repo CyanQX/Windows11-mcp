@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import copy
+import re
 from pathlib import Path
 
 from installer.backend import Installer, atomic_write, profiles
@@ -24,13 +26,14 @@ class SettingsService:
             self.portable_data = check_path(self.portable_data).resolve()
         self.path = (self.portable_data / "config" if self.portable_data is not None else self.home / ".windows-mcp") / "manager.json"
         self.defaults = {"schema": 1, "theme": "light", "data_dir": str(Path(self.env.get("LOCALAPPDATA", str(home / "AppData" / "Local"))) / "WindowsMCP"), "environment_overrides": {}, "client_executables": {}, "health_timeout": 60, "log_retention_days": 30, "log_max_mb": 50}
+        self.defaults.update(appearance={"log_background": "blue", "log_custom_color": "#E8F3FF", "glass_strength": 65, "reduce_motion": False}, layout={})
         if self.portable_data is not None:
             self.defaults["data_dir"] = str(self.portable_data)
         self.value = self.load()
 
     def load(self):
         if not self.path.exists():
-            return dict(self.defaults)
+            return copy.deepcopy(self.defaults)
         check_path(self.path, self.portable_data or self.home)
         try:
             value = {**self.defaults, **json.loads(self.path.read_text(encoding="utf-8"))}
@@ -72,8 +75,17 @@ class SettingsService:
     def validate(self, value: dict):
         if self.portable_data is not None and Path(value["data_dir"]).absolute() != self.portable_data:
             raise ManagerError("PORTABLE_DATA_FIXED", "便携版的数据目录固定为程序旁的 data 文件夹")
-        if value.get("theme") not in {"light", "dark", "system"}:
+        if value.get("theme") not in {"light", "warm", "dark", "system"}:
             raise ManagerError("INVALID_THEME", "主题设置无效")
+        appearance = value.get("appearance", self.defaults["appearance"])
+        if not isinstance(appearance, dict) or appearance.get("log_background") not in {"blue", "warm", "dark", "custom"} or not re.fullmatch(r"#[0-9a-fA-F]{6}", str(appearance.get("log_custom_color", ""))):
+            raise ManagerError("INVALID_APPEARANCE", "日志背景设置无效")
+        strength = appearance.get("glass_strength")
+        if type(strength) is not int or not 0 <= strength <= 100 or type(appearance.get("reduce_motion")) is not bool:
+            raise ManagerError("INVALID_APPEARANCE", "玻璃强度或动画设置无效")
+        layout = value.get("layout", {})
+        if not isinstance(layout, dict) or len(json.dumps(layout)) > 100000:
+            raise ManagerError("INVALID_LAYOUT", "布局设置无效")
         for name, lower, upper in (("health_timeout", 5, 180), ("log_retention_days", 1, 365), ("log_max_mb", 5, 500)):
             if type(value.get(name)) is not int or not lower <= value[name] <= upper:
                 raise ManagerError("INVALID_SETTING", f"{name} 超出允许范围 {lower}～{upper}")
@@ -92,7 +104,7 @@ class SettingsService:
                 check_path(Path(target))
 
     def save(self, value: dict):
-        value = {**self.defaults, **value}
+        value = {**copy.deepcopy(self.defaults), **value}
         self.validate(value)
         # Changing directories cannot strand old receipts or silently migrate integrations.
         if any(value[key] != self.value.get(key) for key in ("data_dir", "environment_overrides")):

@@ -41,16 +41,20 @@ class UpdateService:
         self.session = session or requests.Session()
         self.portable = portable
 
-    def check(self):
+    def check(self, progress=None):
         try:
             response = self.session.get(f"https://api.github.com/repos/{REPOSITORY}/releases/latest", timeout=(10, 30), headers={"Accept": "application/vnd.github+json", "User-Agent": "Windows-MCP-Manager/" + self.version})
             response.raise_for_status()
+            if progress:
+                progress(0.35, "官方版本响应已收到")
             if len(response.content) > 2 * 1024 * 1024:
                 raise ValueError("release metadata too large")
             row = response.json()
             version = str(Version(row["tag_name"].removeprefix("v")))
             if row.get("draft") or row.get("prerelease"):
                 raise ValueError("not a stable release")
+            if progress:
+                progress(0.55, "稳定版本信息已核对")
             if Version(version) <= Version(self.version):
                 return {"available": False, "current": self.version, "latest": version}
             name = portable_name(version) if self.portable else setup_name(version)
@@ -67,6 +71,8 @@ class UpdateService:
             size = asset.get("size")
             if type(size) is not int or not 1024 < size <= MAX_SIZE:
                 raise ValueError("invalid size")
+            if progress:
+                progress(0.75, "官方安装资产与下载大小已核对")
             digest = asset.get("digest") or ""
             expected = digest.removeprefix("sha256:") if digest.startswith("sha256:") else None
             checksum = next((a for a in row["assets"] if a["name"] == "SHA256SUMS.txt"), None)
@@ -82,13 +88,15 @@ class UpdateService:
                         expected = match[1].lower()
             if not expected or not re.fullmatch(r"[a-fA-F0-9]{64}", expected):
                 raise ManagerError("UPDATE_CHECKSUM_MISSING", "发布资产缺少 SHA-256 校验，已禁止自动替换")
+            if progress:
+                progress(1, "官方校验信息已核对")
             return {"available": True, "current": self.version, "latest": version, "kind": kind, "name": name, "size": size, "sha256": expected.lower(), "url": asset["browser_download_url"], "notes": str(row.get("body", ""))[:12000]}
         except ManagerError:
             raise
         except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
             raise ManagerError("UPDATE_CHECK_FAILED", "无法读取或校验官方更新信息，当前版本已保留") from exc
 
-    def download(self, release):
+    def download(self, release, progress=None):
         official_url(release["url"])
         if not re.fullmatch(r"[a-f0-9]{64}", release["sha256"]):
             raise ManagerError("UPDATE_CHECKSUM_MISSING", "校验值无效")
@@ -108,11 +116,15 @@ class UpdateService:
                             raise ValueError("download exceeded declared size")
                         stream.write(block)
                         digest.update(block)
+                        if progress:
+                            progress(0.9 * total / release["size"], f"已下载 {total / 1048576:.1f} / {release['size'] / 1048576:.1f} MB")
             with partial.open("rb") as stream:
                 signature = stream.read(2)
             expected_signature = b"PK" if release.get("kind") == "portable" else b"MZ"
             if total != release["size"] or digest.hexdigest() != release["sha256"] or signature != expected_signature:
                 raise ManagerError("UPDATE_VERIFY_FAILED", "下载大小、程序格式或 SHA-256 不符，未替换当前版本")
+            if progress:
+                progress(0.95, "下载完成，大小、格式及 SHA-256 已核验")
             if release.get("kind") == "portable":
                 verified = verify_portable(partial, release["latest"])
                 with zipfile.ZipFile(partial) as archive:

@@ -1,207 +1,321 @@
-"""Settings are details, not a dense permanent grid on the main window."""
+"""One ordered settings hub; appearance updates live, maintenance remains explicit."""
+from __future__ import annotations
 
-import json
+import copy
 import sys
 import webbrowser
 from pathlib import Path
-from tkinter import messagebox
 
-import customtkinter as ctk
+from PySide6.QtCore import Qt, QPoint, QTimer
+from PySide6.QtGui import QColor
+from shiboken6 import isValid
+from PySide6.QtWidgets import QCheckBox, QColorDialog, QComboBox, QDialog, QLineEdit, QProgressBar, QSlider, QSpinBox, QTabWidget, QTextBrowser
 
 from installer.settings import ENV_KEYS
-from installer.ui.dialogs import Detail, Diagnostics, Preview, Targets, text_box
-from installer.ui.theme import COLORS, FONT, button, label, work_area
+from installer.ui.dialogs import Detail, Diagnostics, Preview, Targets, disclosure, fact
+from installer.ui.theme import GlassFrame, button, column, label, row
 from installer.updates import UpdateService, start_update
 
 
-class SettingsHub(Detail):
+class SettingsHub(QDialog):
     def __init__(self, owner):
-        super().__init__(owner, "设置", "660x650")
-        self.overrideredirect(True)
-        self.minsize(230, 300)
-        self.resizable(False, False)
-        left, top, right, bottom = work_area(self)
-        scale = self._get_window_scaling()
-        width, height = 240, min(350, int((bottom - top - 60) / scale))
-        x = min(int(right - width * scale - 15), owner.settings_button.winfo_rootx() + owner.settings_button.winfo_width() - int(width * scale))
-        y = min(owner.settings_button.winfo_rooty() + owner.settings_button.winfo_height() + 8, int(bottom - height * scale - 15))
-        self.geometry(f"{width}x{height}+{max(left + 10, x)}+{max(top + 10, y)}")
-        body = ctk.CTkFrame(self, fg_color="transparent") if height >= 350 else ctk.CTkScrollableFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=6, pady=6)
-        for name, icon, action in [
-            ("检查更新", "refresh", lambda: check_updates(owner)),
-            ("版本与升级", "update", lambda: versions(owner)),
-            ("日志与诊断", "document", lambda: Diagnostics(owner)),
-            ("错误报告导出", "shield", lambda: Diagnostics(owner, True)),
-            ("配置与恢复", "restore", lambda: backups(owner)),
-            ("接管外部接入", "link", lambda: Targets(owner, "adopt")),
-            ("安装目录", "folder", lambda: preferences(owner, paths=True)),
-            ("高级设置", "settings", lambda: preferences(owner)),
-            ("许可证与关于", "info", lambda: about(owner)),
-        ]:
-            item = button(body, name, lambda a=action: (self.destroy(), a()), icon=owner.icons.get(icon), anchor="w")
-            item.configure(height=32, border_width=0, fg_color="transparent")
-            item.pack(fill="x", padx=2, pady=2)
-        self.after(100, self.grab_set)
-        self.bind("<ButtonPress-1>", self.dismiss_outside, add=True)
+        super().__init__(owner, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setWindowTitle("设置")
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        frame = GlassFrame(self, popup=True)
+        column(self, 5, 0).addWidget(frame)
+        body = column(frame, 12, 4)
+        body.addWidget(label("设置", size=14, bold=True))
+        actions = [("外观", "settings", lambda: Appearance(owner)), ("高级设置", "settings", lambda: Preferences(owner)), ("配置与恢复", "restore", lambda: Backups(owner)), ("安装目录", "folder", lambda: Preferences(owner, paths=True)), ("检查更新", "update", lambda: Updates(owner)), ("日志与诊断", "document", lambda: Diagnostics(owner)), ("关于", "info", lambda: About(owner))]
+        self.names = []
+        for name, icon, action in actions:
+            self.names.append(name)
+            control = button(name, lambda invoke=action: (self.close(), invoke()), icon=icon, compact=True)
+            control.setMinimumWidth(210)
+            if name == "检查更新" and owner.update_release and owner.update_release["available"]:
+                badge = label("new", role="error", bold=True)
+                body.addWidget(row(control, badge))
+            else:
+                body.addWidget(control)
+        self.adjustSize()
+        bounds = owner.screen().availableGeometry()
+        point = owner.settings_button.mapToGlobal(QPoint(owner.settings_button.width() - self.width(), owner.settings_button.height() + 5))
+        self.move(max(bounds.left(), min(point.x(), bounds.right() - self.width())), max(bounds.top(), min(point.y(), bounds.bottom() - self.height())))
+        owner.dialogs.append(self)
+        self.finished.connect(lambda _: owner.dialogs.remove(self) if self in owner.dialogs else None)
+        self.show()
 
-    def dismiss_outside(self, event):
-        if not (self.winfo_rootx() <= event.x_root <= self.winfo_rootx() + self.winfo_width() and self.winfo_rooty() <= event.y_root <= self.winfo_rooty() + self.winfo_height()):
-            self.destroy()
+
+class Appearance(Detail):
+    def __init__(self, owner):
+        super().__init__(owner, "外观", (700, 650), "外观直接生效并保存；不会重启 MCP 或重新扫描客户端。")
+        body = self.scroll()
+        self.controls = {}
+        for key, title, values in (("theme", "全局主题", [("浅蓝玻璃", "light"), ("暖色护眼", "warm"), ("深色", "dark"), ("跟随系统", "system")]), ("log_background", "日志背景", [("浅蓝", "blue"), ("暖色", "warm"), ("深色", "dark"), ("自定义颜色", "custom")])):
+            body.addWidget(label(title, size=14, bold=True))
+            choice = QComboBox()
+            for text, value in values:
+                choice.addItem(text, value)
+            current = owner.settings.value["theme"] if key == "theme" else owner.settings.value["appearance"][key]
+            choice.setCurrentIndex(choice.findData(current))
+            self.controls[key] = choice
+            choice.currentIndexChanged.connect(self.save)
+            body.addWidget(choice)
+        self.color_button = button("选择日志自定义颜色", self.choose_color)
+        body.addWidget(self.color_button)
+        body.addWidget(label("玻璃强度", size=14, bold=True))
+        self.strength = QSlider(Qt.Orientation.Horizontal)
+        self.strength.setRange(0, 100)
+        self.strength.setValue(owner.settings.value["appearance"]["glass_strength"])
+        body.addWidget(self.strength)
+        self.strength.sliderReleased.connect(self.save)
+        self.strength.valueChanged.connect(self.schedule_save)
+        self.save_timer = QTimer(self)
+        self.save_timer.setSingleShot(True)
+        self.save_timer.timeout.connect(self.save)
+        self.reduced = QCheckBox("减少动画，保持稳定、直接的反馈")
+        self.reduced.setChecked(owner.settings.value["appearance"]["reduce_motion"])
+        self.reduced.toggled.connect(self.save)
+        body.addWidget(self.reduced)
+        body.addWidget(label("拖动面板标题可自由停靠、换位或浮动；拖动分隔边可调整大小，继续向最小尺寸以内拖动可收起。", role="secondary", wrap=True))
+        body.addWidget(button("恢复默认布局", owner.workspace.reset, icon="restore"))
+        body.addStretch()
+        self.notice = label("", role="secondary", wrap=True)
+        self.body.addWidget(self.notice)
+        self.body.addWidget(row(None, button("完成", self.close, primary=True)))
+
+    def schedule_save(self):
+        if hasattr(self, "save_timer"):
+            self.save_timer.start(180)
+
+    def choose_color(self):
+        color = QColorDialog.getColor(QColor(self.owner.settings.value["appearance"]["log_custom_color"]), self, "日志背景颜色")
+        if color.isValid():
+            value = copy.deepcopy(self.owner.settings.value)
+            value["appearance"]["log_custom_color"] = color.name()
+            value["appearance"]["log_background"] = "custom"
+            try:
+                self.owner.settings.save(value)
+            except Exception as exc:
+                self.notice.setText(str(exc))
+                return
+            choice = self.controls["log_background"]
+            choice.blockSignals(True)
+            choice.setCurrentIndex(choice.findData("custom"))
+            choice.blockSignals(False)
+            self.owner.apply_appearance()
+
+    def save(self, *_):
+        if not hasattr(self, "reduced"):
+            return
+        try:
+            value = copy.deepcopy(self.owner.settings.value)
+            value["theme"] = self.controls["theme"].currentData()
+            value["appearance"].update(log_background=self.controls["log_background"].currentData(), glass_strength=self.strength.value(), reduce_motion=self.reduced.isChecked())
+            self.owner.settings.save(value)
+            self.owner.apply_appearance()
+            self.notice.setText("外观已保存")
+        except Exception as exc:
+            self.notice.setText(str(exc))
+
+    def closeEvent(self, event):
+        self.save_timer.stop()
+        self.save()
+        super().closeEvent(event)
 
 
 def paths(owner):
-    value = {key: {**details, "状态": owner.selection.states[key].label, "客户端": owner.selection.states[key].client_path, "收据": str(owner.service.backend.receipt_path(owner.service.backend.clients[key]))} for key, details in owner.settings.path_details().items()}
-    Preview(owner, "实际安装路径", {"共享运行时": str(owner.service.backend.executable), "客户端": value, "说明": "Codex 仅检测桌面端；其用户 MCP 配置与同一用户的其他 Codex 客户端共享。"})
+    value = {"共享运行时": str(owner.service.backend.executable)}
+    for key, details in owner.settings.path_details().items():
+        state = owner.selection.states.get(key)
+        value[state.display_name if state else key] = details
+    return Preview(owner, "实际安装目录", value)
 
 
-def preferences(owner, paths=False):
-    window = Detail(owner, "安装目录" if paths else "高级设置", "820x690")
-    label(window, "安装目录" if paths else "高级设置", size=22, bold=True).pack(anchor="w", padx=22, pady=(18, 6))
-    label(window, "仅修改管理器与客户端目录设置；现有受管接入需先卸载，才能切换数据目录。" if paths else "目录环境变量和客户端程序路径仅用于当前用户；不更改 MCP 权限策略。", size=12, color="secondary", wraplength=760).pack(anchor="w", padx=22)
-    body = ctk.CTkScrollableFrame(window, fg_color="transparent")
-    body.pack(fill="both", expand=True, padx=16, pady=12)
-    fields = {}
-    value = owner.settings.value
+class Preferences(Detail):
+    def __init__(self, owner, paths=False):
+        self.paths_mode = paths
+        super().__init__(owner, "安装目录" if paths else "高级设置", (780, 660), "目录设置仅作用于当前用户。切换受管目录前需先卸载对应接入。" if paths else "连接超时、日志保留与客户端路径；不更改 MCP 权限策略。")
+        body = self.scroll()
+        self.fields = {}
+        value = owner.settings.value
+        def field(key, title, initial, limits=None):
+            body.addWidget(label(title, size=12))
+            control = QSpinBox() if limits else QLineEdit(str(initial))
+            if limits:
+                control.setRange(*limits)
+                control.setValue(initial)
+            self.fields[key] = control
+            body.addWidget(control)
+        if paths:
+            field("data_dir", "共享数据目录（备份、日志、收据与运行时）", value["data_dir"])
+            self.fields["data_dir"].setEnabled(owner.settings.portable_data is None)
+            for key in sorted(ENV_KEYS):
+                field(key, key + "（留空沿用系统环境与官方默认目录）", value["environment_overrides"].get(key, ""))
+            body.addWidget(button("查看当前实际目录", lambda: globals()["paths"](owner)))
+        else:
+            for key, title, limits in (("health_timeout", "连接检查超时（秒）", (5, 180)), ("log_retention_days", "日志保留天数", (1, 365)), ("log_max_mb", "日志总容量上限（MB）", (5, 500))):
+                field(key, title, value[key], limits)
+            for key in owner.service.backend.clients:
+                name = owner.selection.states[key].display_name if key in owner.selection.states else key
+                field("exe:" + key, name + " 程序路径（可选，Codex 须为桌面 GUI EXE）", value["client_executables"].get(key, ""))
+        self.body.addWidget(row(button("恢复本页默认", lambda: self.save(True)), None, button("取消", self.close), button("保存", self.save, primary=True)))
 
-    def field(key, title, default):
-        label(body, title, size=12).pack(anchor="w", padx=5, pady=(8, 3))
-        entry = ctk.CTkEntry(body, height=36, font=(FONT, 12))
-        entry.pack(fill="x", padx=5)
-        entry.insert(0, str(default))
-        fields[key] = entry
-
-    if paths:
-        field("data_dir", "MCP 共享数据目录（备份、收据、日志、运行时）", value["data_dir"])
-        if owner.settings.portable_data is not None:
-            fields["data_dir"].configure(state="disabled")
-        for key in sorted(ENV_KEYS):
-            field(key, f"{key}（留空沿用系统环境 / 官方默认）", value["environment_overrides"].get(key, ""))
-        button(body, "查看当前实际路径", lambda: globals()["paths"](owner), icon=owner.icons.get("folder")).pack(anchor="w", padx=5, pady=14)
-    else:
-        label(body, "主题", size=13).pack(anchor="w", padx=5, pady=6)
-        theme = ctk.CTkOptionMenu(body, values=["light", "dark", "system"])
-        theme.set(value["theme"])
-        theme.pack(anchor="w", padx=5)
-        fields["theme"] = theme
-        for key, title in (("health_timeout", "连接检查超时（5～180 秒）"), ("log_retention_days", "日志保留天数（1～365）"), ("log_max_mb", "日志总容量上限 MB（5～500）")):
-            field(key, title, value[key])
-        for key in owner.service.backend.clients:
-            field(f"exe:{key}", f"{owner.selection.states[key].display_name} 程序路径（可选；Codex 必须为桌面 GUI EXE）", value["client_executables"].get(key, ""))
-    controls = ctk.CTkFrame(window, fg_color="transparent")
-    controls.pack(fill="x", padx=22, pady=18)
-
-    def save(reset=False):
-        try:
-            if owner.busy:
-                raise ValueError("维护任务进行中，请完成后再修改设置。")
-            updated = json.loads(json.dumps(owner.settings.defaults if reset else value))
-            if not reset:
-                for key, entry in fields.items():
-                    raw = entry.get().strip()
-                    if key in ENV_KEYS:
-                        updated["environment_overrides"][key] = raw
-                    elif key.startswith("exe:"):
-                        updated["client_executables"][key[4:]] = raw
-                    else:
-                        updated[key] = int(raw) if key in {"health_timeout", "log_retention_days", "log_max_mb"} else raw
-            owner.settings.save(updated)
-            owner.reload_service()
-            window.destroy()
-            owner.scan()
-        except Exception as exc:
-            messagebox.showerror("设置未保存", str(exc), parent=window)
-
-    button(controls, "恢复默认", lambda: save(True), width=120).pack(side="left")
-    button(controls, "保存并重新检测", save, primary=True, width=180).pack(side="right")
-
-
-def backups(owner):
-    window = Detail(owner, "备份管理与崩溃恢复", "820x650")
-    label(window, "备份管理与崩溃恢复", size=22, bold=True).pack(anchor="w", padx=22, pady=(20, 6))
-    label(window, "配置恢复只替换 Windows-MCP 项；保留后来添加的其他 MCP 和个人设置。", size=12, color="secondary").pack(anchor="w", padx=22)
-    body = ctk.CTkScrollableFrame(window, fg_color="transparent")
-    body.pack(fill="both", expand=True, padx=16, pady=12)
-    rows = owner.service.backups()
-    for row in rows:
-        frame = ctk.CTkFrame(body, fg_color=COLORS["panel"])
-        frame.pack(fill="x", pady=5)
-        label(frame, f"{row['profile_id']} · {row['operation']} · {row['state']}\n{row['id']}", size=12, justify="left").pack(side="left", padx=12, pady=12)
-        choice = ctk.CTkOptionMenu(frame, values=row.get("profiles") or [row["profile_id"]], width=110)
-        if row.get("profiles"):
-            choice.pack(side="right", padx=6)
-
-        def preview(item=row, selector=choice):
-            try:
-                if item["state"] in {"prepared", "writing", "recovery_required"}:
-                    plan = {**item, "说明": "对本次交易文件执行基于散列的回滚；用户后续修改会保留并报告冲突。"}
-                    Preview(owner, "崩溃恢复预览", plan, lambda: owner.run(lambda: owner.service.recover(item["id"])))
-                else:
-                    key = selector.get()
-                    plan = owner.service.preview_restore(item["id"], key)
-                    Preview(owner, "配置恢复预览", plan, lambda: owner.run(lambda: owner.service.restore(item["id"], plan["digest"], key)))
-            except Exception as exc:
-                messagebox.showerror("无法预览", str(exc), parent=window)
-        button(frame, "恢复预览", preview, width=120).pack(side="right", padx=12)
-    if not rows:
-        label(body, "尚无备份记录。安装前会自动创建快照。", color="secondary").pack(pady=40)
-    button(window, "手动创建备份", lambda: Targets(owner, "backup"), icon=owner.icons.get("backup")).pack(anchor="w", padx=22, pady=(0, 18))
-
-
-def versions(owner):
-    states = owner.selection.states
-    value = {"管理器版本": owner.version, "程序": str(Path(sys.executable)), "受管接入": {key: {"version": state.detected_version or "未知 / 旧版收据", "state": state.label, "problems": state.problem_codes} for key, state in states.items() if state.receipt_valid}, "升级规则": "共享运行时统一升级；先备份、预览、确认、核验，失败一起回滚。旧版收据仅在明确升级或修复后补充版本信息。"}
-    window = Preview(owner, "版本与升级", value)
-    controls = ctk.CTkFrame(window, fg_color="transparent")
-    controls.pack(fill="x", padx=20, pady=(0, 18))
-    button(controls, "检查官方更新", lambda: check_updates(owner), width=160).pack(side="left")
-    button(controls, "升级现有接入至此版本", lambda: Targets(owner, "upgrade"), primary=True, width=215).pack(side="right")
-
-
-def check_updates(owner):
-    updater = UpdateService(owner.service.backend.data, owner.version, portable=owner.settings.portable_data is not None)
-
-    def checked(release):
-        if not release["available"]:
-            messagebox.showinfo("检查更新", f"当前 {owner.version}；官方最新稳定版 {release['latest']}。暂无更新。", parent=owner)
+    def save(self, reset=False):
+        owner = self.owner
+        if owner.busy:
+            owner.error("任务进行中", "请在当前维护任务结束后保存高级或目录设置。")
             return
+        try:
+            previous = owner.settings.value
+            updated = copy.deepcopy(previous)
+            for key, control in self.fields.items():
+                if key in ENV_KEYS:
+                    updated["environment_overrides"][key] = "" if reset else control.text().strip()
+                elif key.startswith("exe:"):
+                    updated["client_executables"][key[4:]] = "" if reset else control.text().strip()
+                else:
+                    updated[key] = owner.settings.defaults[key] if reset else control.value() if isinstance(control, QSpinBox) else control.text().strip()
+            owner.settings.save(updated)
+            structural = any(updated[key] != previous[key] for key in ("data_dir", "environment_overrides"))
+            discovery_changed = updated["client_executables"] != previous["client_executables"]
+            if structural:
+                owner.reload_service()
+            else:
+                owner.service.health.timeout = updated["health_timeout"]
+                owner.service.log.retention_days = updated["log_retention_days"]
+                owner.service.log.max_bytes = updated["log_max_mb"] * 1048576
+                if discovery_changed:
+                    owner.service.detector.discovery = owner.settings.discovery()
+            self.close()
+            if structural or discovery_changed:
+                owner.scan()
+        except Exception as exc:
+            owner.error("设置未保存", str(exc))
 
-        def download():
-            owner.run(lambda: updater.download(release), downloaded)
 
-        def downloaded(path):
-            if not getattr(sys, "frozen", False):
-                messagebox.showinfo("下载完成", f"已校验：{path}\n源码运行模式不替换 Python，请使用 EXE 更新。", parent=owner)
+class Backups(Detail):
+    def __init__(self, owner):
+        super().__init__(owner, "配置与恢复", (820, 620), "恢复仅处理 Windows-MCP 项，保留其他 MCP 和个人设置；先预览，再确认。")
+        body = self.scroll()
+        for record in owner.service.backups():
+            card = GlassFrame()
+            stack = column(card, 14, 8)
+            stack.addWidget(label(f"{record['profile_id']} · {record['operation']} · {record['state']}", bold=True))
+            stack.addWidget(label(record["id"], size=11, role="secondary"))
+            choice = QComboBox()
+            choice.addItems(record.get("profiles") or [record["profile_id"]])
+            stack.addWidget(row(choice, None, button("恢复预览", lambda item=record, selected=choice: self.preview(item, selected.currentText()))))
+            body.addWidget(card)
+        if not owner.service.backups():
+            body.addWidget(label("尚无备份记录。安装或修改前会自动创建快照。", role="secondary", wrap=True))
+        body.addStretch()
+        self.body.addWidget(row(button("创建配置备份", lambda: Targets(owner, "backup"), icon="backup"), None, button("关闭", self.close)))
+
+    def preview(self, item, key):
+        owner = self.owner
+        if owner.busy:
+            return
+        if item["state"] in {"prepared", "writing", "recovery_required"}:
+            def recover():
+                conflicts = owner.service.recover(item["id"])
+                return [{"id": item["profile_id"], "ok": not conflicts, "message": "交易已恢复" if not conflicts else "存在用户修改或文件占用，请查看技术详情", "conflicts": conflicts}]
+            from installer.ui.dialogs import Results
+            Preview(owner, "崩溃恢复预览", {**item, "说明": "按文件散列恢复本次交易；保留用户后续修改并报告冲突。"}, lambda: owner.run(recover, lambda results: Results(owner, "交易恢复结果", results)))
+        else:
+            owner.run(lambda: owner.service.preview_restore(item["id"], key), lambda plan: Preview(owner, "配置恢复预览", plan, lambda: owner.run(lambda: owner.service.restore(item["id"], plan["digest"], key))), rescan=False)
+
+
+class Updates(Detail):
+    def __init__(self, owner):
+        super().__init__(owner, "检查更新", (790, 650), "官方 Release 检查、下载校验和版本升级集中在这里。")
+        self.updater = UpdateService(owner.service.backend.data, owner.version, portable=owner.settings.portable_data is not None)
+        self.release = None
+        body = self.scroll()
+        fact(body, "当前管理器版本", owner.version)
+        self.notice = label("尚未检查官方更新", size=14, bold=True, wrap=True)
+        body.addWidget(self.notice)
+        self.check_button = button("检查官方更新", self.check, icon="refresh")
+        self.download_button = button("下载并校验更新", self.download, primary=True)
+        self.download_button.setEnabled(False)
+        body.addWidget(row(self.check_button, self.download_button, None))
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 10000)
+        self.bar.setTextVisible(False)
+        body.addWidget(self.bar)
+        owner.progress.valueChanged.connect(self.bar.setValue)
+        self.notes = QTextBrowser()
+        self.notes.setOpenExternalLinks(False)
+        self.notes.setPlainText("检查成功后显示官方版本信息与更新说明。")
+        body.addWidget(self.notes, 1)
+        body.addWidget(label("版本与升级", size=16, bold=True))
+        managed = {key: {"version": state.detected_version or "旧版记录", "status": state.label} for key, state in owner.selection.states.items() if state.receipt_valid}
+        disclosure(body, f"查看受管接入版本 · {len(managed)} 个", managed)
+        body.addWidget(button("升级现有受管接入至此版本", lambda: Targets(owner, "upgrade"), icon="update"))
+        self.body.addWidget(row(None, button("关闭", self.close)))
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.controls)
+        self.timer.start(150)
+        self.finished.connect(self.timer.stop)
+        self.check()
+
+    def controls(self):
+        self.check_button.setEnabled(not self.owner.busy)
+        self.download_button.setEnabled(bool(self.release and self.release["available"]) and not self.owner.busy)
+
+    def check(self):
+        def checked(release):
+            self.owner.update_release = release
+            if not isValid(self):
                 return
-            if release.get("kind") == "installer":
-                def install():
-                    updater.launch_installer(path, release)
-                    owner.destroy()
-                Preview(owner, "确认启动新版安装向导", {"版本": release["latest"], "安装包": str(path), "SHA-256": release["sha256"], "说明": "关闭管理器并启动安装向导，可选择原安装位置升级。完成后在版本与升级中处理现有 Skill 和 MCP 接入。"}, install)
-                return
-            try:
-                managed = owner.service.upgrade_targets()
-                plan = {"版本": release["latest"], "当前程序": str(Path(sys.executable)), "校验": release["sha256"], "接入升级": managed, "流程": "关闭此程序 → 独立助手替换 → 重启 → 升级全部受管接入并验证；失败保留回滚副本。"}
+            self.release = release
+            self.notice.setText(f"发现新版本 {release['latest']}" if release["available"] else f"当前已是最新版本 · 官方稳定版 {release['latest']}")
+            self.notes.setPlainText(release.get("notes", "暂无新版本。"))
+            self.controls()
+        self.owner.run(lambda: self.updater.check(progress=self.owner.service.report), checked, rescan=False, title="正在读取并校验官方版本信息")
 
+    def download(self):
+        if not self.release or self.owner.busy:
+            return
+        self.owner.run(lambda: self.updater.download(self.release, progress=self.owner.service.report), self.downloaded, rescan=False, title="正在下载官方更新")
+
+    def downloaded(self, path):
+        owner, release = self.owner, self.release
+        if not getattr(sys, "frozen", False):
+            Preview(owner, "更新下载已校验", {"文件": str(path), "说明": "源码运行不替换 Python，请使用 EXE 更新。"})
+            return
+        def install():
+            if owner.busy:
+                return
+            self.updater.launch_installer(path, release)
+            owner.close()
+        if release.get("kind") == "installer":
+            Preview(owner, "启动新版安装向导", {"版本": release["latest"], "安装包": str(path), "SHA-256": release["sha256"], "说明": "关闭管理器并启动已校验的安装向导，可选择原位置升级。"}, install)
+        else:
+            def prepared(plan):
                 def apply():
-                    path_plan, nonce = updater.prepare(path, release, Path(sys.executable))
-                    start_update(path_plan, nonce)
-                    owner.destroy()
-                Preview(owner, "确认升级与重启", plan, apply)
-            except Exception as exc:
-                messagebox.showerror("更新未执行", str(exc), parent=owner)
-        Preview(owner, "发现新版本 · 下载预览", release, download, warning="下载并验证官方资产后，还需确认升级与重启。")
-
-    owner.run(updater.check, checked)
+                    if owner.busy:
+                        return
+                    location, nonce = self.updater.prepare(path, release, Path(sys.executable))
+                    start_update(location, nonce)
+                    owner.close()
+                Preview(owner, "便携更新预览", plan, apply)
+            owner.run(lambda: {"版本": release["latest"], "受管接入": owner.service.upgrade_targets(), "流程": "关闭 → 替换 → 重启 → 验证；失败保留回滚副本，保留 data。"}, prepared, rescan=False, title="正在核对便携更新计划")
 
 
-def about(owner):
-    window = Detail(owner, "许可证与关于", "850x670")
-    label(window, f"Windows MCP 安装与维护管理器  {owner.version}", size=22, bold=True).pack(anchor="w", padx=22, pady=(20, 8))
-    label(window, "本地运行 · 当前用户安装 · 31 个 MCP 工具 · 无需另装 Python", size=13, color="secondary").pack(anchor="w", padx=22)
-    text = (owner.base / "LICENSE.md").read_text(encoding="utf-8")
-    notices = owner.base / "installer" / "resources" / "third-party-licenses.txt"
-    if notices.is_file():
-        text += "\n\n第三方许可\n" + notices.read_text(encoding="utf-8")
-    text_box(window, text)
-    button(window, "打开项目主页", lambda: webbrowser.open("https://github.com/CyanQX/Windows11-mcp"), width=180).pack(anchor="w", padx=22, pady=(0, 18))
+class About(Detail):
+    def __init__(self, owner):
+        super().__init__(owner, "关于 Windows MCP", (780, 630), f"版本 {owner.version} · Windows 安装与维护管理器")
+        tabs = QTabWidget()
+        self.body.addWidget(tabs, 1)
+        texts = [("简介", "Windows MCP 为编程 AI 提供真实 Windows 操作能力。管理器负责 Skill 与 MCP 的安装、验证、修复、备份和更新。\n\nCodex 的安装目标为桌面端。\n\n本项目基于 CursorTouch/Windows-MCP，保留原项目许可与贡献者声明。"), ("使用政策", "请仅在有权操作的设备、应用、账号和文件范围内使用。\n\n禁止利用本工具实施恶意代码注入、进程劫持、窃取凭证、破坏数据、绕过权限或操控审批等危险行为。\n\n受保护操作须由本机用户核对具体参数后批准一次。不得让 AI 自行授予审批或通过注入绕过审批。\n\n以上为使用政策；权限边界由实际审批和服务策略执行。\n\n本政策不限制开源许可证允许的库替换、修改、调试及为调试该修改进行的逆向工程。"), ("许可证", (owner.base / "LICENSE.md").read_text(encoding="utf-8"))]
+        texts.append(("Qt 许可与重建", (owner.base / "installer/resources/Qt-LICENSES.txt").read_text(encoding="utf-8")))
+        notices = owner.base / "installer/resources/third-party-licenses.txt"
+        if notices.exists():
+            texts.append(("第三方声明", notices.read_text(encoding="utf-8")))
+        for title, text in texts:
+            box = QTextBrowser()
+            box.setPlainText(text)
+            tabs.addTab(box, title)
+        self.body.addWidget(row(button("项目主页", lambda: webbrowser.open("https://github.com/CyanQX/Windows11-mcp")), None, button("关闭", self.close)))

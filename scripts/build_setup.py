@@ -23,17 +23,22 @@ def main():
     os.environ["ANONYMIZED_TELEMETRY"] = "false"
     os.environ["WINDOWS_MCP_WATCHDOG"] = "off"
     os.environ["WINDOWS_MCP_DISABLE_FLASH"] = "1"
+    # Bindepend must not resolve Windows ICU against unrelated tools (for
+    # example Poppler/Conda) on the caller's PATH. Qt uses the Windows ICU ABI;
+    # a third-party icuuc.dll can have incompatible version-suffixed exports.
+    windows = Path(os.environ.get("WINDIR", "C:/Windows"))
+    os.environ["PATH"] = os.pathsep.join(map(str, [Path(sys.executable).parent, Path(sys.base_prefix), windows / "System32", windows]))
     import PyInstaller.__main__
 
     args.work.mkdir(parents=True, exist_ok=True)
     options = [str(ROOT / "installer" / "app.py"), "--onefile", "--windowed", "--clean", "--noconfirm", "--name", "Windows-MCP", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
-    for module in ("windows_mcp", "fastmcp", "playwright", "customtkinter", "comtypes"):
+    for module in ("windows_mcp", "fastmcp", "playwright", "comtypes"):
         options += ["--collect-all", module]
     for module in ("mcp.client", "mcp.server", "mcp.shared"):
         options += ["--collect-submodules", module]
     options += ["--collect-data", "mcp", "--exclude-module", "mcp.cli"]
     options += ["--recursive-copy-metadata", "windows-mcp"]
-    options += ["--recursive-copy-metadata", "customtkinter"]
+    options += ["--copy-metadata", "pyside6-essentials", "--copy-metadata", "shiboken6"]
     for module in ("tomlkit", "ruamel.yaml", "json5"):
         options += ["--copy-metadata", module]
     for source, destination in ((ROOT / "manifest.json", "."), (ROOT / "LICENSE.md", "."), (ROOT / "installer" / "resources", "installer/resources"), (ROOT / "skills" / "windows-mcp", "skills/windows-mcp")):

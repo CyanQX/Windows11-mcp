@@ -10,11 +10,11 @@ from PIL import Image
 def capture(window, target: Path):
     import win32gui
     import win32ui
-    window.update_idletasks()
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPoint
+    QApplication.processEvents()
     user = ctypes.WinDLL("user32")
-    user.GetParent.argtypes = [wintypes.HWND]
-    user.GetParent.restype = wintypes.HWND
-    handle = user.GetParent(window.winfo_id()) or window.winfo_id()
+    handle = int(window.winId())
     outer = wintypes.RECT()
     user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     if not user.GetWindowRect(handle, ctypes.byref(outer)):
@@ -37,8 +37,10 @@ def capture(window, target: Path):
         win32gui.ReleaseDC(handle, window_dc)
         win32gui.DeleteObject(bitmap.GetHandle())
     target.parent.mkdir(parents=True, exist_ok=True)
-    client = window.winfo_rootx() - outer.left, window.winfo_rooty() - outer.top
-    image.crop((*client, client[0] + window.winfo_width(), client[1] + window.winfo_height())).save(target)
+    origin = window.mapToGlobal(QPoint())
+    scale = window.devicePixelRatioF()
+    client = round(origin.x() * scale) - outer.left, round(origin.y() * scale) - outer.top
+    image.crop((*client, client[0] + round(window.width() * scale), client[1] + round(window.height() * scale))).save(target)
     dwm = ctypes.WinDLL("dwmapi")
     bounds = wintypes.RECT()
     dwm.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]

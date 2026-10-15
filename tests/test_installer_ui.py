@@ -1,13 +1,20 @@
-"""Native Tk integration: installed target disabling and independent maintenance."""
-
+"""Exercise the actual Qt widgets, dock persistence and background work lifecycle."""
 from pathlib import Path
+import threading
+import time
 
 import pytest
+from PySide6.QtCore import Qt, QPoint, QEvent
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLabel, QPlainTextEdit
 
 from installer.settings import SettingsService
 from installer.models import SelectionModel
-from installer.ui.dialogs import Targets
+from installer.ui.dialogs import Targets, StatusDialog
 from installer.ui.main_window import MainWindow
+from installer.ui.settings_dialog import Appearance, SettingsHub
+from installer.ui.theme import application
 from tests.installer_helpers import make_service
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,73 +22,195 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def native_window(tmp_path_factory):
-    # A single Tcl interpreter matches the product's one-root GUI lifecycle.
-    # Repeated Tk initialization in one Windows process is not a supported driver.
-    tmp_path = tmp_path_factory.mktemp("native-manager")
-    service = make_service(tmp_path)
-    service.install_targets(["codex"])
-    settings = SettingsService(tmp_path / "ui-home", env={"LOCALAPPDATA": str(tmp_path / "ui-home" / "appdata")})
-    root = MainWindow(ROOT, settings, service.backend.source_executable, service=service)
-    root.withdraw()
-    root.after_cancel(root.scan_after_id)
-    yield root
-    root.destroy()
+    app = application()
+    tmp = tmp_path_factory.mktemp("native-manager")
+    service = make_service(tmp)
+    settings = SettingsService(tmp / "ui-home", env={"LOCALAPPDATA": str(tmp / "ui-home/appdata")})
+    window = MainWindow(ROOT, settings, service.backend.source_executable, service=service, auto_scan=False)
+    window.show()
+    QTest.qWait(100)
+    yield window
+    window.close()
+    app.processEvents()
 
 
 @pytest.fixture
 def window(native_window, tmp_path):
-    import customtkinter as ctk
-    for child in list(native_window.winfo_children()):
-        if isinstance(child, ctk.CTkToplevel):
-            child.destroy()
+    for dialog in list(native_window.dialogs):
+        dialog.close()
+    if native_window.selector.popup:
+        native_window.selector.popup.close()
     service = make_service(tmp_path)
     service.install_targets(["codex"])
     native_window.service = service
+    service.log.callback = lambda event: native_window.events.put(("log", event))
     native_window.selection = SelectionModel()
     native_window.selector.model = native_window.selection
-    native_window.selector.popup = None
     native_window.accept_states(service.inspect_all())
+    native_window.workspace.reset()
+    QTest.qWait(50)
     return native_window
 
 
-def test_installed_checkbox_keyboard_select_all_and_programmatic_denied(window):
+def test_installed_checkbox_and_select_all_cannot_override_eligibility(window):
     window.selector.toggle()
-    checkbox, variable = window.selector.checks["codex"]
-    assert checkbox.cget("state") == "disabled"
-    checkbox.toggle()
-    assert not variable.get()
+    checkbox = window.selector.checks["codex"]
+    assert not checkbox.isEnabled()
+    checkbox.click()
+    assert not checkbox.isChecked()
     window.selector.choose("codex", True)
-    assert not variable.get() and "codex" not in window.selection.selected
     window.selector.select_all()
     assert "codex" not in window.selection.selected
-    assert window.selector.checks["claude"][1].get()
+    assert window.selector.checks["claude"].isChecked()
 
 
 def test_uninstall_chooses_installed_target_independently(window):
-    assert "codex" not in window.selection.selected
-    assert window.uninstall_button.cget("state") == "normal"
+    assert window.uninstall_button.isEnabled()
     dialog = Targets(window, "uninstall")
     assert "codex" in dialog.variables
-    assert not any(variable.get() for variable in dialog.variables.values())
-    dialog.destroy()
+    assert not any(item.isChecked() for item in dialog.variables.values())
+    assert not dialog.next_button.isEnabled()
+    dialog.variables["codex"].click()
+    assert dialog.next_button.isEnabled()
+    dialog.close()
 
 
-def test_refresh_clears_installed_selection_without_switching_client(window):
-    window.selection.choose("claude")
-    assert "claude" in window.selection.selected
+def test_refresh_preserves_popup_and_clears_only_ineligible_selections(window):
+    window.selector.toggle()
+    popup = window.selector.popup
+    window.selector.choose("claude", True)
+    assert window.selector.popup is popup and popup.isVisible()
     window.service.install_targets(["claude"])
     window.accept_states(window.service.inspect_all())
     assert not window.selection.selected
-    assert window.install_button.cget("state") == "disabled"
+    assert not window.install_button.isEnabled()
+    assert window.selector.popup is popup
+    assert not window.selector.checks["claude"].isEnabled()
 
 
-def test_expired_explicit_approval_never_switches_to_another_pending_action(window, tmp_path):
+def test_status_shows_readable_facts_and_collapses_raw_details(window):
+    dialog = StatusDialog(window)
+    assert any("MCP 配置" in item.text() for item in dialog.findChildren(QLabel))
+    details = dialog.findChildren(QPlainTextEdit)
+    assert details and all(item.isHidden() for item in details)
+    dialog.close()
+
+
+def test_docks_swap_float_collapse_restore_and_persist(window):
+    space = window.workspace
+    left, right = space.docks["targets"], space.docks["maintenance"]
+    space.swap(left, right)
+    assert space.canvas.dockWidgetArea(left) == Qt.DockWidgetArea.RightDockWidgetArea
+    right.setFloating(True)
+    right.move(window.pos())
+    assert right.isFloating()
+    space.collapse(left)
+    assert left.isHidden() and space.collapsed["targets"][0] == "right"
+    snapshot = space.snapshot()
+    space.reset()
+    space.load(snapshot)
+    assert space.docks["maintenance"].isFloating()
+    assert "targets" in space.collapsed
+    space.collapsed["targets"][1].control.click()
+    assert left.isVisible() and "targets" not in space.collapsed
+    space.load({"schema": 1, "state": "broken!"})
+    assert not space.collapsed
+    assert all(not item.isFloating() for item in space.docks.values())
+
+
+def test_separator_drag_past_minimum_parks_panel_and_handle_drag_restores(window):
+    canvas = window.workspace.canvas
+    dock = window.workspace.docks["targets"]
+    point = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
+    global_point = canvas.mapToGlobal(point)
+    press = QMouseEvent(QEvent.Type.MouseButtonPress, point, global_point, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    assert window.workspace.eventFilter(canvas, press) is False
+    minimum = dock.minimumSizeHint().width()
+    canvas.resizeDocks([dock, window.workspace.docks["maintenance"]], [minimum, canvas.width() - minimum - 12], Qt.Orientation.Horizontal)
+    QTest.qWait(30)
+    destination = QPoint(dock.minimumSizeHint().width() - 60, point.y())
+    release = QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+    window.workspace.eventFilter(canvas, release)
+    assert "targets" in window.workspace.collapsed
+    handle = window.workspace.collapsed["targets"][1]
+    origin = handle.control.mapToGlobal(QPoint(5, 5))
+    handle.eventFilter(handle.control, QMouseEvent(QEvent.Type.MouseButtonPress, QPoint(5, 5), origin, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    handle.eventFilter(handle.control, QMouseEvent(QEvent.Type.MouseMove, QPoint(45, 5), origin + QPoint(40, 0), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    assert "targets" not in window.workspace.collapsed and dock.isVisible()
+
+
+def test_footer_remains_compact_when_both_content_panels_are_parked(window):
+    space = window.workspace
+    space.collapse(space.docks["targets"])
+    space.collapse(space.docks["maintenance"])
+    QTest.qWait(80)
+    assert space.placeholder.isVisible()
+    assert space.docks["actions"].height() < 230
+    assert space.collapsed["targets"][1].control.width() <= 38
+    space.reset()
+
+
+def test_appearance_updates_without_rescanning_or_recreating_service(window):
+    service, events = window.service, list(window.service.log.events)
+    popup = Appearance(window)
+    popup.controls["theme"].setCurrentIndex(popup.controls["theme"].findData("warm"))
+    assert window.theme.mode == "warm"
+    assert window.service is service and window.service.log.events == events
+    popup.controls["log_background"].setCurrentIndex(popup.controls["log_background"].findData("dark"))
+    assert "#18283D" in window.logs.styleSheet()
+    popup.controls["theme"].setCurrentIndex(popup.controls["theme"].findData("light"))
+    popup.close()
+
+
+def test_settings_order_and_no_external_adoption_menu(window):
+    popup = SettingsHub(window)
+    assert popup.names == ["外观", "高级设置", "配置与恢复", "安装目录", "检查更新", "日志与诊断", "关于"]
+    popup.close()
+
+
+def test_task_progress_waits_for_actual_completion_and_never_displays_premature_100(window):
+    release = threading.Event()
+    def work():
+        window.service.report(0.6, "已完成真实步骤")
+        release.wait(5)
+        return [{"ok": False}]
+    assert window.run(work, rescan=False)
+    assert not window.run(lambda: None)
+    try:
+        QTest.qWait(450)
+        assert 5900 <= window.progress.value() < 6000
+        assert window.busy
+    finally:
+        release.set()
+    deadline = time.monotonic() + 5
+    while window.busy and time.monotonic() < deadline:
+        QTest.qWait(30)
+    assert window.task_progress.failed
+    assert window.task_progress.fraction < 1
+    window._animate_progress(9999)
+    assert window.percent_label.text() == "99%"
+    window._animate_progress(10000)
+    assert window.percent_label.text() == "100%"
+
+
+def test_worker_releases_busy_even_if_the_error_log_cannot_be_written(window, monkeypatch):
+    monkeypatch.setattr(window.service.log, "emit", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("fixture disk unavailable")))
+    def fail():
+        raise ValueError("fixture failure")
+    window.run(fail, rescan=False)
+    deadline = time.monotonic() + 3
+    while window.busy and time.monotonic() < deadline:
+        QTest.qWait(30)
+    assert not window.busy and window.task_progress.failed
+
+
+def test_expired_explicit_approval_never_switches_or_grants(window, tmp_path):
     from installer.ui.operator_dialog import OperatorCenter
     from windows_mcp.infrastructure.approvals import ApprovalStore
     store = ApprovalStore(tmp_path / "approval-fixture")
     other = store.request("synthetic-session", "Files", {"operation": "write"}, 2, "isolated fixture")
     dialog = OperatorCenter(window, store, "0" * 32)
     assert dialog.request_id == "0" * 32
-    assert dialog.approve_button.cget("state") == "disabled"
+    assert not dialog.approve_button.isEnabled()
     assert not store.read(other["request_id"])["approved"]
-    dialog.destroy()
+    dialog.close()

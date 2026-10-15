@@ -15,13 +15,10 @@ def mark_operator_window(widget):
         return
     import ctypes
     from ctypes import wintypes
-    widget.update_idletasks()
+    hwnd = int(widget.winId())
     user = ctypes.WinDLL("user32", use_last_error=True)
-    user.GetParent.argtypes = [wintypes.HWND]
-    user.GetParent.restype = wintypes.HWND
     user.SetPropW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.HANDLE]
     user.SetPropW.restype = wintypes.BOOL
-    hwnd = user.GetParent(widget.winfo_id()) or widget.winfo_id()
     if not user.SetPropW(hwnd, PROPERTY, 1):
         raise ctypes.WinError(ctypes.get_last_error())
 

@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Windows-MCP 1.2.2</h1>
+  <h1>Windows-MCP 1.3.0</h1>
   <p>给编程 AI 接入真实 Windows 桌面操作能力</p>
 </div>
 
@@ -7,7 +7,11 @@
 
 Windows-MCP 是面向 Claude Code、Codex、DeepSeek Harness 等 AI 编程工具的 Windows 自动化服务。连接后，AI 可以读取窗口和控件，操作真实应用、浏览器与文件，并核对实际结果。
 
-配套的 **Windows 安装与维护管理器**提供浅蓝色原生界面：自动检测编程端，一次安装 Skill 和 MCP，随后可验证连接、修复、备份、恢复与安全卸载。Skill 提供操作说明，MCP 服务提供真正的 31 个工具。Codex 的安装目标为 **Codex 桌面端**，不安装或调用 Codex CLI。
+配套的 **Windows 安装与维护管理器**提供浅蓝玻璃原生界面：自动检测编程端，一次安装 Skill 和 MCP，随后可验证连接、修复、备份、恢复与安全卸载。Skill 提供操作说明，MCP 服务提供真正的 31 个工具。Codex 的安装目标为 **Codex 桌面端**，不安装或调用 Codex CLI。
+
+![Windows-MCP 1.3.0 安装与维护页面](assets/manager-v1.3.0.png)
+
+界面实拍，图中检测状态为隔离验收示例。
 
 本项目基于 [CursorTouch/Windows-MCP](https://github.com/CursorTouch/Windows-MCP) 二次开发，以 [MIT 许可证](LICENSE.md)发布。
 
@@ -19,7 +23,9 @@ Windows-MCP 是面向 Claude Code、Codex、DeepSeek Harness 等 AI 编程工具
 - **原生文件与状态监听**：授权目录内的文件操作、多个窗口的事件监听、有界等待和取消。
 - **视觉兜底与权限控制**：自绘界面可按窗口截图定位；高风险操作遵循一次性本地审批。普通权限不能绕过 UAC、锁屏或管理员窗口限制。
 - **一键接入客户端**：支持 Codex 桌面端、Claude Code、官方 DeepSeek Harness、OpenCode 和 Gemini CLI。已安装项禁用重复安装，卸载目标在独立窗口选择；保留其他 MCP、个人配置与仍被使用的共享服务。
-- **维护与诊断**：真实连接验证、事务备份与回滚、智能修复、外部接管预览、脱敏错误报告、主题和自定义安装目录。
+- **维护与诊断**：真实连接验证、事务备份与回滚、智能修复、脱敏错误报告和自定义安装目录；安装状态与连接结果以清晰的卡片展示。
+- **可自由布局的玻璃界面**：三个面板支持拖拽缩放、停靠换位、浮动、边缘吸附与收起恢复；关闭后记住布局，可一键重置。浅蓝、暖色护眼、深色、跟随系统主题，日志背景可独立设置，支持玻璃强度和减少动画。
+- **真实任务进度**：检测、安装、卸载、验证、修复和更新统一显示 0–100% 单向进度；按真实完成阶段与下载字节计算，成功后才显示 100%。
 - **可视化审批**：受保护操作自动打开本机审批窗口，由你核对参数并批准一次或拒绝，无需反复输入 PowerShell 命令。
 - **校验后更新**：从官方 Release 检查和下载，核对 SHA-256 后确认升级；安装版启动安装向导，便携版由独立助手替换、重启并验证，失败保留回滚副本。更新记录见 [CHANGELOG](CHANGELOG.md)。
 
@@ -29,12 +35,12 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 
 ### Windows x64 安装版与便携版
 
-从 [1.2.2 Releases](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.2.2) 选择一种下载。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python。
+从 [1.3.0 Releases](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.3.0) 选择一种下载。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python。
 
 | 下载 | 使用方法 | 管理数据位置 |
 |---|---|---|
-| [Windows-MCP-Setup-v1.2.2-x64.exe](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.2.2/Windows-MCP-Setup-v1.2.2-x64.exe) | 运行安装向导，选择安装位置；完成后从开始菜单打开 Windows-MCP | 当前用户的 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [Windows-MCP-Portable-v1.2.2-x64.zip](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.2.2/Windows-MCP-Portable-v1.2.2-x64.zip) | 完整解压后双击 `Windows-MCP.exe`，直接打开管理页面 | 解压目录旁的 `data`，包含设置、日志、备份、收据、运行时和审批数据 |
+| [Windows-MCP-Setup-v1.3.0-x64.exe](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.3.0/Windows-MCP-Setup-v1.3.0-x64.exe) | 运行安装向导，选择安装位置；完成后从开始菜单打开 Windows-MCP | 当前用户的 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [Windows-MCP-Portable-v1.3.0-x64.zip](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.3.0/Windows-MCP-Portable-v1.3.0-x64.zip) | 完整解压后双击 `Windows-MCP.exe`，直接打开管理页面 | 解压目录旁的 `data`，包含设置、日志、备份、收据、运行时和审批数据 |
 
 安装版提供路径选择、开始菜单入口和系统卸载程序，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Windows-MCP`，无需管理员权限。可从 Windows“设置 → 应用 → 已安装的应用”卸载管理器；**Skill 与 MCP 接入在管理器页面中单独卸载**，卸载管理器会保留这些接入和个人数据。
 
@@ -45,8 +51,8 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 1. 在左侧选择已检测到、尚未接入的编程端，可多选。**Codex 目标为桌面端**，不安装或调用 Codex CLI。
 2. 点击“安装 Skill + MCP”，核对路径与文件预览后确认。Skill 和客户端配置始终安装到下表的官方用户目录，便携模式也一样。
 3. 安装完成会真实验证服务版本、全部 31 个工具及 Session READY。重启对应客户端或新建会话后使用。
-4. 检查、验证连接、修复使用右侧按钮；卸载从底部独立窗口进入。日志、备份、恢复、外部接管和更新位于“设置”。
-5. 已有旧版接入时，从“设置 → 版本与升级”预览并升级受管接入。安装版更新启动经过校验的安装向导；便携版更新校验 ZIP 后替换程序，保留旁边的数据。
+4. 检查、验证连接、修复使用右侧按钮；卸载从底部独立窗口进入。外观、备份恢复、安装目录、更新和日志诊断位于“设置”。拖动面板标题可浮动或换位；拖动分隔边调整大小，继续缩小可收起，点击边缘把手恢复。
+5. 已有旧版接入时，从“设置 → 检查更新 → 版本与升级”预览并升级受管接入。安装版更新启动经过校验的安装向导；便携版更新校验 ZIP 后替换程序，保留旁边的数据。
 
 修改前创建私有备份，失败执行散列校验回滚；保留其他 MCP、JSONC 注释与个人配置。多个客户端共享服务，仍有引用时保留运行时。界面显示最近一次真实验证结果及时间，MCP 由客户端按需启动。普通桌面与已安装 Edge 无需额外下载；其他 Playwright 通道需提供相应浏览器。
 
@@ -69,7 +75,7 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 已有 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/) 时，可继续安装固定版本：
 
 ```powershell
-uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.2.2"
+uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.3.0"
 ```
 
 将 `%USERPROFILE%\.local\bin\windows-mcp.exe` 作为客户端 MCP 命令，参数为 `["serve"]`。使用 Skill 可从本仓库 `main` 的 `skills/windows-mcp` 复制到上表相应目录。工具参数与可选设置见 [Skill 参考](skills/windows-mcp/references/advanced.md)。

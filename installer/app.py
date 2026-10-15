@@ -16,47 +16,6 @@ if not getattr(sys, "frozen", False):
 from installer.backend import Configuration, Installer, mcp_entry
 
 
-COLORS = {
-    "background": "#EAF3FF",
-    "panel": "#F4F8FF",
-    "card": "#E4EEFC",
-    "selected": "#D3E5FF",
-    "border": "#CBDBEF",
-    "text": "#17365D",
-    "secondary": "#496581",
-    "muted": "#627B96",
-    "accent": "#276BCE",
-    "hover": "#1F58AE",
-    "disabled": "#CCDEF5",
-    "success": "#17644E",
-    "warning": "#9A4B16",
-}
-
-
-def tint_titlebar(window) -> None:
-    """Give Windows 11 native window chrome the same light palette as the app."""
-    if os.name != "nt":
-        return
-    from ctypes import wintypes
-
-    try:
-        user = ctypes.WinDLL("user32", use_last_error=True)
-        user.GetParent.argtypes = [wintypes.HWND]
-        user.GetParent.restype = wintypes.HWND
-        handle = user.GetParent(window.winfo_id()) or window.winfo_id()
-        dwm = ctypes.WinDLL("dwmapi")
-        dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
-        dark = wintypes.BOOL(False)
-        dwm.DwmSetWindowAttribute(handle, 20, ctypes.byref(dark), ctypes.sizeof(dark))
-        for attribute, color in [(34, COLORS["border"]), (35, COLORS["background"]), (36, COLORS["text"])]:
-            red, green, blue = (int(color[index:index + 2], 16) for index in (1, 3, 5))
-            value = wintypes.DWORD(red | (green << 8) | (blue << 16))
-            # Unsupported attributes on older Windows are harmless HRESULT failures.
-            dwm.DwmSetWindowAttribute(handle, attribute, ctypes.byref(value), ctypes.sizeof(value))
-    except OSError:
-        pass
-
-
 def resources() -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
@@ -146,16 +105,19 @@ def gui(review_request=None, finish_plan=None, update_nonce=None):
     from installer.models import ManagerError
     from windows_mcp.infrastructure.approvals import ApprovalStore
     from installer.ui.main_window import MainWindow
+    from installer.ui.theme import application
+    from PySide6.QtCore import QTimer
 
     settings = SettingsService(Path.home())
     private_directory(settings.path.parent)
     wake = settings.path.parent / "manager-wake.json"
     try:
         with ProcessLock(settings.path.parent / "manager-ui.lock"):
-            window = MainWindow(resources(), settings, Path(sys.executable), approval_store=ApprovalStore(settings.path.parent / "approvals"), wake_path=wake)
-            window.after(250, lambda: tint_titlebar(window))
+            app = application()
+            window = MainWindow(resources(), settings, Path(sys.executable), approval_store=ApprovalStore(settings.path.parent / "approvals"), wake_path=wake, auto_scan=finish_plan is None)
+            window.show()
             if review_request:
-                window.after(400, lambda: window.open_operator(review_request))
+                QTimer.singleShot(400, lambda: window.open_operator(review_request))
             if finish_plan:
                 from installer.updates import load_plan
                 row = load_plan(finish_plan, update_nonce)
@@ -173,8 +135,8 @@ def gui(review_request=None, finish_plan=None, update_nonce=None):
                     except Exception:
                         atomic_write(finish_plan.parent / "result.json", b'{"ok":false}')
                         return False
-                window.after(500, lambda: window.run(finish, lambda ok: None if ok else window.destroy()))
-            window.mainloop()
+                QTimer.singleShot(500, lambda: window.run(finish, lambda ok: None if ok else window.close()))
+            app.exec()
     except ManagerError as exc:
         if exc.code != "INSTALLER_BUSY":
             raise
@@ -205,7 +167,7 @@ def main():
     parser.add_argument("--ui-smoke", type=Path)
     parser.add_argument("--ui-smoke-select", nargs="*", default=[])
     parser.add_argument("--ui-smoke-size", nargs=2, type=int)
-    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "processing", "uninstall", "settings", "report", "approval"], default="ready")
+    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "processing", "uninstall", "settings", "report", "approval", "status", "verify", "repair", "appearance", "docking", "dark", "warm"], default="ready")
     parser.add_argument("--ui-smoke-scale", type=float, default=1.0)
     args = parser.parse_args()
     if args.self_test:

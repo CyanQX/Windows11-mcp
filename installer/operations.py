@@ -30,6 +30,11 @@ class InstallerService:
         self.log = log or EventLog(backend.data, backend.home, manifest["version"])
         self.health = health or HealthChecker(manifest)
         self.health_results = {}
+        self.progress = None
+
+    def report(self, fraction, message):
+        if self.progress:
+            self.progress(fraction, message)
 
     @contextmanager
     def lock(self):
@@ -53,7 +58,13 @@ class InstallerService:
         return paths
 
     def inspect_all(self):
-        return self.detector.inspect_all()
+        if hasattr(self.detector.discovery, "refresh"):
+            self.detector.discovery.refresh()
+        states = {}
+        for index, key in enumerate(self.backend.clients):
+            states[key] = self.detector.inspect(key)
+            self.report((index + 1) / len(self.backend.clients), f"已检查 {states[key].display_name}")
+        return states
 
     def _guard(self, key: str, operation: str):
         state = self.detector.inspect(key)
@@ -83,6 +94,7 @@ class InstallerService:
             config = Configuration(profile, read_file(profile.config))
             paths = self.paths(key)
             rows.append({"id": key, "name": state.display_name, "status": state.status.value, "receipt_valid": state.receipt_valid, "config": str(profile.config), "skill": str(state.skill_path), "entry": self.log.redactor.clean(config.get()), "fingerprints": {str(path): file_hash(path) for path in paths}})
+            self.report(len(rows) / len(ids), f"已核对 {state.display_name} 的预览指纹")
         plan = {"operation": operation, "targets": rows, "runtime": str(self.backend.executable), "runtime_retention": "存在其他或未知引用时保留；仅无引用且可安全处理时清理", "version": self.manifest["version"]}
         plan["digest"] = plan_hash(plan)
         return plan
@@ -93,12 +105,17 @@ class InstallerService:
             raise ManagerError("PLAN_CHANGED", "预览后目标内容有变化，请重新预览并确认")
         return plan
 
-    def verify(self, key: str):
+    def _probe(self, progress=None):
+        if isinstance(self.health, HealthChecker):
+            return asyncio.run(self.health.probe(self.backend.executable, progress=progress))
+        return asyncio.run(self.health.probe(self.backend.executable))
+
+    def verify(self, key: str, *, progress=None):
         state = self.detector.inspect(key)
         if not state.receipt_valid or not state.runtime_present or "RUNTIME_HASH_MISMATCH" in state.problem_codes:
             raise ManagerError("UNTRUSTED_RUNTIME", "请先检查或修复受管运行时，未启动外部程序")
         self.log.emit("verify", "正在执行真实 MCP stdio 握手", target_id=key)
-        result = asyncio.run(self.health.probe(self.backend.executable))
+        result = self._probe(progress or self.report)
         self.health_results[key] = result.to_dict()
         self.log.emit("verify", result.message, level="SUCCESS" if result.ok else "ERROR", error_code=None if result.ok else result.code, target_id=key, tool_count=result.tool_count, checked_at=result.checked_at, server_version=result.server_version)
         return result
@@ -124,9 +141,11 @@ class InstallerService:
         self.backend.emit = lambda phase, message: self.log.emit(phase, message, transaction_id=journal.id)
         self.health_results.clear()
         try:
-            for key in ids:
+            self.report(0.15, "升级快照已创建")
+            for index, key in enumerate(ids):
                 self.backend.install(self.backend.clients[key])
-            checked = asyncio.run(self.health.probe(self.backend.executable))
+                self.report(0.15 + 0.55 * (index + 1) / len(ids), "受管文件已更新，等待真实连接核验")
+            checked = self._probe(lambda fraction, message: self.report(0.7 + 0.2 * fraction, message))
             if not checked.ok:
                 raise ManagerError(checked.code, checked.message)
             for key in ids:
@@ -134,6 +153,7 @@ class InstallerService:
                     raise ManagerError("POSTCONDITION_FAILED", "升级后的完整性检查失败")
                 self.health_results[key] = checked.to_dict()
             journal.commit()
+            self.report(1, "共享服务升级已提交")
             self.log.emit("upgrade", "共享运行时及全部受管接入已统一升级，真实连接验证通过", level="SUCCESS", transaction_id=journal.id)
             return [{"id": key, "ok": True, "transaction_id": journal.id} for key in ids]
         except Exception as exc:
@@ -143,14 +163,18 @@ class InstallerService:
         finally:
             self.backend.on_write = self.backend.emit = None
 
-    def _transaction(self, key: str, operation: str):
+    def _transaction(self, key: str, operation: str, *, index=0, total=1):
+        def progress(fraction, message):
+            self.report((index + fraction) / total, message)
         state = self._guard(key, operation)
+        progress(0.08, f"{state.display_name}：预检查通过")
         profile = self.backend.clients[key]
         self.log.emit("preflight", f"开始{operation}：{state.display_name}", target_id=key)
         free = shutil.disk_usage(self.backend.data).free
         if free < self.backend.source_executable.stat().st_size * 3 + 10 * 1024 * 1024:
             raise ManagerError("INSUFFICIENT_DISK", "可用空间不足以完成暂存、备份与回滚")
         journal = Journal(self.backend.data, key, operation, self.paths(key))
+        progress(0.2, "完整快照已保存并校验")
         self.log.emit("backup", "完整快照已保存并校验", level="SUCCESS", target_id=key, transaction_id=journal.id)
         self.backend.on_write = journal.wrote
         self.health_results.clear()
@@ -158,12 +182,15 @@ class InstallerService:
         try:
             if operation == "uninstall":
                 result = self.backend.uninstall(profile)
+                progress(0.7, "受管接入已处理，正在检查共享引用")
                 for message in result["retained"]:
                     self.log.emit("uninstall", message, level="WARNING", target_id=key, transaction_id=journal.id)
                 self._cleanup_runtime(journal)
             else:
                 result = self.backend.install(profile)
-                checked = asyncio.run(self.health.probe(self.backend.executable))
+                progress(0.7, "文件已写入并校验，等待 MCP 握手")
+                checked = self._probe(lambda fraction, message: progress(0.7 + 0.2 * fraction, message))
+                progress(0.9, "MCP 握手已返回，正在核对安装结果")
                 self.health_results[key] = checked.to_dict()
                 self.log.emit("verify", checked.message, level="SUCCESS" if checked.ok else "ERROR", target_id=key, transaction_id=journal.id, error_code=None if checked.ok else checked.code, tool_count=checked.tool_count)
                 if not checked.ok:
@@ -172,6 +199,7 @@ class InstallerService:
                 if installed.status != Status.INSTALLED_MANAGED:
                     raise ManagerError("POSTCONDITION_FAILED", "安装后静态完整性检查未通过")
             journal.commit()
+            progress(1, "事务已提交")
             self.log.emit("commit", "操作提交完成" if not result.get("retained") else "部分卸载完成，用户修改已保留", level="SUCCESS" if not result.get("retained") else "WARNING", target_id=key, transaction_id=journal.id)
             return {"id": key, "ok": not result.get("retained"), "transaction_id": journal.id, **result}
         except Exception as exc:
@@ -197,9 +225,9 @@ class InstallerService:
                 if key not in self.backend.clients:
                     raise ManagerError("INVALID_TARGETS", "目标不存在")
                 self._guard(key, "install")
-            for key in ids:
+            for index, key in enumerate(ids):
                 try:
-                    results.append(self._transaction(key, "install"))
+                    results.append(self._transaction(key, "install", index=index, total=len(ids)))
                 except ManagerError as exc:
                     results.append({"id": key, "ok": False, "error_code": exc.code, "message": str(exc)})
         if emit:
@@ -214,9 +242,9 @@ class InstallerService:
             self._confirm_plan(operation, ids, digest)
             if operation == "upgrade":
                 return self._upgrade(ids)
-            for key in ids:
+            for index, key in enumerate(ids):
                 try:
-                    results.append(self._transaction(key, operation))
+                    results.append(self._transaction(key, operation, index=index, total=len(ids)))
                 except ManagerError as exc:
                     results.append({"id": key, "ok": False, "error_code": exc.code, "message": str(exc)})
         return results
@@ -263,6 +291,7 @@ class InstallerService:
                 journal = Journal(self.backend.data, key, "backup", self.paths(key))
                 journal.commit()
                 snapshots.append(journal.id)
+                self.report(len(snapshots) / len(ids), "备份已创建并提交")
                 self.log.emit("backup", "配置与受管理文件快照已创建", level="SUCCESS", target_id=key, transaction_id=journal.id)
         return snapshots
 
