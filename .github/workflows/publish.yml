@@ -45,7 +45,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           uv run --no-project python scripts/verify_distribution.py --dist dist --tag "$RELEASE_TAG" > dist/distribution-verification.json
-          uv run --no-project python -c "from pathlib import Path; text = Path('CHANGELOG.md').read_text(encoding='utf-8'); current = text.split('## ', 2)[1]; Path('release-notes.md').write_text('## ' + current, encoding='utf-8')"
+          uv run --no-project python -c "from pathlib import Path; import re; text = Path('CHANGELOG.md').read_text(encoding='utf-8'); current = re.search(r'^## .+?(?=^## |\Z)', text, re.M | re.S).group(0); Path('release-notes.md').write_text(current, encoding='utf-8')"
 
       - name: Create GitHub Release
         env:
