@@ -26,7 +26,7 @@ def main():
     import PyInstaller.__main__
 
     args.work.mkdir(parents=True, exist_ok=True)
-    options = [str(ROOT / "installer" / "app.py"), "--onefile", "--windowed", "--noconfirm", "--name", f"Windows-MCP-Setup-{version}", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
+    options = [str(ROOT / "installer" / "app.py"), "--onefile", "--windowed", "--clean", "--noconfirm", "--name", f"Windows-MCP-Setup-{version}", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
     for module in ("windows_mcp", "fastmcp", "playwright", "customtkinter", "comtypes"):
         options += ["--collect-all", module]
     for module in ("mcp.client", "mcp.server", "mcp.shared"):
@@ -39,6 +39,12 @@ def main():
     for source, destination in ((ROOT / "manifest.json", "."), (ROOT / "LICENSE.md", "."), (ROOT / "installer" / "resources", "installer/resources"), (ROOT / "skills" / "windows-mcp", "skills/windows-mcp")):
         options += ["--add-data", f"{source}{os.pathsep}{destination}"]
     PyInstaller.__main__.run(options)
+    # Verify actual packed code, including installer modules omitted by the wheel.
+    # A version label alone cannot detect stale PyInstaller module caches.
+    sys.path.insert(0, str(ROOT))
+    from scripts.verify_setup_source import verify
+    result = verify(args.out / f"Windows-MCP-Setup-{version}.exe")
+    (args.out / "setup-source-verification.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

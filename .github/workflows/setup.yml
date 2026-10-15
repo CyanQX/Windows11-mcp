@@ -10,6 +10,7 @@ on:
       - 'skills/**'
       - 'scripts/build_setup.py'
       - 'scripts/smoke_setup.py'
+      - 'scripts/verify_setup_source.py'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/setup.yml'
