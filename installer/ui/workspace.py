@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import binascii
 
-from PySide6.QtCore import Qt, QEvent, QPoint, QByteArray, QTimer
+from PySide6.QtCore import Qt, QEvent, QPoint, QByteArray, QTimer, QVariantAnimation, QEasingCurve
 from PySide6.QtGui import QPainter, QColor, QLinearGradient, QIcon, QTransform
 from PySide6.QtWidgets import QApplication, QDockWidget, QGridLayout, QHBoxLayout, QMainWindow, QMenu, QVBoxLayout, QWidget, QTabWidget
 
@@ -12,6 +12,34 @@ from installer.ui.theme import button, draw_glass, label, theme, backdrop
 
 AREAS = {"left": Qt.DockWidgetArea.LeftDockWidgetArea, "right": Qt.DockWidgetArea.RightDockWidgetArea, "bottom": Qt.DockWidgetArea.BottomDockWidgetArea, "top": Qt.DockWidgetArea.TopDockWidgetArea}
 DEFAULTS = {"targets": "left", "maintenance": "right", "actions": "bottom"}
+PARK_DISTANCE = 96
+PARK_THRESHOLD = 0.75
+
+
+class SlidePreview(QWidget):
+    """Clip a snapshot of our own dock while the native splitter keeps its minimum."""
+    def __init__(self, workspace, dock, edge):
+        super().__init__(workspace.canvas)
+        self.dock, self.edge, self.fraction = dock, edge, 0.0
+        self.image = dock.grab()
+        self.setGeometry(dock.geometry())
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.show()
+        self.raise_()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(theme().colors["bg"]))
+        dx = int(self.width() * self.fraction) * (-1 if self.edge == "left" else 1) if self.edge in {"left", "right"} else 0
+        dy = int(self.height() * self.fraction) * (-1 if self.edge == "top" else 1) if self.edge in {"top", "bottom"} else 0
+        painter.drawPixmap(QPoint(dx, dy), self.image)
+        if self.fraction < 1:
+            painter.setPen(QColor(theme().colors["accent"]))
+            painter.drawText(self.rect().adjusted(12, 12, -12, -12), Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, "松开收起到边缘" if self.fraction >= PARK_THRESHOLD else "继续向边缘拖动可收起")
+
+    def advance(self, fraction):
+        self.fraction = float(fraction)
+        self.update()
 
 
 class EdgeHandle(QWidget):
@@ -126,6 +154,8 @@ class Workspace(QWidget):
             rail.hide()
             self.rails[edge], self.rail_layouts[edge] = rail, layout
         self.press = None
+        self.preview = None
+        self.transitions = {}
         QApplication.instance().installEventFilter(self)
 
     def add(self, key, title, content):
@@ -140,10 +170,62 @@ class Workspace(QWidget):
         if edge:
             self.last_area[dock.key] = edge
 
-    def collapse(self, dock, edge=None):
-        if dock.key in self.collapsed:
+    def collapse(self, dock, edge=None, *, animate=True):
+        if dock.key in self.collapsed or dock.key in self.transitions:
             return
         edge = edge or self.last_area.get(dock.key, DEFAULTS[dock.key])
+        if animate and dock.isVisible() and not dock.isFloating() and not theme().appearance["reduce_motion"]:
+            preview = self.preview if self.preview and self.preview.dock == dock else SlidePreview(self, dock, edge)
+            self.preview = None
+            animation = QVariantAnimation(self)
+            animation.setStartValue(preview.fraction)
+            animation.setEndValue(1.0)
+            animation.setDuration(260)
+            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            animation.valueChanged.connect(preview.advance)
+            self.transitions[dock.key] = (animation, preview, edge, True)
+            animation.finished.connect(lambda: self.finish_slide(dock))
+            animation.start()
+        else:
+            self.clear_preview()
+            self.park(dock, edge)
+
+    def finish_slide(self, dock):
+        entry = self.transitions.pop(dock.key, None)
+        if entry:
+            animation, preview, edge, park = entry
+            animation.stop()
+            preview.hide()
+            preview.deleteLater()
+            animation.deleteLater()
+            if park:
+                self.park(dock, edge)
+
+    def return_preview(self):
+        preview, self.preview = self.preview, None
+        if not preview:
+            return
+        if theme().appearance["reduce_motion"] or preview.dock.key in self.transitions:
+            preview.hide()
+            preview.deleteLater()
+            return
+        animation = QVariantAnimation(self)
+        animation.setStartValue(preview.fraction)
+        animation.setEndValue(0.0)
+        animation.setDuration(180)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.valueChanged.connect(preview.advance)
+        self.transitions[preview.dock.key] = (animation, preview, preview.edge, False)
+        animation.finished.connect(lambda: self.finish_slide(preview.dock))
+        animation.start()
+
+    def clear_preview(self):
+        if self.preview:
+            self.preview.hide()
+            self.preview.deleteLater()
+            self.preview = None
+
+    def park(self, dock, edge):
         dock.hide()
         handle = EdgeHandle(self, dock, edge)
         self.collapsed[dock.key] = (edge, handle)
@@ -162,6 +244,15 @@ class Workspace(QWidget):
             self.canvas.resizeDocks([self.docks["actions"]], [150], Qt.Orientation.Vertical)
 
     def restore(self, dock):
+        entry = self.transitions.pop(dock.key, None)
+        if entry:
+            animation, preview, _, _ = entry
+            animation.stop()
+            animation.deleteLater()
+            preview.hide()
+            preview.deleteLater()
+        if self.preview and self.preview.dock == dock:
+            self.clear_preview()
         entry = self.collapsed.pop(dock.key, None)
         if entry:
             edge, handle = entry
@@ -218,6 +309,8 @@ class Workspace(QWidget):
         self.canvas.resizeDocks(list(self.docks.values()), [height, height, 150], Qt.Orientation.Vertical)
 
     def snapshot(self):
+        for key in list(self.transitions):
+            self.finish_slide(self.docks[key])
         return {"schema": 1, "geometry": base64.b64encode(bytes(self.owner.saveGeometry())).decode(), "state": base64.b64encode(bytes(self.canvas.saveState(1))).decode(), "collapsed": {key: entry[0] for key, entry in self.collapsed.items()}, "areas": self.last_area.copy()}
 
     def load(self, value):
@@ -237,7 +330,7 @@ class Workspace(QWidget):
                     self.last_area[key] = edge
             for key, edge in value.get("collapsed", {}).items():
                 if key in self.docks and edge in AREAS:
-                    self.collapse(self.docks[key], edge)
+                    self.collapse(self.docks[key], edge, animate=False)
             for dock in self.docks.values():
                 self.keep_on_screen(dock)
         except (ValueError, KeyError, TypeError, binascii.Error):
@@ -248,10 +341,11 @@ class Workspace(QWidget):
         if kind == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton and obj == self.canvas:
             point = event.globalPosition().toPoint()
             self.press = (point, {key: (dock.geometry(), self.last_area[key]) for key, dock in self.docks.items() if dock.isVisible() and not dock.isFloating()})
-        elif kind == QEvent.Type.MouseButtonRelease and self.press:
+        elif kind in {QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease} and self.press:
             point, rects = self.press
             delta = event.globalPosition().toPoint() - point
-            self.press = None
+            releasing = kind == QEvent.Type.MouseButtonRelease
+            candidate = None
             for key, (rect, edge) in rects.items():
                 dock = self.docks[key]
                 local = self.canvas.mapFromGlobal(point)
@@ -261,9 +355,21 @@ class Workspace(QWidget):
                 size = dock.width() if horizontal else dock.height()
                 limit = minimum.width() if horizontal else minimum.height()
                 wanted = (rect.width() + (delta.x() if edge == "left" else -delta.x())) if horizontal else rect.height() + (delta.y() if edge == "top" else -delta.y())
-                if near and size <= limit + 16 and wanted < limit - 35:
-                    self.collapse(dock)
+                if near and size <= limit + 16 and wanted < limit:
+                    candidate = dock
+                    if not self.preview or self.preview.dock != dock:
+                        self.clear_preview()
+                        self.preview = SlidePreview(self, dock, edge)
+                    self.preview.advance(min(0.95, (limit - wanted) / PARK_DISTANCE))
+                    if releasing and self.preview.fraction >= PARK_THRESHOLD:
+                        self.collapse(dock, edge)
                     break
+            if releasing and self.preview:
+                self.return_preview()
+            elif candidate is None:
+                self.clear_preview()
+            if releasing:
+                self.press = None
         # Native docking handles drag previews/tabbing. A floating title released at
         # an outer edge also snaps without requiring a second menu action.
         if kind == QEvent.Type.NonClientAreaMouseButtonRelease:

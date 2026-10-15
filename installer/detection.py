@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import struct
@@ -37,9 +38,48 @@ class ClientDiscovery:
     def __init__(self, home: Path, overrides: dict[str, str] | None = None):
         self.home, self.overrides = home, overrides or {}
         self._desktop_apps = None
+        self._registered_harness = None
 
     def refresh(self):
         self._desktop_apps = None
+        self._registered_harness = None
+
+    def registered_harness(self) -> list[Path]:
+        """Read both registry views; never execute installer/uninstaller commands."""
+        if self._registered_harness is not None:
+            return self._registered_harness
+        self._registered_harness = []
+        if os.name != "nt":
+            return self._registered_harness
+        import winreg
+        branch = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+                try:
+                    with winreg.OpenKey(hive, branch, 0, winreg.KEY_READ | view) as root:
+                        for index in range(winreg.QueryInfoKey(root)[0]):
+                            try:
+                                with winreg.OpenKey(root, winreg.EnumKey(root, index)) as item:
+                                    def read(name):
+                                        try:
+                                            value = winreg.QueryValueEx(item, name)[0]
+                                            return os.path.expandvars(value.strip()) if isinstance(value, str) else ""
+                                        except OSError:
+                                            return ""
+                                    name = read("DisplayName").lower()
+                                    if "deepseek" not in name or "harness" not in name:
+                                        continue
+                                    location = read("InstallLocation").strip('"')
+                                    icon = re.sub(r",\s*-?\d+\s*$", "", read("DisplayIcon")).strip().strip('"')
+                                    candidates = ([Path(location) / "DeepSeek Harness.exe"] if location else [])
+                                    if icon and Path(icon).stem.lower() in {"deepseek harness", "deepseek-harness", "dsh"}:
+                                        candidates.append(Path(icon))
+                                    self._registered_harness.extend(path for path in candidates if path not in self._registered_harness)
+                            except OSError:
+                                continue  # A concurrently removed installation is not a scan failure.
+                except OSError:
+                    continue
+        return self._registered_harness
 
     def desktop_apps(self) -> dict[str, str]:
         if self._desktop_apps is None:
@@ -81,13 +121,17 @@ class ClientDiscovery:
             if path:
                 return Presence.DETECTED, path
         if profile.id == "deepseek":
+            for path in self.registered_harness():
+                if path.is_file() and is_desktop_executable(path):
+                    return Presence.DETECTED, str(path)
             for name, path in self.desktop_apps().items():
                 if "deepseek" in name and Path(path).is_dir():
                     return Presence.DETECTED, path
             for folder in ("DeepSeek Harness", "deepseek-harness", "DeepSeek"):
                 root = self.home / "AppData" / "Local" / "Programs" / folder
-                if root.is_dir() and any(root.glob("*.exe")):
-                    return Presence.DETECTED, str(root)
+                path = root / "DeepSeek Harness.exe"
+                if path.is_file() and is_desktop_executable(path):
+                    return Presence.DETECTED, str(path)
         return Presence.NOT_FOUND, None
 
 

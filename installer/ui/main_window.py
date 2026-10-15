@@ -7,7 +7,7 @@ import threading
 import traceback
 
 from PySide6.QtCore import QTimer, QVariantAnimation, QEasingCurve
-from PySide6.QtWidgets import QMainWindow, QWidget, QProgressBar, QMessageBox, QApplication, QPushButton
+from PySide6.QtWidgets import QMainWindow, QWidget, QMessageBox, QApplication, QPushButton
 
 from installer.diagnostics import EventLog
 from installer.health import HealthChecker
@@ -18,6 +18,7 @@ from installer.ui.log_view import LogView
 from installer.ui.multiselect import MultiSelect
 from installer.ui.theme import Theme, button, column, label, row, backdrop
 from installer.ui.workspace import Workspace
+from installer.ui.task_strip import TaskStrip
 
 
 class MainWindow(QMainWindow):
@@ -35,7 +36,6 @@ class MainWindow(QMainWindow):
         self.update_release = None
         self.task_progress = TaskProgress()
         self.reload_service(initial=True)
-        mode = "便携版 · 数据位于旁边的 data" if settings.portable_data else "当前用户安装"
         self.setWindowTitle(f"Windows MCP 安装与维护管理器  v{self.version}" + (" · 便携版" if settings.portable_data else ""))
         self.setWindowIcon(self.theme.icon("shield"))
         available = self.screen().availableGeometry()
@@ -44,15 +44,9 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         layout = column(root, 0, 0)
-        brand = label("Windows MCP", size=19, bold=True)
-        header = row(brand, label(f"v{self.version}  /  {mode}", size=11, role="secondary"), None)
-        header.layout().setContentsMargins(24, 16, 24, 16)
-        self.approval_button = button("操作审批", self.open_operator, icon="shield")
+        self.approval_button = button("操作审批", self.open_operator, icon="shield", compact=True)
         from installer.ui.settings_dialog import SettingsHub
-        self.settings_button = button("设置", lambda: SettingsHub(self), icon="settings")
-        header.layout().addWidget(self.approval_button)
-        header.layout().addWidget(self.settings_button)
-        layout.addWidget(header)
+        self.settings_button = button("设置", lambda: SettingsHub(self), icon="settings", compact=True)
         self.workspace = Workspace(self)
         layout.addWidget(self.workspace, 1)
 
@@ -78,26 +72,25 @@ class MainWindow(QMainWindow):
         from installer.ui.dialogs import Targets
         self.action_buttons = [button(text, callback, icon=icon) for text, icon, callback in (("安装状态", "search", lambda: self.scan(details=True)), ("验证 MCP 连接", "link", lambda: Targets(self, "verify")), ("智能修复", "repair", lambda: Targets(self, "repair")))]
         right_body.addWidget(row(*self.action_buttons))
+        self.task_strip = TaskStrip()
+        self.progress = self.task_strip.bar
+        self.status_label, self.percent_label = self.task_strip.status, self.task_strip.percent
+        right_body.addWidget(self.task_strip)
         self.logs = LogView()
         right_body.addWidget(row(label("安装日志", size=14, bold=True), None, button("复制", self.logs.copy_all, icon="copy", compact=True), button("清空", self.logs.clear, icon="delete", compact=True)))
         right_body.addWidget(self.logs, 1)
         self.health_label = label("尚未验证 · 连接检查会启动真实 MCP 会话", size=11, role="secondary", wrap=True)
         right_body.addWidget(self.health_label)
-        self.workspace.add("maintenance", "安装与维护", right)
+        maintenance = self.workspace.add("maintenance", "安装与维护", right)
+        maintenance.titleBarWidget().layout().insertWidget(2, self.approval_button)
+        maintenance.titleBarWidget().layout().insertWidget(3, self.settings_button)
 
         footer = QWidget()
         footer.setMinimumWidth(510)
         footer_body = column(footer, 20, 10)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 10000)
-        self.progress.setTextVisible(False)
-        self.progress.setAccessibleName("当前任务完成进度")
-        footer_body.addWidget(self.progress)
-        self.status_label = label("准备就绪", size=12, role="secondary", wrap=True)
-        self.percent_label = label("0%", size=12, bold=True)
         self.install_button = button("安装 Skill + MCP", self.install, primary=True)
         self.uninstall_button = button("卸载 Skill + MCP", lambda: Targets(self, "uninstall"))
-        footer_body.addWidget(row(self.status_label, self.percent_label, None, self.uninstall_button, self.install_button))
+        footer_body.addWidget(row(None, self.uninstall_button, self.install_button))
         self.workspace.add("actions", "安装操作", footer)
         self.progress_animation = QVariantAnimation(self)
         self.progress_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -110,7 +103,7 @@ class MainWindow(QMainWindow):
         self.operator_timer.start(1500)
         self.scan_timer = QTimer(self)
         self.scan_timer.setSingleShot(True)
-        self.scan_timer.timeout.connect(self.scan)
+        self.scan_timer.timeout.connect(lambda: self.scan(quiet=True))
         if auto_scan:
             self.scan_timer.start(150)
             if service is None:
@@ -148,10 +141,11 @@ class MainWindow(QMainWindow):
         if self.settings.value["theme"] == "system":
             self.apply_appearance()
 
-    def run(self, work, done=None, *, rescan=True, title="正在执行维护任务"):
+    def run(self, work, done=None, *, rescan=True, title="正在执行维护任务", show_progress=True):
         if self.busy:
             return False
         self.busy = True
+        self.task_strip.begin(show_progress)
         self.task_progress = TaskProgress(message=title)
         self.progress_animation.stop()
         self._animate_progress(0)
@@ -221,11 +215,13 @@ class MainWindow(QMainWindow):
                 self.busy = False
                 if kind == "error":
                     self.task_progress.complete(False)
+                    self.task_strip.complete(False)
                     self.error("操作未完成", value)
                 else:
                     result, states, callback = value
                     failed = result is False or isinstance(result, list) and any(isinstance(item, dict) and item.get("ok") is False for item in result)
                     self.task_progress.complete(not failed)
+                    self.task_strip.complete(not failed)
                     if states is not None:
                         self.accept_states(states)
                     self.render_status()
@@ -241,7 +237,7 @@ class MainWindow(QMainWindow):
         if progress_changed:
             self.render_progress()
 
-    def scan(self, details=False):
+    def scan(self, details=False, *, quiet=False):
         def work():
             if (self.service.backend.data / "cleanup-pending.json").exists():
                 try:
@@ -256,7 +252,7 @@ class MainWindow(QMainWindow):
             if details:
                 from installer.ui.dialogs import StatusDialog
                 StatusDialog(self)
-        return self.run(work, done, rescan=False, title="正在逐项检查客户端、Skill 和 MCP")
+        return self.run(work, done, rescan=False, title="正在逐项检查客户端、Skill 和 MCP", show_progress=not quiet)
 
     def check_update_hint(self):
         from installer.updates import UpdateService

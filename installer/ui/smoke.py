@@ -6,7 +6,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QPoint, QEvent, Qt
+from PySide6.QtGui import QMouseEvent
 
 from installer.backend import Installer
 from installer.health import HealthChecker
@@ -16,7 +17,7 @@ from installer.settings import SettingsService
 from installer.ui.capture import capture
 from installer.ui.dialogs import Diagnostics, StatusDialog, Targets
 from installer.ui.main_window import MainWindow
-from installer.ui.settings_dialog import Appearance, SettingsHub
+from installer.ui.settings_dialog import Appearance, SettingsHub, Preferences
 from installer.ui.theme import application
 from windows_mcp.infrastructure.approvals import ApprovalStore
 
@@ -69,7 +70,11 @@ def run(base, target, case="ready", size=None, scale=1.0):
                 if case != "docking":
                     for control in (window.install_button, window.uninstall_button, *window.action_buttons, window.selector.trigger):
                         assert control.height() >= 30, "Primary control squeezed"
-                        assert window.rect().contains(control.mapTo(window, control.rect().bottomRight())), "Primary control clipped"
+                        if control.isVisible():
+                            assert window.rect().contains(control.mapTo(window, control.rect().bottomRight())), "Primary control clipped"
+                if case == "progress-hidden":
+                    assert window.task_strip.content.isHidden(), "Successful task did not fade after eight seconds"
+                    assert window.logs.geometry() == log_geometry, "Hiding the strip shifted the log layout"
                 capture(subject, target)
                 if subject != window:
                     capture(window, target.with_name(target.stem + "-main.png"))
@@ -93,6 +98,13 @@ def run(base, target, case="ready", size=None, scale=1.0):
             elif case == "report":
                 dialog = Diagnostics(window, True)
                 QTimer.singleShot(350, lambda: take(dialog))
+            elif case == "progress-hidden":
+                nonlocal log_geometry
+                app.processEvents()
+                log_geometry = window.logs.geometry()
+                QTimer.singleShot(9000, take)
+            elif case == "progress":
+                QTimer.singleShot(350, take)
             else:
                 take()
 
@@ -100,12 +112,12 @@ def run(base, target, case="ready", size=None, scale=1.0):
             if window.busy or not window.selection.states:
                 QTimer.singleShot(100, begin)
                 return
-            if case in {"installed", "processing", "uninstall", "repair", "verify", "status", "report"}:
+            if case in {"installed", "processing", "uninstall", "repair", "verify", "status", "report", "progress", "progress-hidden"}:
                 window.run(lambda: service.install_targets(["codex"]), complete)
                 if case == "processing":
                     QTimer.singleShot(600, take)
-            elif case in {"settings", "appearance"}:
-                dialog = SettingsHub(window) if case == "settings" else Appearance(window)
+            elif case in {"settings", "appearance", "advanced"}:
+                dialog = SettingsHub(window) if case == "settings" else Preferences(window) if case == "advanced" else Appearance(window)
                 QTimer.singleShot(350, lambda: take(dialog))
             elif case == "approval":
                 request = store.request("isolated-acceptance-session", "Files", {"operation": "write", "path": "C:\\WindowsMCP-Example\\example.txt", "content": "isolated example"}, 2, "隔离界面验收示例；不会执行或批准操作")
@@ -115,8 +127,25 @@ def run(base, target, case="ready", size=None, scale=1.0):
                 window.workspace.docks["maintenance"].setFloating(True)
                 window.workspace.collapse(window.workspace.docks["targets"])
                 QTimer.singleShot(350, take)
+            elif case in {"edge-preview", "edge-parked"}:
+                space, canvas = window.workspace, window.workspace.canvas
+                dock = space.docks["targets"]
+                point = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
+                app.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseButtonPress, point, canvas.mapToGlobal(point), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+                minimum = dock.minimumSizeHint().width()
+                destination = QPoint(minimum - (40 if case == "edge-preview" else 100), point.y())
+                for x in range(point.x(), destination.x() - 1, -8):
+                    position = QPoint(x, point.y())
+                    app.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, position, canvas.mapToGlobal(position), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+                    app.processEvents()
+                assert space.preview and dock.isVisible() and "targets" not in space.collapsed
+                if case == "edge-parked":
+                    app.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+                QTimer.singleShot(350, take)
             else:
                 take()
+
+        log_geometry = None
 
         def finish():
             if captured and not window.busy:

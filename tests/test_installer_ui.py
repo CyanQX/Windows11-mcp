@@ -7,13 +7,13 @@ import pytest
 from PySide6.QtCore import Qt, QPoint, QEvent
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel, QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QProgressBar
 
 from installer.settings import SettingsService
 from installer.models import SelectionModel
 from installer.ui.dialogs import Targets, StatusDialog
 from installer.ui.main_window import MainWindow
-from installer.ui.settings_dialog import Appearance, SettingsHub
+from installer.ui.settings_dialog import Appearance, SettingsHub, Preferences
 from installer.ui.theme import application
 from tests.installer_helpers import make_service
 
@@ -105,6 +105,8 @@ def test_docks_swap_float_collapse_restore_and_persist(window):
     right.move(window.pos())
     assert right.isFloating()
     space.collapse(left)
+    assert left.isVisible()  # Slide first; park only after the animation.
+    QTest.qWait(310)
     assert left.isHidden() and space.collapsed["targets"][0] == "right"
     snapshot = space.snapshot()
     space.reset()
@@ -128,9 +130,14 @@ def test_separator_drag_past_minimum_parks_panel_and_handle_drag_restores(window
     minimum = dock.minimumSizeHint().width()
     canvas.resizeDocks([dock, window.workspace.docks["maintenance"]], [minimum, canvas.width() - minimum - 12], Qt.Orientation.Horizontal)
     QTest.qWait(30)
-    destination = QPoint(dock.minimumSizeHint().width() - 60, point.y())
+    destination = QPoint(dock.minimumSizeHint().width() - 100, point.y())
+    move = QMouseEvent(QEvent.Type.MouseMove, destination, canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    window.workspace.eventFilter(canvas, move)
+    assert dock.isVisible() and "targets" not in window.workspace.collapsed
+    assert window.workspace.preview.fraction >= 0.75
     release = QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
     window.workspace.eventFilter(canvas, release)
+    QTest.qWait(310)
     assert "targets" in window.workspace.collapsed
     handle = window.workspace.collapsed["targets"][1]
     origin = handle.control.mapToGlobal(QPoint(5, 5))
@@ -143,7 +150,7 @@ def test_footer_remains_compact_when_both_content_panels_are_parked(window):
     space = window.workspace
     space.collapse(space.docks["targets"])
     space.collapse(space.docks["maintenance"])
-    QTest.qWait(80)
+    QTest.qWait(350)
     assert space.placeholder.isVisible()
     assert space.docks["actions"].height() < 230
     assert space.collapsed["targets"][1].control.width() <= 38
@@ -166,6 +173,93 @@ def test_settings_order_and_no_external_adoption_menu(window):
     popup = SettingsHub(window)
     assert popup.names == ["外观", "高级设置", "配置与恢复", "安装目录", "检查更新", "日志与诊断", "关于"]
     popup.close()
+
+
+def test_advanced_settings_groups_values_and_limits_codex_hint_to_codex(window):
+    dialog = Preferences(window)
+    QTest.qWait(50)
+    assert dialog.body.contentsMargins().left() >= 24
+    labels = [item.text() for item in dialog.findChildren(QLabel)]
+    assert "连接与日志" in labels and "编程端程序路径" in labels
+    assert sum("Codex CLI" in text for text in labels) == 1
+    assert dialog.fields["health_timeout"].width() >= 100
+    editor = dialog.fields["health_timeout"].lineEdit()
+    assert editor.width() >= editor.fontMetrics().horizontalAdvance(editor.displayText()) + 24
+    assert dialog.fields["exe:deepseek"].accessibleName() == "DeepSeek Harness"
+    dialog.close()
+
+
+def test_no_duplicate_brand_banner_and_footer_contains_only_action_controls(window):
+    assert not any(item.text() == "Windows MCP" for item in window.findChildren(QLabel))
+    assert not window.workspace.docks["actions"].findChildren(QProgressBar)
+    assert window.settings_button.isVisible() and window.approval_button.isVisible()
+
+
+def test_progress_fades_without_moving_logs_and_new_task_cancels_old_timeout(window):
+    strip = window.task_strip
+    strip.begin()
+    QTest.qWait(30)
+    before = window.logs.geometry()
+    strip.complete(True)
+    assert strip.delay.interval() == 8000
+    strip.delay.start(40)
+    QTest.qWait(420)
+    assert strip.content.isHidden() and strip.height() == 58
+    assert window.logs.geometry() == before
+    strip.begin()
+    strip.complete(True)
+    strip.begin()
+    assert not strip.delay.isActive() and strip.content.isVisible()
+    strip.complete(False)
+    assert not strip.delay.isActive() and strip.content.isVisible()
+
+
+def test_success_hide_timer_also_runs_while_maintenance_panel_is_parked(window):
+    strip = window.task_strip
+    strip.begin()
+    dock = window.workspace.docks["maintenance"]
+    dock.hide()
+    assert not strip.content.isVisible() and not strip.content.isHidden()
+    strip.complete(True)
+    assert strip.delay.isActive()
+    strip.delay.start(35)
+    QTest.qWait(420)
+    dock.show()
+    assert strip.content.isHidden()
+
+
+def test_drag_short_of_edge_threshold_returns_without_parking(window):
+    space, canvas = window.workspace, window.workspace.canvas
+    dock = space.docks["targets"]
+    point = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
+    space.eventFilter(canvas, QMouseEvent(QEvent.Type.MouseButtonPress, point, canvas.mapToGlobal(point), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    minimum = dock.minimumSizeHint().width()
+    canvas.resizeDocks([dock, space.docks["maintenance"]], [minimum, canvas.width() - minimum - 12], Qt.Orientation.Horizontal)
+    QTest.qWait(30)
+    destination = QPoint(minimum - 20, point.y())
+    space.eventFilter(canvas, QMouseEvent(QEvent.Type.MouseMove, destination, canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    assert space.preview and 0 < space.preview.fraction < 0.75
+    space.eventFilter(canvas, QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+    QTest.qWait(220)
+    assert dock.isVisible() and not space.collapsed and not space.transitions
+
+
+def test_native_splitter_dispatch_resizes_before_it_parks(window):
+    space, canvas = window.workspace, window.workspace.canvas
+    dock = space.docks["targets"]
+    point = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
+    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=point)
+    minimum = dock.minimumSizeHint().width()
+    for x in range(point.x(), minimum - 110, -10):
+        position = QPoint(x, point.y())
+        QApplication.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, position, canvas.mapToGlobal(position), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        QApplication.processEvents()
+    assert dock.width() <= minimum + 16
+    assert space.preview and space.preview.fraction >= 0.75
+    assert dock.isVisible() and not space.collapsed
+    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(minimum - 100, point.y()))
+    QTest.qWait(310)
+    assert "targets" in space.collapsed and dock.isHidden()
 
 
 def test_task_progress_waits_for_actual_completion_and_never_displays_premature_100(window):

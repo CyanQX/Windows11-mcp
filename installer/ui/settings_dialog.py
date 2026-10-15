@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QPoint, QTimer
 from PySide6.QtGui import QColor
 from shiboken6 import isValid
-from PySide6.QtWidgets import QCheckBox, QColorDialog, QComboBox, QDialog, QLineEdit, QProgressBar, QSlider, QSpinBox, QTabWidget, QTextBrowser
+from PySide6.QtWidgets import QCheckBox, QColorDialog, QComboBox, QDialog, QFileDialog, QLineEdit, QProgressBar, QSlider, QSpinBox, QTabWidget, QTextBrowser
 
 from installer.settings import ENV_KEYS
 from installer.ui.dialogs import Detail, Diagnostics, Preview, Targets, disclosure, fact
@@ -136,31 +136,70 @@ def paths(owner):
 class Preferences(Detail):
     def __init__(self, owner, paths=False):
         self.paths_mode = paths
-        super().__init__(owner, "安装目录" if paths else "高级设置", (780, 660), "目录设置仅作用于当前用户。切换受管目录前需先卸载对应接入。" if paths else "连接超时、日志保留与客户端路径；不更改 MCP 权限策略。")
+        super().__init__(owner, "安装目录" if paths else "高级设置", (820, 740), "目录设置仅作用于当前用户。切换受管目录前需先卸载对应接入。" if paths else "调整连接与日志选项，或为未检测到的编程端指定程序路径。")
+        self.body.setContentsMargins(26, 22, 26, 22)
+        self.body.setSpacing(16)
         body = self.scroll()
+        body.setContentsMargins(2, 2, 14, 8)
+        body.setSpacing(18)
         self.fields = {}
         value = owner.settings.value
-        def field(key, title, initial, limits=None):
-            body.addWidget(label(title, size=12))
+        def section(title, description):
+            card = GlassFrame()
+            stack = column(card, 20, 14)
+            stack.addWidget(label(title, size=15, bold=True))
+            stack.addWidget(label(description, size=11, role="secondary", wrap=True))
+            body.addWidget(card)
+            return stack
+        def field(stack, key, title, initial, limits=None):
             control = QSpinBox() if limits else QLineEdit(str(initial))
+            control.setAccessibleName(title)
             if limits:
                 control.setRange(*limits)
                 control.setValue(initial)
+                control.setFixedWidth(108)
+                control.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                minus = button("−", control.stepDown, compact=True)
+                plus = button("+", control.stepUp, compact=True)
+                for item, verb in ((minus, "减少"), (plus, "增加")):
+                    item.setFixedSize(36, 42)
+                    item.setAccessibleName(verb + title)
+                stack.addWidget(row(label(title, size=12), None, minus, control, plus))
+            else:
+                block = GlassFrame()
+                group = column(block, 14, 8)
+                group.addWidget(label(title, size=12, bold=True))
+                control.setPlaceholderText("自动检测；可留空")
+                if key.startswith("exe:"):
+                    picker = button("浏览", lambda k=key: self.browse(k), icon="folder", compact=True)
+                    picker.setAccessibleName("浏览 " + title)
+                    group.addWidget(row(control, picker))
+                    group.addWidget(label("仅识别桌面 GUI EXE，不使用 Codex CLI。" if key == "exe:codex" else "留空使用自动检测；也可选择实际安装目录中的启动程序。", size=10, role="secondary", wrap=True))
+                else:
+                    group.addWidget(control)
+                stack.addWidget(block)
             self.fields[key] = control
-            body.addWidget(control)
         if paths:
-            field("data_dir", "共享数据目录（备份、日志、收据与运行时）", value["data_dir"])
+            field(body, "data_dir", "共享数据目录（备份、日志、收据与运行时）", value["data_dir"])
             self.fields["data_dir"].setEnabled(owner.settings.portable_data is None)
             for key in sorted(ENV_KEYS):
-                field(key, key + "（留空沿用系统环境与官方默认目录）", value["environment_overrides"].get(key, ""))
+                field(body, key, key + "（留空沿用系统环境与官方默认目录）", value["environment_overrides"].get(key, ""))
             body.addWidget(button("查看当前实际目录", lambda: globals()["paths"](owner)))
         else:
+            connection = section("连接与日志", "数值立即用于后续任务；不会修改 MCP 的操作权限。")
             for key, title, limits in (("health_timeout", "连接检查超时（秒）", (5, 180)), ("log_retention_days", "日志保留天数", (1, 365)), ("log_max_mb", "日志总容量上限（MB）", (5, 500))):
-                field(key, title, value[key], limits)
-            for key in owner.service.backend.clients:
-                name = owner.selection.states[key].display_name if key in owner.selection.states else key
-                field("exe:" + key, name + " 程序路径（可选，Codex 须为桌面 GUI EXE）", value["client_executables"].get(key, ""))
+                field(connection, key, title, value[key], limits)
+            clients = section("编程端程序路径", "支持自定义安装位置。DeepSeek Harness 同时检查系统注册的安装路径。")
+            for key, profile in owner.service.backend.clients.items():
+                name = owner.selection.states[key].display_name if key in owner.selection.states else "Codex 桌面端" if key == "codex" else profile.name
+                field(clients, "exe:" + key, name, value["client_executables"].get(key, ""))
+        body.addStretch()
         self.body.addWidget(row(button("恢复本页默认", lambda: self.save(True)), None, button("取消", self.close), button("保存", self.save, primary=True)))
+
+    def browse(self, key):
+        path, _ = QFileDialog.getOpenFileName(self, "选择编程端启动程序", self.fields[key].text(), "Windows 程序 (*.exe *.cmd *.bat)")
+        if path:
+            self.fields[key].setText(path)
 
     def save(self, reset=False):
         owner = self.owner

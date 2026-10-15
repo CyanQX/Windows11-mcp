@@ -167,7 +167,7 @@ def main():
     parser.add_argument("--ui-smoke", type=Path)
     parser.add_argument("--ui-smoke-select", nargs="*", default=[])
     parser.add_argument("--ui-smoke-size", nargs=2, type=int)
-    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "processing", "uninstall", "settings", "report", "approval", "status", "verify", "repair", "appearance", "docking", "dark", "warm"], default="ready")
+    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "processing", "uninstall", "settings", "report", "approval", "status", "verify", "repair", "appearance", "docking", "dark", "warm", "advanced", "progress", "progress-hidden", "edge-preview", "edge-parked"], default="ready")
     parser.add_argument("--ui-smoke-scale", type=float, default=1.0)
     args = parser.parse_args()
     if args.self_test:

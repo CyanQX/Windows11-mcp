@@ -66,6 +66,9 @@ QCheckBox::indicator {{ width: 20px; height: 20px; border-radius: 7px; border: 1
 QCheckBox::indicator:checked {{ background: #1266ED; border: 3px solid #1266ED; image: url('{check}'); }}
 QCheckBox:disabled {{ color: {c['secondary']}; }}
 QLineEdit, QComboBox, QSpinBox {{ background: {fill}; border: 1px solid {c['border']}; border-radius: 9px; padding: 9px; min-height: 22px; selection-background-color: {c['accent']}; }}
+QSpinBox {{ padding: 9px 12px; }}
+QSpinBox:focus {{ border: 2px solid {c['accent']}; }}
+QSpinBox::up-button, QSpinBox::down-button {{ width: 0px; }}
 QComboBox QAbstractItemView {{ background: {c['glass']}; selection-background-color: {c['border']}; border: 1px solid {c['border']}; padding: 8px; }}
 QComboBox::drop-down {{ border: none; width: 30px; subcontrol-origin: padding; subcontrol-position: top right; }}
 QComboBox::down-arrow {{ image: url('{(self.base / 'installer/resources/icons/chevron-light.png').as_posix()}'); width: 14px; height: 14px; }}
