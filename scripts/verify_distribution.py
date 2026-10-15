@@ -68,19 +68,26 @@ def verify(dist: Path, tag: str | None = None) -> dict:
         assert metadata["Version"] == version, "Source distribution version differs"
 
     if list(dist.glob("*.exe")) or list(dist.glob("*.zip")):
-        import sys
-        sys.path[:0] = [str(ROOT), str(ROOT / "src")]
-        from installer.distribution import portable_name, setup_name, verify_portable
-        setup = dist / setup_name(version)
+        # This runs on Linux without server/GUI dependencies. Windows has
+        # already exercised both packages; independently verify their bytes
+        # and fixed ZIP structure here using only the standard library.
+        setup = dist / f"Windows-MCP-Setup-v{version}-x64.exe"
         assert setup.is_file(), "Real installation wizard is missing"
-        portable = verify_portable(dist / portable_name(version), version)
+        portable_path = dist / f"Windows-MCP-Portable-v{version}-x64.zip"
+        prefix = f"Windows-MCP-Portable-v{version}-x64"
+        expected = {f"{prefix}/{name}" for name in ("Windows-MCP.exe", "WindowsMCP.portable.json", "README.txt", "LICENSE.txt", "THIRD-PARTY-LICENSES.txt", "data/")}
+        with zipfile.ZipFile(portable_path) as archive:
+            assert len(archive.namelist()) == len(expected) and set(archive.namelist()) == expected
+            assert archive.testzip() is None
+            assert json.loads(archive.read(f"{prefix}/WindowsMCP.portable.json")) == {"schema": 1, "mode": "portable"}
+            payload_hash = hashlib.sha256(archive.read(f"{prefix}/Windows-MCP.exe")).hexdigest()
         frozen = json.loads((dist / "setup-source-verification.json").read_text(encoding="utf-8"))
         build = json.loads((dist / "installer-build.json").read_text(encoding="utf-8"))
-        assert portable["payload_sha256"] == frozen["sha256"] == build["payload_sha256"], "Installer and portable payload differ"
+        assert payload_hash == frozen["sha256"] == build["payload_sha256"], "Installer and portable payload differ"
         assert hashlib.sha256(setup.read_bytes()).hexdigest() == build["sha256"], "Installer wrapper differs"
         for name in ("installer-validation.json", "portable-validation.json"):
             report = json.loads((dist / name).read_text(encoding="utf-8"))
-            assert report["sha256"] == hashlib.sha256((setup if name.startswith("installer") else dist / portable_name(version)).read_bytes()).hexdigest()
+            assert report["sha256"] == hashlib.sha256((setup if name.startswith("installer") else portable_path).read_bytes()).hexdigest()
             assert report["actual_executable_validation"]["stdio"]["ok"], name
     hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in dist.iterdir() if path.is_file() and not path.name.startswith(".") and path.name not in {"SHA256SUMS.txt", "distribution-verification.json"}}
     (dist / "SHA256SUMS.txt").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(hashes.items())), encoding="utf-8")
