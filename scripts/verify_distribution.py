@@ -67,7 +67,7 @@ def verify(dist: Path, tag: str | None = None) -> dict:
         metadata = BytesParser().parsebytes(archive.extractfile(members["PKG-INFO"]).read())
         assert metadata["Version"] == version, "Source distribution version differs"
 
-    hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in dist.iterdir() if path.is_file() and path.name not in {"SHA256SUMS.txt", "distribution-verification.json"}}
+    hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in dist.iterdir() if path.is_file() and not path.name.startswith(".") and path.name not in {"SHA256SUMS.txt", "distribution-verification.json"}}
     (dist / "SHA256SUMS.txt").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(hashes.items())), encoding="utf-8")
     return {"version": version, "tag": tag, "tool_count": len(tools), "runtime_source_files": len(source_files), "package_source_matches": True, "artifacts": hashes}
 
