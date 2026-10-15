@@ -31,7 +31,8 @@ class PolicyGate:
         portable = portable_data_directory()
         self.workspace_storage = {CONFIG_DIR.resolve()}
         if portable is not None:
-            self.protected.extend([portable.resolve(), (Path.home() / ".windows-mcp").resolve()])
+            self.protected.extend([portable.resolve(), (portable.parent / "WindowsMCP.portable.json").resolve(),
+                                   (portable.parent / "Windows-MCP.exe").resolve(), (Path.home() / ".windows-mcp").resolve()])
             self.workspace_storage.add(portable.resolve())
         # Backups can contain client credentials. They and update plans/runtime
         # are operator-owned data even if the workspace is configured broadly.

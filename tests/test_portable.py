@@ -76,8 +76,8 @@ def test_private_portable_backups_and_settings_are_protected_but_workspace_is_us
     data = tmp_path / "portable/data"
     monkeypatch.setattr(policy, "CONFIG_DIR", data / "config")
     monkeypatch.setattr(policy, "portable_data_directory", lambda: data)
-    gate = policy.PolicyGate(roots=[data])
-    for path in (data / "config/manager.json", data / "transactions/backup", data / "Windows-MCP.exe"):
+    gate = policy.PolicyGate(roots=[data.parent])
+    for path in (data / "config/manager.json", data / "transactions/backup", data / "Windows-MCP.exe", data.parent / PORTABLE_MARKER, data.parent / "Windows-MCP.exe"):
         with pytest.raises(policy.PolicyBlocked):
             gate.check_path(path)
     assert gate.check_path(data / "config/workspace/example.txt") == data / "config/workspace/example.txt"
