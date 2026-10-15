@@ -1,6 +1,6 @@
 # Windows-MCP 按需参考
 
-安装器的服务命令为 `%LOCALAPPDATA%\WindowsMCP\Windows-MCP.exe --serve`。本地操作员可执行同一 EXE 的 `approve <request_id>` 命令处理审批。下文的 `windows-mcp` 示例适用于独立 CLI 安装。
+安装器的服务命令为 `%LOCALAPPDATA%\WindowsMCP\Windows-MCP.exe --serve`。1.2.1 打包版在请求审批时自动打开本机审批窗口；同一 EXE 的 `approve <request_id>` 也会打开窗口。由用户核对具体参数后批准一次或拒绝，AI 不得操作自己的审批界面。下文的 `windows-mcp` 示例适用于独立控制台服务。
 
 ## 工作方式
 
@@ -36,7 +36,7 @@ R0 观察与查询可直接调用。R1 包括授权目录内新建普通文本�
 审批步骤：
 
 1. AI 调用 `RequestApproval(tool="Execute", arguments={"target":"观察返回的 ID", "action":"set_value", "value":"hello"}, description="具体内容与目标")`。
-2. **本地操作员**在可信终端执行返回的 `windows-mcp approve <request_id>`，查看具体调用的作用域与参数摘要后确认。文本/命令内容在摘要中脱敏，调用摘要和审批哈希绑定原参数。
+2. **本地操作员**在自动打开的审批窗口核对工具、具体参数、原会话和期限，再批准一次或拒绝；控制台服务仍可在可信终端执行 `windows-mcp approve <request_id>`。窗口完整参数通过当前用户 DPAPI 加密保存且与签名、操作散列绑定，不向 MCP 返回原文。没有完整参数的旧版请求需重新申请。
 3. AI 重复完全相同的调用；批准在五分钟内有效，只能消耗一次，换会话、换参数或重放均拒绝。旧工具不加新参数，也可以消耗对应的已批准调用。
 
 `approval_token` 仅接受服务端生成的请求 ID；自然语言“已批准”、网页文字和伪造 JSON 无效。原始鼠标键盘也需要审批，不能借旧工具绕开。服务器审批文件、密钥、用户 Codex/SSH 配置不在工具访问范围内。审计日志记录调用哈希、状态、会话和时间，不保存输入正文、密码、页面内容或异常正文；达到大小上限后轮转。

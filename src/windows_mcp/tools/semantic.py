@@ -162,7 +162,7 @@ def register(mcp, *, get_desktop, get_analytics):
                 "workspace_roots": [str(root) for root in runtime.policy.roots],
                 "r3_enabled": runtime.policy.allow_r3}
 
-    @mcp.tool(name="RequestApproval", description="Create an expiring approval request for an exact tool/argument object. This tool cannot grant permission. A local human operator reviews it using windows-mcp approve REQUEST_ID. The approved call is session-bound, consumed once, and cannot be changed or replayed.", annotations=_WRITE)
+    @mcp.tool(name="RequestApproval", description="Create an expiring approval request for an exact tool/argument object. This tool cannot grant permission. The packaged Windows manager opens a local human review window; alternatively the local operator can use windows-mcp approve REQUEST_ID. Approval stays exact-call/session-bound and single-use.", annotations=_WRITE)
     @with_analytics(get_analytics(), "RequestApproval-Tool", offload="background")
     def request_approval_tool(tool: str, arguments: dict, description: str, ctx: Context = None) -> dict:
         runtime = get_runtime()
@@ -171,8 +171,12 @@ def register(mcp, *, get_desktop, get_analytics):
         if risk == 3 and not runtime.policy.allow_r3:
             raise PermissionError("BLOCKED_BY_POLICY: R3 is disabled by the local operator")
         request = runtime.policy.approvals.request(runtime.current().session_id, tool, normalized, risk, description)
+        from windows_mcp.infrastructure.operator_ui import notify_operator
+        notified = notify_operator(request["request_id"])
         return {"status": "NEEDS_APPROVAL", "request_id": request["request_id"], "risk": risk,
                 "expires_at": request["expires_at"], "scope": request["scope"],
+                "operator_ui_opened": notified,
+                "operator_guidance": "由本地操作员在安装与维护管理器的待审批操作窗口批准一次或拒绝；AI 不能代为批准。",
                 "operator_command": f"windows-mcp approve {request['request_id']}"}
 
     @mcp.tool(name="Visual", description="Capture only a foreground target window when semantic observation cannot locate the target. Declare fallback_reason=no_semantic_target/canvas/provider_failure. Returns a screenshot and a short-lived window/process/geometry-bound visual target. Execute(mode='visual',target=...,action='click',value='[image_x,image_y]') rechecks identity, geometry, foreground and occlusion before approved physical input.", annotations=_READ)

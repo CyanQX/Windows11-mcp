@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import os
 from typing import Any
 
 from windows_mcp.infrastructure.approvals import ApprovalStore
@@ -25,6 +27,15 @@ class PolicyGate:
         self.approvals = approvals or ApprovalStore(CONFIG_DIR / "approvals")
         self.protected = [CONFIG_DIR.resolve(), Path("~/.codex").expanduser().resolve(),
                           Path("~/.ssh").expanduser().resolve(), self.approvals.directory]
+        # Backups can contain client credentials. They and update plans/runtime
+        # are operator-owned data even if the workspace is configured broadly.
+        self.protected.append((Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "WindowsMCP").resolve())
+        try:
+            manager = json.loads((CONFIG_DIR / "manager.json").read_text(encoding="utf-8"))
+            if isinstance(manager, dict) and isinstance(manager.get("data_dir"), str) and Path(manager["data_dir"]).is_absolute():
+                self.protected.append(Path(manager["data_dir"]).resolve())
+        except (ValueError, OSError, TypeError):
+            pass
 
     def check_path(self, value: str | Path) -> Path:
         from platformdirs import user_desktop_dir
@@ -109,6 +120,10 @@ class PolicyGate:
 
     def authorize(self, session_id: str, tool: str, args: dict, approval_id: str | None = None) -> int:
         risk = self.risk(tool, args)
+        if tool in {"Click", "Type", "Shortcut", "MultiSelect", "MultiEdit", "Act", "Execute", "Move", "Scroll", "App", "PowerShell"}:
+            from windows_mcp.infrastructure.operator_ui import operator_review_active
+            if operator_review_active():
+                raise PolicyBlocked("The local human approval window is open; MCP input is paused until the operator decides and closes it")
         if risk == 3 and not self.allow_r3:
             raise PolicyBlocked("R3 tools are disabled; an operator must enable policy.allow_r3 locally")
         if risk >= 2 and not self.approvals.consume(session_id, tool, args, approval_id):

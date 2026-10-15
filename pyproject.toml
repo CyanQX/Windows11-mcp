@@ -1,6 +1,6 @@
 [project]
 name = "windows-mcp"
-version = "1.1.1"
+version = "1.2.1"
 description = "MCP server that operates the real Windows desktop: genuine mouse/keyboard input and UI Automation actions, verified after every step."
 authors = [
     { name = "Jeomon George", email = "jeogeoalukka@gmail.com" }
@@ -44,6 +44,7 @@ installer = [
     "tomlkit>=0.13,<1",
     "ruamel.yaml>=0.18,<0.20",
     "json5>=0.12,<1",
+    "packaging>=24,<27",
 ]
 dev = [
     "ruff>=0.9.0",

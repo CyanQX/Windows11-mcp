@@ -17,7 +17,7 @@ jobs:
 
   release:
     name: Build and create GitHub Release
-    needs: tests
+    needs: [tests, windows_setup]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -34,15 +34,28 @@ jobs:
       - name: Build package
         run: uv build
 
+      - name: Download verified Windows EXE
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-mcp-setup
+          path: dist
+
       - name: Verify tag, package metadata and complete runtime source
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           uv run --no-project python scripts/verify_distribution.py --dist dist --tag "$RELEASE_TAG" > dist/distribution-verification.json
-          uv run --no-project python -c "from pathlib import Path; text = Path('README.md').read_text(encoding='utf-8'); Path('release-notes.md').write_text(text, encoding='utf-8')"
+          uv run --no-project python -c "from pathlib import Path; text = Path('CHANGELOG.md').read_text(encoding='utf-8'); current = text.split('## ', 2)[1]; Path('release-notes.md').write_text('## ' + current, encoding='utf-8')"
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Windows-MCP $RELEASE_TAG" --notes-file release-notes.md --latest
+
+  windows_setup:
+    name: Build and verify Windows manager
+    needs: tests
+    uses: ./.github/workflows/setup.yml
+    permissions:
+      contents: read

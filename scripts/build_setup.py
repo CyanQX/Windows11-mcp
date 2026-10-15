@@ -36,7 +36,7 @@ def main():
     options += ["--recursive-copy-metadata", "customtkinter"]
     for module in ("tomlkit", "ruamel.yaml", "json5"):
         options += ["--copy-metadata", module]
-    for source, destination in ((ROOT / "manifest.json", "."), (ROOT / "LICENSE.md", "."), (ROOT / "skills" / "windows-mcp", "skills/windows-mcp")):
+    for source, destination in ((ROOT / "manifest.json", "."), (ROOT / "LICENSE.md", "."), (ROOT / "installer" / "resources", "installer/resources"), (ROOT / "skills" / "windows-mcp", "skills/windows-mcp")):
         options += ["--add-data", f"{source}{os.pathsep}{destination}"]
     PyInstaller.__main__.run(options)
 

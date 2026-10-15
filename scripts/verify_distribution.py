@@ -59,15 +59,15 @@ def verify(dist: Path, tag: str | None = None) -> dict:
             path = "src/" + name
             assert path in members, f"Source distribution is missing: {path}"
             assert archive.extractfile(members[path]).read() == content, f"Source distribution differs: {path}"
-        required = ["README.md", "LICENSE.md", "CLAUDE.md", "pyproject.toml", "manifest.json", "uv.lock", "MANIFEST.in"]
-        required.extend(path.relative_to(ROOT).as_posix() for folder in ("assets", "tests", "scripts", ".github", ".claude", "installer", "skills") for path in (ROOT / folder).rglob("*") if path.is_file() and path.suffix in {".py", ".png", ".yml", ".md"} and "__pycache__" not in path.parts)
+        required = ["README.md", "CHANGELOG.md", "LICENSE.md", "CLAUDE.md", "pyproject.toml", "manifest.json", "uv.lock", "MANIFEST.in"]
+        required.extend(path.relative_to(ROOT).as_posix() for folder in ("assets", "tests", "scripts", ".github", ".claude", "installer", "skills") for path in (ROOT / folder).rglob("*") if path.is_file() and path.suffix in {".py", ".png", ".svg", ".txt", ".json", ".yml", ".md"} and "__pycache__" not in path.parts)
         for name in required:
             assert name in members, f"Source distribution is missing release file: {name}"
             assert archive.extractfile(members[name]).read() == (ROOT / name).read_bytes(), f"Source distribution differs: {name}"
         metadata = BytesParser().parsebytes(archive.extractfile(members["PKG-INFO"]).read())
         assert metadata["Version"] == version, "Source distribution version differs"
 
-    hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (wheel, sdist)}
+    hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in dist.iterdir() if path.is_file() and path.name not in {"SHA256SUMS.txt", "distribution-verification.json"}}
     (dist / "SHA256SUMS.txt").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(hashes.items())), encoding="utf-8")
     return {"version": version, "tag": tag, "tool_count": len(tools), "runtime_source_files": len(source_files), "package_source_matches": True, "artifacts": hashes}
 

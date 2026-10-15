@@ -1,0 +1,89 @@
+"""Actual bounded MCP handshakes, separate from static installation state."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class HealthResult:
+    ok: bool
+    code: str
+    message: str
+    checked_at: str
+    elapsed_ms: int
+    tool_count: int = 0
+    server_version: str | None = None
+    session_status: str | None = None
+
+    def to_dict(self):
+        return asdict(self)
+
+
+def session_data(result) -> dict:
+    for name in ("data", "structured_content"):
+        value = getattr(result, name, None)
+        if isinstance(value, dict):
+            return value
+    for block in getattr(result, "content", []):
+        if getattr(block, "type", None) == "text":
+            try:
+                value = json.loads(block.text)
+                if isinstance(value, dict):
+                    return value
+            except ValueError:
+                pass
+    return {}
+
+
+class HealthChecker:
+    def __init__(self, manifest: dict, timeout: float = 60, *, arguments=None, home: Path | None = None):
+        self.manifest, self.timeout = manifest, timeout
+        self.arguments = ["--serve"] if arguments is None else arguments
+        self.home = home
+
+    async def probe(self, executable: Path) -> HealthResult:
+        started = time.monotonic()
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+
+        def result(ok, code, message, **data):
+            return HealthResult(ok, code, message, now, int((time.monotonic() - started) * 1000), **data)
+
+        if not executable.is_file():
+            return result(False, "RUNTIME_MISSING", "MCP 服务程序不存在")
+        from fastmcp import Client
+        from fastmcp.client.transports import StdioTransport
+
+        try:
+            async with asyncio.timeout(self.timeout):
+                env = {"ANONYMIZED_TELEMETRY": "false", "WINDOWS_MCP_WATCHDOG": "off", "WINDOWS_MCP_DISABLE_FLASH": "1"}
+                if self.home:
+                    # Acceptance probes isolate core config and audit files as well
+                    # as client configs. Normal GUI verification keeps the real home.
+                    self.home.mkdir(parents=True, exist_ok=True)
+                    env.update(USERPROFILE=str(self.home), HOMEDRIVE=self.home.drive, HOMEPATH=str(self.home)[len(self.home.drive):], APPDATA=str(self.home / "AppData" / "Roaming"), LOCALAPPDATA=str(self.home / "AppData" / "Local"))
+                transport = StdioTransport(command=str(executable), args=self.arguments, env=env)
+                async with Client(transport, timeout=self.timeout) as client:
+                    tools = await client.list_tools()
+                    expected = {item["name"] for item in self.manifest["tools"]}
+                    if {tool.name for tool in tools} != expected:
+                        return result(False, "TOOL_LIST_MISMATCH", "实际工具清单与当前版本不一致", tool_count=len(tools))
+                    response = await client.call_tool("Session", {"operation": "status"})
+                    state = session_data(response)
+                    if response.is_error or state.get("status") != "READY":
+                        return result(False, "SESSION_NOT_READY", "MCP 会话未就绪", tool_count=len(tools), session_status=state.get("status"))
+                    info = client.initialize_result.serverInfo
+                    version = info.version
+                    if version != self.manifest["version"]:
+                        return result(False, "VERSION_MISMATCH", "服务版本与安装助手期望版本不一致，请通过版本与升级处理", tool_count=len(tools), server_version=version, session_status="READY")
+                    return result(True, "VERIFIED", "最近一次 MCP 连接验证通过", tool_count=len(tools), server_version=version, session_status="READY")
+        except TimeoutError:
+            return result(False, "MCP_TIMEOUT", "连接验证超时，检查进程已关闭")
+        except Exception as exc:
+            # Details can be added to a private redacted report, not dumped on MCP stdout.
+            return result(False, "MCP_CONNECTION_FAILED", f"无法完成 MCP 连接验证（{type(exc).__name__}）")

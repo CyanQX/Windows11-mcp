@@ -79,6 +79,8 @@ class Configuration:
         self.yaml = YAML(typ="rt")
         self.yaml.preserve_quotes = True
         text = (content or b"").decode("utf-8-sig")
+        self.original_text = text
+        self.had_bom = bool(content and content.startswith(b"\xef\xbb\xbf"))
         try:
             if profile.kind == "toml":
                 self.document = tomlkit.parse(text)
@@ -96,6 +98,8 @@ class Configuration:
                 if not isinstance(existing, dict):
                     raise ValueError("MCP section must be an object")
                 self.section = section
+                if SERVER in existing and not isinstance(existing[SERVER], dict):
+                    raise ValueError("Windows-MCP entry must be an object")
         except Exception as exc:
             raise ValueError(f"无法读取 {profile.config.name}，原配置未修改。请先修复配置格式。") from exc
 
@@ -138,7 +142,12 @@ class Configuration:
             stream = io.StringIO()
             self.yaml.dump(self.document, stream)
             return stream.getvalue().encode("utf-8")
-        return (json.dumps(self.document, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        from installer.jsonpatch import patch_member
+
+        text = patch_member(self.original_text, [self.section, SERVER], self.get())
+        if json5.loads(text, allow_duplicate_keys=False) != self.document:
+            raise ValueError("配置保真校验失败，原文件未修改")
+        return (("\ufeff" if self.had_bom else "") + text).encode("utf-8")
 
 
 def mcp_entry(profile: Profile, executable: Path) -> dict:
@@ -164,6 +173,21 @@ class Installer:
         self.source_executable = executable.absolute()
         self.executable = self.data / "Windows-MCP.exe"
         self.clients = {profile.id: profile for profile in profiles(self.home, env)}
+        self.on_write = None
+        self.emit = None
+        self.version = None
+
+    def _write(self, path: Path, content: bytes | None) -> None:
+        if self.on_write:
+            self.on_write(path, digest(content) if content is not None else None)
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            atomic_write(path, content)
+
+    def _event(self, phase: str, message: str):
+        if self.emit:
+            self.emit(phase, message)
 
     def receipt_path(self, profile: Profile) -> Path:
         return self.data / "receipts" / f"{profile.id}.json"
@@ -182,7 +206,27 @@ class Installer:
         temporary = self.data / (".runtime-" + uuid.uuid4().hex + ".exe")
         try:
             shutil.copyfile(self.source_executable, temporary)
-            os.replace(temporary, self.executable)
+            expected = digest(self.source_executable.read_bytes())
+            if digest(temporary.read_bytes()) != expected:
+                raise ValueError("运行时复制校验失败")
+            if self.on_write:
+                self.on_write(self.executable, expected)
+            try:
+                os.replace(temporary, self.executable)
+            except PermissionError:
+                if not self.executable.exists():
+                    raise
+                # Preserve a loaded image; never terminate clients or delete it in place.
+                retired = self.data / "retired"
+                retired.mkdir(exist_ok=True)
+                previous = retired / (uuid.uuid4().hex + ".exe")
+                os.rename(self.executable, previous)
+                try:
+                    os.replace(temporary, self.executable)
+                except Exception:
+                    os.rename(previous, self.executable)
+                    raise
+            self._event("runtime", "MCP 运行时已复制并校验")
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -201,6 +245,7 @@ class Installer:
             config.set(expected)
         transaction = self.data / "backups" / uuid.uuid4().hex
         transaction.mkdir(parents=True, exist_ok=False)
+        self._event("backup", "原配置与受管理 Skill 的备份位置已创建")
         receipt = previous or {"profile": profile.id, "config_path": str(profile.config), "skill_root": str(profile.skill_root), "files": {}, "config_backup": None, "config_originally_exists": before_config is not None}
         changes = []
         if mcp:
@@ -236,13 +281,18 @@ class Installer:
             for path, before, after in changes:
                 if read_file(path) != before:
                     raise ValueError(f"{path.name} 在安装时被其他程序修改，请重试。")
-                atomic_write(path, after)
+                self._write(path, after)
                 applied.append((path, before, after))
-            atomic_write(self.receipt_path(profile), json.dumps(receipt, ensure_ascii=False, indent=2).encode("utf-8"))
+                self._event("config" if path == profile.config else "skill", "MCP 配置已合并" if path == profile.config else "Skill 文件已写入并复读校验")
+                if read_file(path) != after:
+                    raise ValueError("落盘校验失败")
+            if self.version:
+                receipt.update(schema=2, version=self.version, runtime_sha256=digest(self.executable.read_bytes()))
+            self._write(self.receipt_path(profile), json.dumps(receipt, ensure_ascii=False, indent=2).encode("utf-8"))
         except Exception:
             for path, before, after in reversed(applied):
                 if read_file(path) == after:
-                    atomic_write(path, before) if before is not None else path.unlink(missing_ok=True)
+                    self._write(path, before)
             raise
         return {"profile": profile.name, "skill": skill, "mcp": mcp, "backup": str(transaction)}
 
@@ -271,7 +321,7 @@ class Installer:
                 config.set(original.get())
                 if read_file(profile.config) != current_content:
                     raise ValueError("配置被其他程序修改，请重试。")
-                atomic_write(profile.config, config.encode())
+                self._write(profile.config, config.encode())
                 receipt.pop("mcp", None)
             else:
                 retained.append("MCP 配置已被修改，已保留")
@@ -282,12 +332,12 @@ class Installer:
             content = read_file(destination)
             if content is None or digest(content) == record["hash"]:
                 before = backup_content(record["backup"])
-                atomic_write(destination, before) if before is not None else destination.unlink(missing_ok=True)
+                self._write(destination, before)
                 receipt["files"].pop(relative)
             else:
                 retained.append(f"{relative} 已被修改，已保留")
         if retained:
-            atomic_write(receipt_file, json.dumps(receipt, ensure_ascii=False, indent=2).encode("utf-8"))
+            self._write(receipt_file, json.dumps(receipt, ensure_ascii=False, indent=2).encode("utf-8"))
         else:
-            receipt_file.unlink()
+            self._write(receipt_file, None)
         return {"profile": profile.name, "retained": retained}

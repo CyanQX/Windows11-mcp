@@ -2061,7 +2061,7 @@ wheels = [
 
 [[package]]
 name = "windows-mcp"
-version = "1.1.1"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -2093,6 +2093,7 @@ dev = [
 installer = [
     { name = "customtkinter" },
     { name = "json5" },
+    { name = "packaging" },
     { name = "ruamel-yaml" },
     { name = "tomlkit" },
 ]
@@ -2111,6 +2112,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.0" },
     { name = "json5", marker = "extra == 'installer'", specifier = ">=0.12,<1" },
     { name = "markdownify", specifier = ">=1.1.0" },
+    { name = "packaging", marker = "extra == 'installer'", specifier = ">=24,<27" },
     { name = "pillow", specifier = ">=11.2.1" },
     { name = "platformdirs", specifier = ">=4.3.8" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.51,<2" },

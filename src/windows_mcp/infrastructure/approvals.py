@@ -1,12 +1,13 @@
 """Local operator approvals, bound to an exact call and consumed once.
 
-No MCP tool can grant an approval. The local ``approve`` CLI is the trust boundary;
+No MCP tool can grant an approval. The local human GUI / ``approve`` CLI is the trust boundary;
 signed records live outside the tool-accessible workspace.
 """
 
 from __future__ import annotations
 
 import hashlib
+import base64
 import hmac
 import json
 import os
@@ -15,6 +16,9 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from contextlib import contextmanager
+
+from windows_mcp.infrastructure.local_storage import FileLock, private_directory
 
 
 def action_hash(tool: str, arguments: dict[str, Any]) -> str:
@@ -35,6 +39,13 @@ class ApprovalStore:
         self.directory = directory.resolve()
         self.ttl = ttl
         self._lock = threading.RLock()
+
+    @contextmanager
+    def _exclusive(self):
+        with self._lock:
+            private_directory(self.directory)
+            with FileLock(self.directory / ".operator.lock", timeout=2):
+                yield
 
     def _key(self) -> bytes:
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -80,7 +91,7 @@ class ApprovalStore:
         return payload
 
     def request(self, session_id: str, tool: str, arguments: dict, risk: int, description: str) -> dict:
-        with self._lock:
+        with self._exclusive():
             self.prune()
             payload = {
                 "request_id": secrets.token_hex(16),
@@ -94,19 +105,52 @@ class ApprovalStore:
                 "expires_at": time.time() + self.ttl,
                 "approved": False,
             }
+            if os.name == "nt":
+                import win32crypt
+                raw = json.dumps(arguments, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                payload["operator_details"] = base64.b64encode(win32crypt.CryptProtectData(raw, "Windows-MCP exact action", None, None, None, 1)).decode("ascii")
             self._save(payload)
             return payload
 
     def approve(self, request_id: str) -> dict:
-        with self._lock:
+        with self._exclusive():
             payload = self.read(request_id)
+            if payload.get("rejected"):
+                raise PermissionError("Approval was rejected")
             payload["approved"] = True
             self._save(payload)
             return payload
 
+    def reject(self, request_id: str) -> None:
+        with self._exclusive():
+            self.read(request_id)
+            os.rename(self._path(request_id), self._path(request_id).with_suffix(".rejected"))
+
+    def pending(self) -> list[dict]:
+        rows = []
+        if not self.directory.exists():
+            return rows
+        for path in self.directory.glob("*.json"):
+            try:
+                rows.append(self.read(path.stem))
+            except (OSError, ValueError, KeyError, PermissionError):
+                continue
+        return sorted(rows, key=lambda row: row["expires_at"])
+
+    def operator_arguments(self, request_id: str) -> dict | None:
+        payload = self.read(request_id)
+        if not payload.get("operator_details") or os.name != "nt":
+            return None  # Legacy requests remain reviewable via their signed scope/hash.
+        import win32crypt
+        raw = win32crypt.CryptUnprotectData(base64.b64decode(payload["operator_details"]), None, None, None, 1)[1]
+        arguments = json.loads(raw)
+        if action_hash(payload["tool"], arguments) != payload["action_hash"]:
+            raise PermissionError("Operator details do not match the exact action")
+        return arguments
+
     def consume(self, session_id: str, tool: str, arguments: dict, request_id: str | None = None) -> bool:
         digest = action_hash(tool, arguments)
-        with self._lock:
+        with self._exclusive():
             try:
                 candidates = [self._path(request_id)] if request_id else list(self.directory.glob("*.json"))
             except ValueError:
@@ -131,7 +175,7 @@ class ApprovalStore:
 
     def prune(self) -> None:
         for path in self.directory.glob("*"):
-            if path.suffix in {".json", ".used", ".tmp"} and time.time() - path.stat().st_mtime > self.ttl * 2:
+            if path.suffix in {".json", ".used", ".tmp", ".rejected"} and time.time() - path.stat().st_mtime > self.ttl * 2:
                 path.unlink(missing_ok=True)
         if len(list(self.directory.glob("*.json"))) >= 128:
             raise RuntimeError("Too many pending approvals; let existing requests expire")

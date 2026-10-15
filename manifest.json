@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.4",
   "name": "Windows-MCP",
-  "version": "1.1.1",
+  "version": "1.2.1",
   "description": "Semantic Windows automation with independent verification, scoped permissions and managed Playwright",
   "long_description": "Semantic-first Observe/Execute/Verify, bounded multi-subscriber Watch, isolated Playwright browser contexts, native scoped text files and window-bound visual fallback. Legacy tools remain registered and pass through the same PolicyGate. R2 requires an exact, session-bound, expiring, one-use local operator approval; R3 is disabled by default. Tested on Windows 11; application coverage, mixed-DPI multi-monitor and Windows 10 qualification limits are documented in README.",
   "author": {
@@ -194,7 +194,7 @@
     },
     {
       "name": "RequestApproval",
-      "description": "Create an expiring approval request for an exact tool/argument object. This tool cannot grant permission. A local human operator reviews it using windows-mcp approve REQUEST_ID. The approved call is session-bound, consumed once, and cannot be changed or replayed."
+      "description": "Create an expiring approval request for an exact tool/argument object. This tool cannot grant permission. The packaged Windows manager opens a local human review window; alternatively the local operator can use windows-mcp approve REQUEST_ID. Approval stays exact-call/session-bound and single-use."
     },
     {
       "name": "Visual",
