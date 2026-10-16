@@ -22,6 +22,16 @@ from tests.installer_helpers import make_service
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def wait_for_workspace(space):
+    # Wait for the real animation endpoint on a busy Windows runner, while
+    # retaining a deadline that fails stalled transitions.
+    deadline = time.monotonic() + 3
+    while space.transitions and time.monotonic() < deadline:
+        QTest.qWait(20)
+    assert not space.transitions
+    QTest.qWait(20)
+
+
 @pytest.fixture(scope="module")
 def native_window(tmp_path_factory):
     app = application()
@@ -109,7 +119,7 @@ def test_docks_swap_float_collapse_restore_and_persist(window):
     assert right.isFloating()
     space.collapse(left)
     assert left.isVisible()  # Slide first; park only after the animation.
-    QTest.qWait(310)
+    wait_for_workspace(window.workspace)
     assert left.isHidden() and space.collapsed["targets"][0] == "right"
     snapshot = space.snapshot()
     space.reset()
@@ -140,7 +150,7 @@ def test_separator_drag_past_minimum_parks_panel_and_handle_drag_restores(window
     assert window.workspace.preview.fraction > 0.4
     release = QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
     window.workspace.eventFilter(canvas, release)
-    QTest.qWait(310)
+    wait_for_workspace(window.workspace)
     assert "targets" in window.workspace.collapsed
     handle = window.workspace.collapsed["targets"][1]
     origin = handle.control.mapToGlobal(QPoint(5, 5))
@@ -149,7 +159,7 @@ def test_separator_drag_past_minimum_parks_panel_and_handle_drag_restores(window
     assert dock.isVisible() and window.workspace.preview and "targets" in window.workspace.collapsed
     handle.eventFilter(handle.control, QMouseEvent(QEvent.Type.MouseMove, QPoint(605, 5), origin + QPoint(600, 0), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
     handle.eventFilter(handle.control, QMouseEvent(QEvent.Type.MouseButtonRelease, QPoint(605, 5), origin + QPoint(600, 0), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-    QTest.qWait(220)
+    wait_for_workspace(window.workspace)
     assert "targets" not in window.workspace.collapsed and dock.isVisible()
 
 
@@ -157,7 +167,7 @@ def test_footer_remains_compact_when_both_content_panels_are_parked(window):
     space = window.workspace
     space.collapse(space.docks["targets"])
     space.collapse(space.docks["maintenance"])
-    QTest.qWait(350)
+    wait_for_workspace(window.workspace)
     assert space.placeholder.isVisible()
     assert space.docks["actions"].height() < 230
     assert space.collapsed["targets"][1].control.width() <= 38
@@ -384,7 +394,7 @@ def test_drag_short_of_edge_threshold_returns_without_parking(window):
     space.eventFilter(canvas, QMouseEvent(QEvent.Type.MouseMove, destination, canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
     assert space.preview and 0 < space.preview.fraction < 0.75
     space.eventFilter(canvas, QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-    QTest.qWait(220)
+    wait_for_workspace(window.workspace)
     assert dock.isVisible() and not space.collapsed and not space.transitions
 
 
@@ -403,7 +413,7 @@ def test_native_splitter_dispatch_resizes_before_it_parks(window):
     assert dock.isVisible() and not space.collapsed
     assert space.docks["maintenance"].x() <= dock.geometry().right() + 13, "The native separator must release its old footprint too"
     QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(minimum - 160, point.y()))
-    QTest.qWait(310)
+    wait_for_workspace(window.workspace)
     assert "targets" in space.collapsed and dock.isHidden()
 
 
@@ -563,11 +573,11 @@ def test_edge_handle_short_pull_returns_to_edge_and_full_pull_restores_live_cont
     space.pull_from_edge(dock, 35)
     assert space.preview and dock.width() <= 40
     space.finish_reveal(dock)
-    QTest.qWait(310)
+    wait_for_workspace(window.workspace)
     assert dock.isHidden() and len(space.collapsed) == 1
     space.pull_from_edge(dock, 1000)
     space.finish_reveal(dock)
-    QTest.qWait(230)
+    wait_for_workspace(window.workspace)
     assert dock.isVisible() and not space.collapsed and dock.widget() is body
     assert not body.isHidden() and not space.transitions and not space.preview
 
@@ -614,7 +624,7 @@ def drag_canvas_boundary(space, start, delta):
         QApplication.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, point, canvas.mapToGlobal(point), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
         QApplication.processEvents()
     QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=start + delta)
-    QTest.qWait(310)
+    wait_for_workspace(space)
 
 
 @pytest.mark.parametrize("edge,maximized,origin", [("left", False, "targets"), ("left", False, "actions"), ("left", True, "targets"), ("right", False, "targets")])
@@ -686,7 +696,7 @@ def test_nested_side_partial_slide_moves_both_panels_and_can_reverse(window):
     destination = QPoint(start.x() + 20, start.y())
     QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseMove, destination, space.canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
     QTest.mouseRelease(space.canvas, Qt.MouseButton.LeftButton, pos=destination)
-    QTest.qWait(230)
+    wait_for_workspace(window.workspace)
     assert not space.collapsed and space.preview is None and space.split_live is None
     assert dock.isVisible() and actions.isVisible() and actions.height() <= 180
 
@@ -702,7 +712,7 @@ def test_native_separator_observes_a_shared_minimum_without_matching_panel_recta
     assert dock.isHidden() and "targets" in space.collapsed
     assert actions.isHidden() and set(space.park_groups["targets"]) == {"targets", "actions"}
     space.collapsed["targets"][1].control.click()
-    QTest.qWait(230)
+    wait_for_workspace(window.workspace)
     assert dock.isVisible() and dock.x() >= 0 and actions.height() <= 180
 
 
@@ -712,7 +722,7 @@ def test_complete_side_group_persists_and_handle_pull_restores_all_controls(wind
     space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
     QTest.qWait(60)
     space.collapse(dock, "left")
-    QTest.qWait(310)
+    wait_for_workspace(window.workspace)
     saved = space.snapshot()
     assert set(saved["groups"]["targets"]) == {"targets", "actions"}
     space.reset()
@@ -722,11 +732,11 @@ def test_complete_side_group_persists_and_handle_pull_restores_all_controls(wind
     space.pull_from_edge(dock, 50)
     assert set(space.preview.members) == {dock, actions}
     space.finish_reveal(dock)
-    QTest.qWait(310)
+    wait_for_workspace(window.workspace)
     assert dock.isHidden() and actions.isHidden()
     space.pull_from_edge(dock, 10000)
     space.finish_reveal(dock)
-    QTest.qWait(230)
+    wait_for_workspace(window.workspace)
     assert dock.isVisible() and actions.isVisible() and not space.collapsed
     assert dock.slide is None and actions.slide is None
     assert window.install_button.isVisible() and window.settings_button.isVisible()
@@ -842,7 +852,7 @@ def test_nested_footer_maximized_resize_then_restore_can_shrink_and_park(window,
         drag_canvas_boundary(space, start, QPoint(0, dock.height() + 100))
         assert dock.isHidden() and space.collapsed["actions"][0] == "bottom"
         space.collapsed["actions"][1].control.click()
-        QTest.qWait(230)
+        wait_for_workspace(window.workspace)
         assert dock.isVisible() and dock.height() <= 180
         assert window.install_button.height() >= 44 and window.settings_button.height() >= 44
         assert window.install_button.width() >= window.install_button.sizeHint().width()
@@ -878,7 +888,7 @@ def test_floating_footer_after_restore_can_resize_past_minimum_and_park(window, 
             QApplication.processEvents()
         assert space.preview and space.preview.fraction > .4
         QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseButtonRelease, point, global_point, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-        QTest.qWait(310)
+        wait_for_workspace(window.workspace)
         assert dock.isHidden() and "actions" in space.collapsed
         space.collapsed["actions"][1].control.click()
         QTest.qWait(50)
