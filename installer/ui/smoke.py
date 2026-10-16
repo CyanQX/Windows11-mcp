@@ -210,9 +210,9 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                         point = QPoint(x, start.y())
                         app.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, point, canvas.mapToGlobal(point), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
                         app.processEvents()
-                    assert space.preview and space.preview.dock is dock and space.preview.shared_span
+                    assert space.preview and space.preview.dock is dock and set(space.preview.members) == {dock, actions}
                     assert actions.isVisible() and abs(actions.height() - initial) <= 16, f"Toolbar changed {initial} -> {actions.height()}; target {dock.geometry()}; shared {space.preview.shared_span}"
-                    verified_steps.append("target_right_edge_slides_only_target_in_shared_column")
+                    verified_steps.append("whole_left_side_slides_continuously_with_both_panels")
                     if case == "targets-nested-preview":
                         take()
                         return
@@ -220,17 +220,19 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     QTimer.singleShot(310, target_parked)
                 def target_parked():
                     assert dock.isHidden() and space.collapsed["targets"][0] == "left"
-                    assert actions.isVisible() and "actions" not in space.collapsed
-                    verified_steps.append("target_parks_left_without_hiding_actions")
+                    assert actions.isHidden() and len(space.collapsed) == 1
+                    assert set(space.park_groups["targets"]) == {"targets", "actions"}
+                    verified_steps.append("whole_left_side_parks_with_one_centered_handle")
                     if case == "targets-nested-restored":
                         space.collapsed["targets"][1].control.click()
-                        QTimer.singleShot(240, target_restored)
+                        QTimer.singleShot(350, target_restored)
                     else:
                         take()
                 def target_restored():
                     assert dock.isVisible() and dock.x() >= 0 and "targets" not in space.collapsed
                     assert actions.height() <= 180
-                    verified_steps.append("target_handle_restores_nested_layout_and_compact_actions")
+                    assert actions.isVisible()
+                    verified_steps.append("side_handle_restores_all_panels_and_compact_actions")
                     take()
                 QTimer.singleShot(80, shrink_target)
             elif case == "update-available":

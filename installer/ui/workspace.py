@@ -30,6 +30,7 @@ class SlidePreview(QWidget):
         self.image = dock.grab()
         self.floating_rect = QRect(dock.geometry()) if dock.isFloating() else None
         self.expanded = dock.size()
+        self.members, self.sizes = [dock], {dock.key: QSize(self.expanded)}
         self.original_rect = dock.geometry()
         self.horizontal = edge in {"left", "right"}
         self.shared_span = (bool(workspace.aligned_docks(dock, self.horizontal)) if shared_span is None else shared_span) if not dock.isFloating() else False
@@ -77,6 +78,9 @@ class SlidePreview(QWidget):
         painter.scale(scale, scale)
         painter.translate(-self.expanded.width() / 2, -self.expanded.height() / 2)
         painter.drawPixmap(QPoint(), self.image)
+
+    def reposition(self):
+        self.setGeometry(self.dock.rect())
 
     def advance(self, fraction):
         self.fraction = max(0., min(1., float(fraction)))
@@ -136,6 +140,111 @@ class SlidePreview(QWidget):
         self.dock.slide = None
         self.blank_title.deleteLater()
         self.blank_body.deleteLater()
+        self.deleteLater()
+
+
+class SideSlidePreview(SlidePreview):
+    """Slide one complete native side, releasing all of its dock slots together."""
+    def __init__(self, workspace, dock, edge, members):
+        QWidget.__init__(self, workspace.canvas)
+        self.workspace, self.dock, self.edge = workspace, dock, edge
+        self.members, self.fraction, self.ready = list(members), 0., False
+        self.horizontal, self.shared_span, self.floating_rect = True, False, None
+        self.original_rect = QRect()
+        self.states, self.sizes = {}, {}
+        for panel in self.members:
+            self.original_rect = self.original_rect.united(panel.geometry())
+            self.sizes[panel.key] = QSize(panel.size())
+            self.states[panel.key] = (panel.minimumSize(), panel.maximumSize(), panel.widget(), panel.titleBarWidget())
+        self.image = workspace.canvas.grab(self.original_rect)
+        self.expanded, self.extent = self.original_rect.size(), self.original_rect.width()
+        self.peer_widths = {other.key: other.width() for other in workspace.docks.values() if other not in self.members and other.isVisible() and not other.isFloating()}
+        self.blanks = []
+        enabled = workspace.canvas.updatesEnabled()
+        workspace.canvas.setUpdatesEnabled(False)
+        try:
+            for panel in self.members:
+                _, maximum, body, title = self.states[panel.key]
+                body.hide()
+                title.hide()
+                blank_title, blank_body = QWidget(), QWidget()
+                blank_title.setFixedSize(0, 0)
+                blank_body.setMinimumSize(1, 1)
+                self.blanks.extend((blank_title, blank_body))
+                panel.slide = self
+                panel.setTitleBarWidget(blank_title)
+                panel.setWidget(blank_body)
+                panel.setMaximumSize(maximum.width(), self.sizes[panel.key].height())
+                panel.setMinimumSize(0, self.sizes[panel.key].height())
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+            self.ready = True
+            self.advance(0)
+            self.show()
+            self.raise_()
+        finally:
+            workspace.canvas.setUpdatesEnabled(enabled)
+
+    def reposition(self):
+        if not self.ready:
+            return
+        rect = QRect()
+        for panel in self.members:
+            if panel.isVisible():
+                rect = rect.united(panel.geometry())
+        if not rect.isEmpty():
+            self.setGeometry(rect)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        if self.edge == "left":
+            painter.translate(-round(self.extent * self.fraction), 0)
+        # Keep the complete side opaque and at its original scale: it physically
+        # travels beyond the edge rather than fading away at a threshold.
+        painter.drawPixmap(QPoint(), self.image)
+
+    def advance(self, fraction):
+        self.fraction = max(0., min(1., float(fraction)))
+        peers, widths = [], []
+        for panel in self.members:
+            width = max(1, round(self.sizes[panel.key].width() * (1 - self.fraction)))
+            panel.setFixedWidth(width)
+            peers.append(panel)
+            widths.append(width)
+        released = round(self.extent * self.fraction)
+        for key, width in self.peer_widths.items():
+            panel = self.workspace.docks[key]
+            if panel.isVisible() and not panel.isFloating():
+                peers.append(panel)
+                widths.append(width + released)
+        self.workspace.canvas.resizeDocks(peers, widths, Qt.Orientation.Horizontal)
+        self.workspace.canvas.layout().activate()
+        self.reposition()
+        self.raise_()
+        self.update()
+
+    def dispose(self):
+        self.ready = False
+        self.hide()
+        enabled = self.workspace.canvas.updatesEnabled()
+        self.workspace.canvas.setUpdatesEnabled(False)
+        try:
+            for panel in self.members:
+                minimum, maximum, body, title = self.states[panel.key]
+                panel.slide = None
+                panel.setMaximumSize(maximum)
+                panel.setTitleBarWidget(title)
+                panel.setWidget(body)
+                title.show()
+                body.show()
+                panel.setMinimumSize(minimum)
+                panel.setMaximumSize(maximum)
+                panel.updateGeometry()
+                panel.update()
+            for blank in self.blanks:
+                blank.deleteLater()
+        finally:
+            self.workspace.canvas.setUpdatesEnabled(enabled)
         self.deleteLater()
 
 
@@ -231,7 +340,7 @@ class EdgeHandle(QWidget):
         self.control.setFixedSize(34, 62) if edge in {"left", "right"} else self.control.setFixedSize(62, 30)
         self.control.setStyleSheet("QPushButton { padding: 4px; border-radius: 12px; }")
         self.control.setAccessibleName(f"恢复{dock.windowTitle()}面板，也可拖出")
-        self.control.setToolTip(dock.windowTitle())
+        self.control.setToolTip(" / ".join(panel.windowTitle() for panel in workspace.parked_members(dock)))
         self.control.installEventFilter(self)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -292,7 +401,7 @@ class GlassDock(QDockWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.slide:
-            self.slide.setGeometry(self.rect())
+            self.slide.reposition()
 
     def closeEvent(self, event):
         if self.workspace.closing:
@@ -324,6 +433,7 @@ class Workspace(QWidget):
         self.canvas.setDockOptions(options)
         self.canvas.setTabPosition(Qt.DockWidgetArea.AllDockWidgetAreas, QTabWidget.TabPosition.South)
         self.docks, self.collapsed, self.last_area, self.park_sizes = {}, {}, {}, {}
+        self.park_groups = {}
         self.park_float_rects = {}
         self.rails, self.rail_layouts = {}, {}
         grid = QGridLayout(self)
@@ -483,6 +593,33 @@ class Workspace(QWidget):
             if aligned:
                 peers.append(other)
         return peers
+
+    def side_members(self, dock, edge):
+        if edge not in {"left", "right"} or dock.isFloating() or self.canvas.dockWidgetArea(dock) != AREAS[edge]:
+            return [dock]
+        return [panel for panel in self.docks.values() if (panel.isVisible() or panel is dock) and not panel.isFloating() and self.canvas.dockWidgetArea(panel) == AREAS[edge]] or [dock]
+
+    def parked_anchor(self, dock):
+        for key, members in self.park_groups.items():
+            if key in self.collapsed and dock.key in members:
+                return self.docks[key]
+        for key, (_, preview, _, _) in self.transitions.items():
+            if dock in preview.members:
+                return self.docks[key]
+        return dock
+
+    def parked_members(self, dock):
+        return [self.docks[key] for key in self.park_groups.get(dock.key, {dock.key: dock.size()})]
+
+    def slide_preview(self, dock, edge, *, shared_span=None, members=None):
+        members = members or self.side_members(dock, edge)
+        return SideSlidePreview(self, dock, edge, members) if len(members) > 1 else SlidePreview(self, dock, edge, shared_span=shared_span)
+
+    def restore_member_sizes(self, members):
+        for orientation in (Qt.Orientation.Horizontal, Qt.Orientation.Vertical):
+            sizes = [self.park_sizes.get(panel.key, panel.size()) for panel in members]
+            self.canvas.resizeDocks(members, [size.width() if orientation == Qt.Orientation.Horizontal else size.height() for size in sizes], orientation)
+        self.canvas.layout().activate()
 
     def footer_edge(self, dock):
         edges = self.adjacent_edges(dock)
@@ -697,11 +834,12 @@ class Workspace(QWidget):
         self.schedule_normalize()
 
     def collapse(self, dock, edge=None, *, animate=True):
+        dock = self.parked_anchor(dock)
         if (dock.key in self.collapsed and not (self.preview and self.preview.dock == dock)) or dock.key in self.transitions:
             return
         edge = edge or (self.footer_edge(dock) if dock.key == "actions" else self.last_area.get(dock.key, DEFAULTS[dock.key]))
         if animate and dock.isVisible() and not theme().appearance["reduce_motion"]:
-            preview = self.preview if self.preview and self.preview.dock == dock else SlidePreview(self, dock, edge)
+            preview = self.preview if self.preview and self.preview.dock == dock else self.slide_preview(dock, edge)
             self.preview = None
             animation = QVariantAnimation(self)
             animation.setStartValue(preview.fraction)
@@ -714,7 +852,8 @@ class Workspace(QWidget):
             animation.start()
         else:
             self.clear_preview()
-            self.park(dock, edge)
+            members = self.side_members(dock, edge)
+            self.park(dock, edge, group_sizes={panel.key: QSize(panel.size()) for panel in members} if len(members) > 1 else None)
 
     def finish_slide(self, dock):
         entry = self.transitions.pop(dock.key, None)
@@ -724,13 +863,14 @@ class Workspace(QWidget):
             if park:
                 if preview.floating_rect is not None:
                     self.park_float_rects[dock.key] = QRect(preview.floating_rect)
-                dock.hide()
+                for panel in preview.members:
+                    panel.hide()
             else:
                 preview.advance(0)
             preview.dispose()
             animation.deleteLater()
             if park:
-                self.park(dock, edge, preview.expanded)
+                self.park(dock, edge, preview.sizes[dock.key], group_sizes=preview.sizes if len(preview.members) > 1 else None)
             self.schedule_normalize()
 
     def return_preview(self):
@@ -753,18 +893,24 @@ class Workspace(QWidget):
 
     def clear_preview(self):
         if self.preview:
-            dock = self.preview.dock
-            self.preview.advance(0)
-            self.preview.dispose()
+            preview = self.preview
+            dock = preview.dock
+            preview.advance(0)
+            preview.dispose()
             self.preview = None
             if dock.key in self.collapsed:
-                dock.hide()
+                for panel in preview.members:
+                    panel.hide()
 
-    def park(self, dock, edge, expanded=None):
+    def park(self, dock, edge, expanded=None, *, group_sizes=None):
         if dock.isFloating() and expanded is None:
             self.park_float_rects[dock.key] = QRect(dock.geometry())
         self.park_sizes[dock.key] = QSize(expanded or dock.size())
-        dock.hide()
+        if group_sizes:
+            self.park_groups[dock.key] = {key: QSize(size) for key, size in group_sizes.items()}
+            self.park_sizes.update(self.park_groups[dock.key])
+        for panel in self.parked_members(dock):
+            panel.hide()
         if dock.key in self.collapsed:
             self.update_empty()
             return
@@ -793,6 +939,7 @@ class Workspace(QWidget):
             handle.setParent(None)
             handle.deleteLater()
             self.rails[edge].setVisible(any(value[0] == edge for value in self.collapsed.values()))
+        self.park_groups.pop(dock.key, None)
 
     def pull_from_edge(self, dock, pull):
         if dock.key in self.transitions:
@@ -805,11 +952,11 @@ class Workspace(QWidget):
                 self.restore(dock)
                 return
             edge = entry[0]
-            dock.show()
-            size = self.park_sizes.get(dock.key, dock.size())
-            self.canvas.resizeDocks([dock], [size.width() if edge in {"left", "right"} else size.height()], Qt.Orientation.Horizontal if edge in {"left", "right"} else Qt.Orientation.Vertical)
-            self.canvas.layout().activate()
-            self.preview = SlidePreview(self, dock, edge)
+            members = self.parked_members(dock)
+            for panel in members:
+                panel.show()
+            self.restore_member_sizes(members)
+            self.preview = self.slide_preview(dock, edge, members=members)
         if self.preview.dock is dock:
             self.preview.advance(1 - min(1, pull / max(1, self.preview.extent)))
 
@@ -823,6 +970,7 @@ class Workspace(QWidget):
             self.collapse(dock, self.preview.edge)
 
     def restore(self, dock, *, animate=False):
+        dock = self.parked_anchor(dock)
         entry = self.transitions.pop(dock.key, None)
         if entry:
             animation, preview, _, _ = entry
@@ -834,20 +982,19 @@ class Workspace(QWidget):
             self.clear_preview()
         was_parked = dock.key in self.collapsed
         edge = self.collapsed[dock.key][0] if was_parked else self.last_area[dock.key]
+        members = self.parked_members(dock)
         self.remove_handle(dock)
-        dock.show()
+        for panel in members:
+            panel.show()
         dock.raise_()
         if was_parked and not dock.isFloating() and dock.key in self.park_sizes:
-            size = self.park_sizes[dock.key]
-            self.canvas.resizeDocks([dock], [size.width()], Qt.Orientation.Horizontal)
-            self.canvas.resizeDocks([dock], [size.height()], Qt.Orientation.Vertical)
-            self.canvas.layout().activate()
+            self.restore_member_sizes(members)
         if dock.isFloating() and dock.key in self.park_float_rects:
             dock.setGeometry(self.park_float_rects[dock.key])
         self.keep_on_screen(dock)
         if was_parked and animate and not dock.isFloating() and not theme().appearance["reduce_motion"]:
             self.canvas.layout().activate()
-            self.preview = SlidePreview(self, dock, edge)
+            self.preview = self.slide_preview(dock, edge, members=members)
             self.preview.advance(1)
             self.return_preview()
         self.update_empty()
@@ -899,6 +1046,7 @@ class Workspace(QWidget):
         self.restore(dock)
         dock.setFloating(False)
         self.canvas.addDockWidget(AREAS[edge], dock)
+        dock.show()
         self.schedule_normalize()
 
     def swap(self, first, second):
@@ -929,7 +1077,8 @@ class Workspace(QWidget):
         self.cancel_title_drag()
         for key in list(self.transitions):
             self.finish_slide(self.docks[key])
-        return {"schema": 1, "geometry": base64.b64encode(bytes(self.owner.saveGeometry())).decode(), "state": base64.b64encode(bytes(self.canvas.saveState(1))).decode(), "collapsed": {key: entry[0] for key, entry in self.collapsed.items()}, "areas": self.last_area.copy(), "footer_height": self.footer_height, "maximized_footer_height": self.maximized_footer_height}
+        groups = {key: {member: [size.width(), size.height()] for member, size in members.items()} for key, members in self.park_groups.items() if key in self.collapsed}
+        return {"schema": 1, "geometry": base64.b64encode(bytes(self.owner.saveGeometry())).decode(), "state": base64.b64encode(bytes(self.canvas.saveState(1))).decode(), "collapsed": {key: entry[0] for key, entry in self.collapsed.items()}, "groups": groups, "areas": self.last_area.copy(), "footer_height": self.footer_height, "maximized_footer_height": self.maximized_footer_height}
 
     def load(self, value):
         if not value:
@@ -952,7 +1101,13 @@ class Workspace(QWidget):
                     self.last_area[key] = edge
             for key, edge in value.get("collapsed", {}).items():
                 if key in self.docks and edge in AREAS:
-                    self.collapse(self.docks[key], edge, animate=False)
+                    group = value.get("groups", {}).get(key, {})
+                    group = group if isinstance(group, dict) else {}
+                    sizes = {member: QSize(*size) for member, size in group.items() if member in self.docks and isinstance(size, list) and len(size) == 2 and all(type(item) is int and 0 < item <= 65536 for item in size)}
+                    if key in sizes and len(sizes) > 1:
+                        self.park(self.docks[key], edge, group_sizes=sizes)
+                    else:
+                        self.collapse(self.docks[key], edge, animate=False)
             for dock in self.docks.values():
                 self.keep_on_screen(dock)
             self.schedule_normalize()
@@ -1033,7 +1188,7 @@ class Workspace(QWidget):
                             self.split_key = key
                             self.canvas.grabMouse()
                         own_minimum = dock.minimumSizeHint().width() if horizontal else dock.minimumSizeHint().height()
-                        self.preview = SlidePreview(self, dock, edge, shared_span=True if limit > own_minimum + 16 else None)
+                        self.preview = self.slide_preview(dock, edge, shared_span=True if limit > own_minimum + 16 else None)
                     self.preview.advance(min(0.99, (limit - wanted) / max(1, limit)))
                     if releasing and self.preview.fraction >= PARK_THRESHOLD:
                         self.collapse(dock, edge)

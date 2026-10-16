@@ -103,6 +103,7 @@ def test_docks_swap_float_collapse_restore_and_persist(window):
     left, right = space.docks["targets"], space.docks["maintenance"]
     space.swap(left, right)
     assert space.canvas.dockWidgetArea(left) == Qt.DockWidgetArea.RightDockWidgetArea
+    assert left.isVisible() and right.isVisible()
     right.setFloating(True)
     right.move(window.pos())
     assert right.isFloating()
@@ -616,32 +617,56 @@ def drag_canvas_boundary(space, start, delta):
     QTest.qWait(310)
 
 
-@pytest.mark.parametrize("maximized", [False, True])
-@pytest.mark.parametrize("edge", ["left", "right"])
-def test_targets_nested_above_wider_actions_can_slide_independently(window, maximized, edge):
+@pytest.mark.parametrize("edge,maximized", [("left", False), ("left", True), ("right", False)])
+def test_nested_panels_slide_park_and_restore_as_one_complete_side(window, maximized, edge):
     space = window.workspace
     dock, actions = space.docks["targets"], space.docks["actions"]
-    if edge == "right":
-        space.swap(dock, space.docks["maintenance"])
-    space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
-    if maximized:
-        window.showMaximized()
-    QTest.qWait(60)
-    assert actions.minimumSizeHint().width() > dock.minimumSizeHint().width()
-    start = QPoint(dock.geometry().right() + 5 if edge == "left" else dock.x() - 5, dock.geometry().center().y())
-    assert set(space.divider_snapshot(space.canvas.mapToGlobal(start))) == {"targets", "maintenance"}
-    drag_canvas_boundary(space, start, QPoint((-1 if edge == "left" else 1) * (dock.width() + 100), 0))
-    assert dock.isHidden() and space.collapsed["targets"][0] == edge
-    assert actions.isVisible() and "actions" not in space.collapsed and actions.height() <= 180
-    assert window.settings_button.isVisible() and window.install_button.isVisible()
-    space.collapsed["targets"][1].control.click()
-    QTest.qWait(230)
-    assert dock.isVisible() and "targets" not in space.collapsed
-    assert actions.isVisible() and actions.height() <= 180, {key: (item.geometry(), item.minimumSizeHint()) for key, item in space.docks.items()}
+    original, minimum = window.size(), window.minimumSize()
+    # A manually constructed native split needs enough width for both columns.
+    # Narrow user drops use the separately tested tab-merge destination instead.
     window.showNormal()
+    window.setMinimumWidth(actions.minimumSizeHint().width() + space.docks["maintenance"].minimumSizeHint().width() + 80)
+    try:
+        if edge == "right":
+            other = space.docks["maintenance"]
+            space.canvas.removeDockWidget(dock)
+            space.canvas.removeDockWidget(other)
+            space.canvas.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, other)
+            space.canvas.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+            other.show()
+            dock.show()
+            space.canvas.layout().activate()
+            QTest.qWait(40)
+        space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
+        if maximized:
+            window.showMaximized()
+        QTest.qWait(60)
+        assert actions.minimumSizeHint().width() > dock.minimumSizeHint().width()
+        start = QPoint(dock.geometry().right() + 5 if edge == "left" else dock.x() - 5, dock.geometry().center().y())
+        assert set(space.divider_snapshot(space.canvas.mapToGlobal(start))) == {"targets", "maintenance"}, {key: (item.geometry(), space.canvas.dockWidgetArea(item), item.isVisible()) for key, item in space.docks.items()}
+        drag_canvas_boundary(space, start, QPoint((-1 if edge == "left" else 1) * (dock.width() + 100), 0))
+        assert dock.isHidden() and space.collapsed["targets"][0] == edge
+        assert actions.isHidden()
+        assert set(space.park_groups["targets"]) == {"targets", "actions"}
+        assert len(space.collapsed) == 1
+        assert space.docks["maintenance"].isVisible()
+        space.collapsed["targets"][1].control.click()
+        deadline = time.monotonic() + 2
+        while space.transitions and time.monotonic() < deadline:
+            QTest.qWait(20)
+        QTest.qWait(30)
+        assert not space.transitions
+        assert dock.isVisible() and "targets" not in space.collapsed
+        assert actions.isVisible() and actions.height() <= 180, {key: (item.geometry(), item.minimumSizeHint()) for key, item in space.docks.items()}
+        assert window.settings_button.isVisible() and window.install_button.isVisible()
+    finally:
+        window.showNormal()
+        window.setMinimumSize(minimum)
+        window.resize(original)
+        space.reset()
 
 
-def test_nested_targets_partial_slide_can_reverse_without_moving_the_actions(window):
+def test_nested_side_partial_slide_moves_both_panels_and_can_reverse(window):
     space = window.workspace
     dock, actions = space.docks["targets"], space.docks["actions"]
     space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
@@ -654,8 +679,9 @@ def test_nested_targets_partial_slide_can_reverse_without_moving_the_actions(win
         point = QPoint(x, start.y())
         QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseMove, point, space.canvas.mapToGlobal(point), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
         QApplication.processEvents()
-    assert space.preview and space.preview.dock is dock and space.preview.shared_span
-    assert abs(actions.height() - initial.height()) <= 16 and actions.width() >= actions.minimumSizeHint().width()
+    assert space.preview and space.preview.dock is dock and set(space.preview.members) == {dock, actions}
+    assert abs(actions.height() - initial.height()) <= 16
+    assert actions.width() < initial.width() and actions.widget() is not window.settings_button.parentWidget()
     destination = QPoint(start.x() + 20, start.y())
     QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseMove, destination, space.canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
     QTest.mouseRelease(space.canvas, Qt.MouseButton.LeftButton, pos=destination)
@@ -673,10 +699,61 @@ def test_native_separator_observes_a_shared_minimum_without_matching_panel_recta
     start = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
     drag_canvas_boundary(space, start, QPoint(-dock.width() - 100, 0))
     assert dock.isHidden() and "targets" in space.collapsed
-    assert actions.isVisible() and actions.height() <= 180
+    assert actions.isHidden() and set(space.park_groups["targets"]) == {"targets", "actions"}
     space.collapsed["targets"][1].control.click()
     QTest.qWait(230)
     assert dock.isVisible() and dock.x() >= 0 and actions.height() <= 180
+
+
+def test_complete_side_group_persists_and_handle_pull_restores_all_controls(window):
+    space, dock = window.workspace, window.workspace.docks["targets"]
+    actions = space.docks["actions"]
+    space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
+    QTest.qWait(60)
+    space.collapse(dock, "left")
+    QTest.qWait(310)
+    saved = space.snapshot()
+    assert set(saved["groups"]["targets"]) == {"targets", "actions"}
+    space.reset()
+    space.load(saved)
+    QTest.qWait(60)
+    assert dock.isHidden() and actions.isHidden() and len(space.collapsed) == 1
+    space.pull_from_edge(dock, 50)
+    assert set(space.preview.members) == {dock, actions}
+    space.finish_reveal(dock)
+    QTest.qWait(310)
+    assert dock.isHidden() and actions.isHidden()
+    space.pull_from_edge(dock, 10000)
+    space.finish_reveal(dock)
+    QTest.qWait(230)
+    assert dock.isVisible() and actions.isVisible() and not space.collapsed
+    assert dock.slide is None and actions.slide is None
+    assert window.install_button.isVisible() and window.settings_button.isVisible()
+
+
+def test_window_state_changes_finish_the_entire_side_without_leaking_size_limits(window):
+    space, dock = window.workspace, window.workspace.docks["targets"]
+    actions = space.docks["actions"]
+    original = window.size()
+    try:
+        space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
+        QTest.qWait(60)
+        space.collapse(dock, "left")
+        window.showMaximized()
+        QTest.qWait(60)
+        assert dock.isHidden() and actions.isHidden() and not space.transitions
+        space.restore(dock, animate=True)
+        window.showNormal()
+        window.resize(original)
+        QTest.qWait(120)
+        assert dock.isVisible() and actions.isVisible() and not space.transitions
+        assert not space.collapsed and not space.park_groups
+        assert dock.maximumWidth() > dock.minimumWidth()
+        assert actions.maximumWidth() > actions.minimumWidth() and actions.height() <= 180
+    finally:
+        window.showNormal()
+        window.resize(original)
+        space.reset()
 
 
 def test_automatic_update_hint_refreshes_open_menu_and_waits_for_user_click(window, monkeypatch):
