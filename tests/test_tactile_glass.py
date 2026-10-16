@@ -17,6 +17,14 @@ from installer.ui.theme import application
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def wait_for_release(button):
+    # Qt's animation timer can deliver its final frame late on a busy CI
+    # desktop. Wait for the real endpoint, rather than a fixed frame budget.
+    deadline = time.monotonic() + 1
+    while button._press != 0 and time.monotonic() < deadline:
+        QTest.qWait(20)
+
+
 @pytest.fixture
 def glass():
     app = application()
@@ -39,7 +47,7 @@ def test_mouse_press_releases_once_without_becoming_selected(glass):
     assert glass.isDown() and glass._press > .95
     assert glass.geometry() == original and not glass.isCheckable()
     QTest.mouseRelease(glass, Qt.MouseButton.LeftButton, pos=glass.rect().center())
-    QTest.qWait(180)
+    wait_for_release(glass)
     assert len(clicks) == 1 and not glass.isDown() and glass._press == 0
 
 
@@ -49,7 +57,7 @@ def test_drag_release_outside_never_activates(glass):
     QTest.mousePress(glass, Qt.MouseButton.LeftButton, pos=glass.rect().center())
     QTest.mouseMove(glass, QPoint(-20, -20))
     QTest.mouseRelease(glass, Qt.MouseButton.LeftButton, pos=QPoint(-20, -20))
-    QTest.qWait(180)
+    wait_for_release(glass)
     assert not clicks and not glass.isDown() and glass._press == 0
 
 
@@ -148,7 +156,7 @@ def test_touch_press_and_release_follow_native_button_semantics(glass):
     QTest.qWait(120)
     assert glass.isDown() and glass._press > .95
     QTest.touchEvent(glass, device).release(0, position, glass).commit()
-    QTest.qWait(170)
+    wait_for_release(glass)
     assert len(clicks) == 1 and not glass.isDown() and glass._press == 0
 
 
