@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from installer.detection import ClientDiscovery
+from installer.detection import ClientDiscovery, find_client_in_folder
 from installer.models import IntegrationStatus as Status, ManagerError, Presence, SelectionModel
 from tests.installer_helpers import make_service
 
@@ -106,6 +106,37 @@ def gui_exe(path, subsystem=2):
     struct.pack_into("<H", data, 64 + 24 + 68, subsystem)
     path.write_bytes(data)
     return path
+
+
+@pytest.mark.parametrize("key,name", [("codex", "Codex.exe"), ("claude", "claude.exe"), ("deepseek", "DeepSeek Harness.exe"), ("opencode", "OpenCode.exe"), ("gemini", "gemini.cmd")])
+def test_selected_folder_is_persisted_and_detects_nested_client(tmp_path, key, name):
+    from installer.settings import SettingsService
+    folder = tmp_path / "program"
+    executable = gui_exe(folder / "app" / name)
+    settings = SettingsService(tmp_path / "home", env={"LOCALAPPDATA": str(tmp_path / "home/data")})
+    settings.save({**settings.value, "client_executables": {key: str(folder)}})
+    reloaded = SettingsService(settings.home, env=settings.env)
+    service = make_service(tmp_path / "case", discovery=reloaded.discovery())
+    presence, found = service.detector.discovery.detect(service.backend.clients[key])
+    assert presence == Presence.DETECTED and found == str(executable)
+    assert reloaded.value["client_executables"][key] == str(folder)
+
+
+def test_folder_scan_rejects_cli_codex_and_ambiguous_versions(tmp_path):
+    gui_exe(tmp_path / "cli/Codex.exe", subsystem=3)
+    with pytest.raises(ManagerError, match="CLIENT_NOT_IN_FOLDER"):
+        find_client_in_folder(tmp_path / "cli", "codex")
+    gui_exe(tmp_path / "desktop/v1/Codex.exe")
+    gui_exe(tmp_path / "desktop/v2/Codex.exe")
+    with pytest.raises(ManagerError, match="CLIENT_FOLDER_AMBIGUOUS"):
+        find_client_in_folder(tmp_path / "desktop", "codex")
+
+
+def test_folder_scan_ignores_cache_and_uninstaller(tmp_path):
+    gui_exe(tmp_path / "Harness/cache/DeepSeek Harness.exe")
+    gui_exe(tmp_path / "Harness/Uninstall.exe")
+    with pytest.raises(ManagerError, match="CLIENT_NOT_IN_FOLDER"):
+        find_client_in_folder(tmp_path / "Harness", "deepseek")
 
 
 @pytest.mark.parametrize("subsystem,found", [(2, True), (3, False), (0, False)])

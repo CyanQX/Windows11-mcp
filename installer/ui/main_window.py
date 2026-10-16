@@ -6,7 +6,7 @@ import queue
 import threading
 import traceback
 
-from PySide6.QtCore import QTimer, QVariantAnimation, QEasingCurve
+from PySide6.QtCore import QTimer, QVariantAnimation, QEasingCurve, Signal
 from PySide6.QtWidgets import QMainWindow, QWidget, QMessageBox, QApplication, QPushButton
 
 from installer.diagnostics import EventLog
@@ -22,6 +22,8 @@ from installer.ui.task_strip import TaskStrip
 
 
 class MainWindow(QMainWindow):
+    release_checked = Signal(object)
+
     def __init__(self, base, settings, executable, *, service=None, approval_store=None, wake_path=None, auto_scan=True):
         super().__init__()
         self.base, self.settings, self.source_executable = base, settings, executable
@@ -34,9 +36,11 @@ class MainWindow(QMainWindow):
         self.approval_store, self.wake_path = approval_store, wake_path
         self.operator_window, self.known_requests, self.dialogs = None, set(), []
         self.update_release = None
+        self.install_cancel = None
         self.task_progress = TaskProgress()
         self.reload_service(initial=True)
-        self.setWindowTitle(f"Windows MCP 安装与维护管理器  v{self.version}" + (" · 便携版" if settings.portable_data else ""))
+        mode = "本地预览 · 3D 触感玻璃" if executable.name.lower() == "windows-mcp-preview.exe" else "便携版" if settings.portable_data else ""
+        self.setWindowTitle(f"Windows MCP 安装与维护管理器  v{self.version}" + (" · " + mode if mode else ""))
         self.setWindowIcon(self.theme.icon("shield"))
         available = self.screen().availableGeometry()
         self.resize(min(1160, available.width() - 30), min(840, available.height() - 45))
@@ -53,15 +57,10 @@ class MainWindow(QMainWindow):
         left = QWidget()
         left.setMinimumWidth(285)
         left_body = column(left, 20, 14)
-        left_body.addWidget(label("选择编程端，可同时安装多个", role="secondary", wrap=True))
         self.selector = MultiSelect(left, self.selection, self.selection_changed)
         left_body.addWidget(self.selector)
-        self.hint = label("正在检查本机编程端…", size=12, role="secondary", wrap=True)
-        left_body.addWidget(self.hint)
         left_body.addStretch()
-        left_body.addWidget(label("Skill 提供操作说明\nMCP 提供 31 个真实工具", size=12, role="secondary", wrap=True))
         left_body.addWidget(button("查看安装路径", self.show_paths, icon="folder"))
-        left_body.addWidget(label("拖动面板标题可换位或浮动\n拖动分隔边可调整大小", size=11, role="secondary", wrap=True))
         self.workspace.add("targets", "安装目标", left)
 
         right = QWidget()
@@ -77,20 +76,26 @@ class MainWindow(QMainWindow):
         self.status_label, self.percent_label = self.task_strip.status, self.task_strip.percent
         right_body.addWidget(self.task_strip)
         self.logs = LogView()
-        right_body.addWidget(row(label("安装日志", size=14, bold=True), None, button("复制", self.logs.copy_all, icon="copy", compact=True), button("清空", self.logs.clear, icon="delete", compact=True)))
+        self.undo_button = button("撤销", self.undo_install, icon="restore", compact=True)
+        right_body.addWidget(row(label("安装日志", size=14, bold=True), None, self.undo_button, button("复制", self.logs.copy_all, icon="copy", compact=True), button("清空", self.logs.clear, icon="delete", compact=True)))
         right_body.addWidget(self.logs, 1)
-        self.health_label = label("尚未验证 · 连接检查会启动真实 MCP 会话", size=11, role="secondary", wrap=True)
-        right_body.addWidget(self.health_label)
-        maintenance = self.workspace.add("maintenance", "安装与维护", right)
-        maintenance.titleBarWidget().layout().insertWidget(2, self.approval_button)
-        maintenance.titleBarWidget().layout().insertWidget(3, self.settings_button)
+        self.workspace.add("maintenance", "安装与维护", right)
 
         footer = QWidget()
         footer.setMinimumWidth(510)
         footer_body = column(footer, 20, 10)
+        footer_body.setContentsMargins(16, 20, 16, 20)
         self.install_button = button("安装 Skill + MCP", self.install, primary=True)
         self.uninstall_button = button("卸载 Skill + MCP", lambda: Targets(self, "uninstall"))
-        footer_body.addWidget(row(None, self.uninstall_button, self.install_button))
+        footer_row = row(self.settings_button, self.approval_button, None, self.uninstall_button, self.install_button)
+        footer_row.layout().setSpacing(4)
+        for control in (self.settings_button, self.approval_button, self.uninstall_button, self.install_button):
+            control.ensurePolished()
+        # The stylesheet's compact button metrics must not let a restored dock
+        # compress this toolbar below its complete, usable control height.
+        footer_row.setMinimumSize(footer_row.sizeHint().width(), 44)
+        footer.setMinimumWidth(max(510, footer_row.minimumWidth() + 32))
+        footer_body.addWidget(footer_row)
         self.workspace.add("actions", "安装操作", footer)
         self.progress_animation = QVariantAnimation(self)
         self.progress_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -126,10 +131,15 @@ class MainWindow(QMainWindow):
         self.service = InstallerService(backend, self.manifest, discovery=self.settings.discovery(), log=log, health=HealthChecker(self.manifest, value["health_timeout"]))
 
     def apply_appearance(self):
+        from installer.ui.tactile_button import TactileGlassButton
         self.theme.apply()
         self.logs.apply_appearance()
-        self.workspace.canvas.setAnimated(not self.theme.appearance["reduce_motion"])
+        # Edge sliding has its own animation. Qt's independent dock animation can
+        # reapply stale maximized extents while a panel is being restored.
+        self.workspace.canvas.setAnimated(False)
         for widget in QApplication.allWidgets():
+            if isinstance(widget, TactileGlassButton):
+                widget.refresh_appearance()
             if isinstance(widget, QPushButton) and widget.property("iconName"):
                 widget.setIcon(self.theme.icon(widget.property("iconName")))
             widget.update()
@@ -208,19 +218,24 @@ class MainWindow(QMainWindow):
                 logs.append(value)
             elif kind == "update_hint":
                 self.update_release = value
+                self.release_checked.emit(value)
             elif kind == "progress":
                 self.task_progress.advance(*value)
                 progress_changed = True
             elif kind in {"done", "error"}:
                 self.busy = False
+                self.install_cancel = None
                 if kind == "error":
                     self.task_progress.complete(False)
                     self.task_strip.complete(False)
                     self.error("操作未完成", value)
                 else:
                     result, states, callback = value
-                    failed = result is False or isinstance(result, list) and any(isinstance(item, dict) and item.get("ok") is False for item in result)
+                    cancelled = isinstance(result, list) and bool(result) and all(isinstance(item, dict) and item.get("cancelled") for item in result)
+                    failed = result is False or isinstance(result, list) and any(isinstance(item, dict) and item.get("ok") is False and not item.get("cancelled") for item in result)
                     self.task_progress.complete(not failed)
+                    if cancelled:
+                        self.task_progress.message = "安装已撤销，已恢复到安装前"
                     self.task_strip.complete(not failed)
                     if states is not None:
                         self.accept_states(states)
@@ -277,15 +292,14 @@ class MainWindow(QMainWindow):
         results = list(self.service.health_results.values())
         latest = max(results, key=lambda value: value["checked_at"]) if results else None
         self.badges[2].setText("MCP  最近验证通过" if latest and latest["ok"] else "MCP  验证未通过" if latest else "MCP  尚未验证")
-        self.health_label.setText(f"最近验证 {latest['checked_at']} · {latest['tool_count']} 个工具 · {latest['code']}" if latest else "尚未验证 · 点击上方按钮执行真实 MCP 连接检查")
-        available = sum(s.install_eligible for s in states.values())
-        self.hint.setText(f"{available} 个编程端可安装。已接入项请在右侧检查、验证或修复。")
 
     def selection_changed(self):
         self.selector.refresh()
         self.update_controls()
 
     def update_controls(self):
+        self.undo_button.setEnabled((self.install_cancel is not None and not self.install_cancel.is_set()) if self.busy else self.service.latest_install() is not None)
+        self.undo_button.setText("正在撤回…" if self.install_cancel is not None and self.install_cancel.is_set() else "撤销")
         self.install_button.setEnabled(bool(self.selection.selected) and not self.busy)
         self.uninstall_button.setEnabled(not self.busy and any(state.receipt_valid for state in self.selection.states.values()))
         for widget in self.action_buttons:
@@ -297,7 +311,40 @@ class MainWindow(QMainWindow):
             return
         ids = sorted(self.selection.selected)
         from installer.ui.dialogs import Preview
-        self.run(lambda: self.service.preview("install", ids), lambda plan: Preview(self, "确认安装 Skill + MCP", plan, lambda: self.run(lambda: self.service.install_targets(ids, digest=plan["digest"]), title="正在安装 Skill 和 MCP")), rescan=False, title="正在核对安装预览")
+        self.run(lambda: self.service.preview("install", ids), lambda plan: Preview(self, "确认安装 Skill + MCP", plan, lambda: self.start_install(ids, plan["digest"])), rescan=False, title="正在核对安装预览")
+
+    def start_install(self, ids, digest):
+        if self.busy:
+            return
+        cancel = threading.Event()
+        self.install_cancel = cancel
+        def finished(results):
+            from installer.ui.dialogs import Results
+            batch_id = next((row.get("batch_id") for row in results if row.get("ok")), None)
+            if cancel.is_set() and batch_id:
+                # The click can land after worker commit but before its UI event.
+                def undo():
+                    plan = self.service.preview_undo_install(batch_id)
+                    return self.service.undo_install(batch_id, plan["digest"])
+                self.run(undo, lambda rows: Results(self, "撤销安装结果", rows), title="正在撤回刚刚完成的安装")
+            elif any(not row.get("ok") for row in results):
+                Results(self, "安装结果", results)
+        self.run(lambda: self.service.install_targets(ids, digest=digest, cancel=cancel), finished, title="正在安装 Skill 和 MCP")
+
+    def undo_install(self):
+        if self.busy:
+            if self.install_cancel is not None:
+                self.install_cancel.set()
+                self.status_label.setText("正在停止安装并恢复快照…")
+                self.update_controls()
+            return
+        transaction = self.service.latest_install()
+        if transaction is None:
+            return
+        from installer.ui.dialogs import Preview, Results
+        def preview(plan):
+            Preview(self, "撤销最近一次安装", plan, lambda: self.run(lambda: self.service.undo_install(transaction, plan["digest"]), lambda rows: Results(self, "撤销安装结果", rows), title="正在恢复安装前的文件和配置"))
+        self.run(lambda: self.service.preview_undo_install(transaction), preview, rescan=False, title="正在核对可撤销的安装")
 
     def show_paths(self):
         from installer.ui.settings_dialog import paths
@@ -338,7 +385,7 @@ class MainWindow(QMainWindow):
 
     def error(self, title, message):
         from installer.ui.dialogs import Preview
-        return Preview(self, title, {"问题": message, "下一步": "在设置 → 日志与诊断查看详情或预览错误报告。"})
+        return Preview(self, title, {"问题": message})
 
     def closeEvent(self, event):
         if self.busy:

@@ -31,6 +31,21 @@ class InstallerService:
         self.health = health or HealthChecker(manifest)
         self.health_results = {}
         self.progress = None
+        self._install_cancel = None
+        self._install_batch = None
+
+    def _check_install_cancel(self):
+        if self._install_cancel is not None and self._install_cancel.is_set():
+            raise ManagerError("INSTALL_CANCELLED", "已请求撤销安装")
+
+    def _rollback_install(self, journal):
+        keys = journal.record.get("profiles") or [journal.record["profile_id"]]
+        # A configuration edited by another program may still need our runtime.
+        configs = {row["path"]: row for row in journal.record["files"]}
+        changing = {key for key in keys if file_hash(self.backend.clients[key].config) in {configs[str(self.backend.clients[key].config)]["before"], configs[str(self.backend.clients[key].config)]["after"]}}
+        references, unknown = self._references()
+        protected = {self.backend.executable} if set(references) - changing or unknown else set()
+        return journal.rollback(protected=protected)
 
     def report(self, fraction, message):
         if self.progress:
@@ -106,9 +121,21 @@ class InstallerService:
         return plan
 
     def _probe(self, progress=None):
-        if isinstance(self.health, HealthChecker):
-            return asyncio.run(self.health.probe(self.backend.executable, progress=progress))
-        return asyncio.run(self.health.probe(self.backend.executable))
+        async def probe():
+            work = self.health.probe(self.backend.executable, progress=progress) if isinstance(self.health, HealthChecker) else self.health.probe(self.backend.executable)
+            task = asyncio.create_task(work)
+            try:
+                while not task.done():
+                    await asyncio.wait({task}, timeout=0.1)
+                    self._check_install_cancel()
+                self._check_install_cancel()
+                return await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                # Always close our own probe transport before restoring its EXE.
+                await asyncio.gather(task, return_exceptions=True)
+        return asyncio.run(probe())
 
     def verify(self, key: str, *, progress=None):
         state = self.detector.inspect(key)
@@ -174,12 +201,24 @@ class InstallerService:
         if free < self.backend.source_executable.stat().st_size * 3 + 10 * 1024 * 1024:
             raise ManagerError("INSUFFICIENT_DISK", "可用空间不足以完成暂存、备份与回滚")
         journal = Journal(self.backend.data, key, operation, self.paths(key))
+        batch = self._install_batch
+        if batch is not None:
+            journal.record["batch_id"] = batch.id
+            journal.save()
         progress(0.2, "完整快照已保存并校验")
         self.log.emit("backup", "完整快照已保存并校验", level="SUCCESS", target_id=key, transaction_id=journal.id)
-        self.backend.on_write = journal.wrote
+        def wrote(path, expected_hash):
+            journal.wrote(path, expected_hash)
+            if batch is not None:
+                batch.wrote(path, expected_hash)
+        self.backend.on_write = wrote
         self.health_results.clear()
-        self.backend.emit = lambda phase, message: self.log.emit(phase, message, target_id=key, transaction_id=journal.id)
+        def emit(phase, message):
+            self.log.emit(phase, message, target_id=key, transaction_id=journal.id)
+            self._check_install_cancel()
+        self.backend.emit = emit
         try:
+            self._check_install_cancel()
             if operation == "uninstall":
                 result = self.backend.uninstall(profile)
                 progress(0.7, "受管接入已处理，正在检查共享引用")
@@ -198,20 +237,21 @@ class InstallerService:
                 installed = self.detector.inspect(key)
                 if installed.status != Status.INSTALLED_MANAGED:
                     raise ManagerError("POSTCONDITION_FAILED", "安装后静态完整性检查未通过")
+            self._check_install_cancel()
             journal.commit()
             progress(1, "事务已提交")
             self.log.emit("commit", "操作提交完成" if not result.get("retained") else "部分卸载完成，用户修改已保留", level="SUCCESS" if not result.get("retained") else "WARNING", target_id=key, transaction_id=journal.id)
             return {"id": key, "ok": not result.get("retained"), "transaction_id": journal.id, **result}
         except Exception as exc:
             self.health_results.clear()
-            conflicts = journal.rollback()
+            conflicts = self._rollback_install(journal) if batch is not None else journal.rollback()
             code = "RECOVERY_REQUIRED" if conflicts else getattr(exc, "code", "OPERATION_FAILED")
             self.log.emit("rollback", "回滚需要人工处理" if conflicts else "操作失败，已恢复本次受管改动", level="ERROR", error_code=code, target_id=key, transaction_id=journal.id, detail=str(exc), conflicts=conflicts)
             raise ManagerError(code, str(exc)) from exc
         finally:
             self.backend.on_write = self.backend.emit = None
 
-    def install_targets(self, ids: list[str], emit=None, *, digest=None):
+    def install_targets(self, ids: list[str], emit=None, *, digest=None, cancel=None):
         if not ids or len(ids) != len(set(ids)):
             raise ManagerError("INVALID_TARGETS", "请选择有效且不重复的目标")
         results = []
@@ -225,11 +265,33 @@ class InstallerService:
                 if key not in self.backend.clients:
                     raise ManagerError("INVALID_TARGETS", "目标不存在")
                 self._guard(key, "install")
-            for index, key in enumerate(ids):
-                try:
-                    results.append(self._transaction(key, "install", index=index, total=len(ids)))
-                except ManagerError as exc:
-                    results.append({"id": key, "ok": False, "error_code": exc.code, "message": str(exc)})
+            batch = Journal(self.backend.data, ids[0], "install_batch", list(dict.fromkeys(path for key in ids for path in self.paths(key))))
+            batch.record["profiles"] = list(ids)
+            batch.save()
+            self._install_cancel, self._install_batch = cancel, batch
+            try:
+                self._check_install_cancel()
+                for index, key in enumerate(ids):
+                    try:
+                        results.append(self._transaction(key, "install", index=index, total=len(ids)))
+                    except ManagerError as exc:
+                        results.append({"id": key, "ok": False, "error_code": exc.code, "message": str(exc)})
+                    self._check_install_cancel()
+                if any(row["ok"] for row in results):
+                    batch.commit()
+                else:
+                    self._rollback_install(batch)
+                self._check_install_cancel()
+            except Exception as exc:
+                self.health_results.clear()
+                conflicts = self._rollback_install(batch)
+                code = "RECOVERY_REQUIRED" if conflicts else getattr(exc, "code", "INSTALL_ROLLED_BACK")
+                self.log.emit("undo", "安装已完整撤回" if not conflicts else "部分内容无法恢复，已保留现场", level="SUCCESS" if not conflicts else "ERROR", error_code=code, transaction_id=batch.id, conflicts=conflicts)
+                results = [{"id": key, "ok": False, "cancelled": code == "INSTALL_CANCELLED", "error_code": code, "message": "已撤销，恢复到安装前" if not conflicts else "撤销未完成，请查看配置与恢复", "conflicts": conflicts} for key in ids]
+            finally:
+                self._install_cancel = self._install_batch = None
+            for row in results:
+                row["batch_id"] = batch.id
         if emit:
             emit(results)
         return results
@@ -300,10 +362,57 @@ class InstallerService:
         for path in (self.backend.data / "transactions").glob("*/manifest.json"):
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
-                rows.append({name: value.get(name) for name in ("id", "profile_id", "profiles", "operation", "time", "state")})
+                rows.append({name: value.get(name) for name in ("id", "profile_id", "profiles", "operation", "time", "state", "batch_id")})
             except (ValueError, OSError):
                 continue
         return sorted(rows, key=lambda item: item.get("time", 0), reverse=True)
+
+    def latest_install(self):
+        return next((row["id"] for row in self.backups() if row["operation"] == "install_batch" and row["state"] == "committed"), None)
+
+    def _install_journal(self, transaction_id):
+        raw = next((row for row in self.backups() if row["id"] == transaction_id), None)
+        if not raw or raw["operation"] != "install_batch" or raw["state"] != "committed":
+            raise ManagerError("NO_INSTALL_TO_UNDO", "这次安装已撤销，或没有可撤销的安装记录")
+        keys = raw.get("profiles") or [raw["profile_id"]]
+        if any(key not in self.backend.clients for key in keys):
+            raise ManagerError("INVALID_TARGETS", "安装记录中的目标无效")
+        allowed = {path for key in keys for path in self.paths(key)}
+        return Journal.load(self.backend.data, transaction_id, allowed), keys
+
+    def preview_undo_install(self, transaction_id):
+        journal, keys = self._install_journal(transaction_id)
+        files, conflicts = {}, []
+        for item in journal.record["files"]:
+            path = Path(item["path"])
+            actual = file_hash(path)
+            files[str(path)] = {"current": actual, "before": item["before"], "after": item["after"]}
+            if actual not in {item["before"], item["after"]}:
+                conflicts.append(str(path))
+            if item["before"] is not None and file_hash(journal.root / item["slot"]) != item["before"]:
+                raise ManagerError("BACKUP_CORRUPT", "安装前备份校验失败，未执行撤销")
+            if path == self.backend.executable and actual != item["before"]:
+                references, unknown = self._references()
+                if set(references) - set(keys) or unknown:
+                    conflicts.append("共享服务已被其他接入使用")
+        plan = {"operation": "undo_install", "id": transaction_id, "profiles": keys, "files": files, "conflicts": conflicts}
+        plan["digest"] = plan_hash(plan)
+        return plan
+
+    def undo_install(self, transaction_id, digest):
+        with self.lock():
+            plan = self.preview_undo_install(transaction_id)
+            if plan["digest"] != digest:
+                raise ManagerError("PLAN_CHANGED", "撤销预览后内容发生变化，请重新预览")
+            if plan["conflicts"]:
+                raise ManagerError("UNDO_CONFLICT", "安装后内容已变化，未执行撤销；请查看变化的文件")
+            journal, keys = self._install_journal(transaction_id)
+            self.report(0.3, "已核对安装前快照，正在撤回安装")
+            conflicts = self._rollback_install(journal)
+            self.health_results.clear()
+            self.report(1, "安装已撤回" if not conflicts else "部分文件仍需恢复")
+            self.log.emit("undo", "安装已完整撤回" if not conflicts else "文件占用或内容变化，撤销未完成", level="SUCCESS" if not conflicts else "ERROR", transaction_id=transaction_id, conflicts=conflicts)
+            return [{"id": key, "ok": not conflicts, "message": "已恢复到安装前" if not conflicts else "撤销未完成，请查看配置与恢复", "conflicts": conflicts} for key in keys]
 
     def preview_restore(self, transaction_id: str, profile_id: str | None = None):
         raw = next((row for row in self.backups() if row["id"] == transaction_id), None)
@@ -367,7 +476,7 @@ class InstallerService:
                     allowed.update([profile.config, self.backend.receipt_path(profile), self.backend.executable])
                     allowed.update(profile.skill_root / SERVER / p.relative_to(self.backend.skill) for p in self.backend.skill.rglob("*") if p.is_file())
             journal = Journal.load(self.backend.data, transaction_id, allowed)
-            conflicts = journal.rollback()
+            conflicts = self._rollback_install(journal) if journal.record["operation"] == "install_batch" else journal.rollback()
             self.log.emit("recovery", "交易已恢复" if not conflicts else "仍有用户修改或占用，需查看恢复详情", level="WARNING" if conflicts else "SUCCESS", transaction_id=transaction_id)
             return conflicts
 

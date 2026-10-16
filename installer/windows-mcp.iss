@@ -21,6 +21,7 @@ OutputBaseFilename=Windows-MCP-Setup-v{#AppVersion}-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+ShowLanguageDialog=no
 UninstallDisplayIcon={app}\Windows-MCP.exe
 UninstallDisplayName=Windows-MCP {#AppVersion}
 CloseApplications=yes
@@ -46,4 +47,52 @@ Name: "{group}\Uninstall Windows-MCP"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Windows-MCP"; Filename: "{app}\Windows-MCP.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Windows-MCP.exe"; Description: "{cm:LaunchProgram,Windows-MCP}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Windows-MCP.exe"; Description: "{cm:LaunchProgram,Windows-MCP}"; Flags: nowait postinstall skipifsilent; Check: not IsManagerUpdate
+Filename: "{app}\Windows-MCP.exe"; Parameters: "--finish-installer-update"; Flags: nowait; Check: ShouldLaunchUpdate
+
+[Code]
+var
+  ManagerUpdate: Boolean;
+
+function IsManagerUpdate: Boolean;
+begin
+  Result := ManagerUpdate;
+end;
+
+function ShouldLaunchUpdate: Boolean;
+begin
+  Result := ManagerUpdate and (ExpandConstant('{param:WMCPNOLAUNCH|0}') <> '1');
+end;
+
+function InitializeSetup: Boolean;
+var
+  PreviousDirectory: String;
+  Parameters: String;
+  LogFile: String;
+  ExitCode: Integer;
+  UninstallKey: String;
+begin
+  ManagerUpdate := ExpandConstant('{param:WMCPUPDATE|0}') = '1';
+  if ManagerUpdate then
+    Log('WMCP_UPDATE_MODE=progress-only');
+  Result := True;
+  UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B52D94AA-CB15-4BC1-BE81-8AD6A19A0C99}_is1';
+  { Older managers launch the new package without switches. An existing
+    installation goes directly to its progress page; the first install keeps
+    the normal location/license wizard. Never force-close applications. }
+  if (not WizardSilent) and
+     RegQueryStringValue(HKCU64, UninstallKey, 'InstallLocation', PreviousDirectory) and
+     FileExists(AddBackslash(PreviousDirectory) + 'Windows-MCP.exe') then
+  begin
+    Parameters := '/SILENT /SUPPRESSMSGBOXES /SP- /NORESTART /WMCPUPDATE=1 /DIR="' + PreviousDirectory + '"' +
+      ' /WMCPNOLAUNCH=' + ExpandConstant('{param:WMCPNOLAUNCH|0}');
+    LogFile := ExpandConstant('{param:LOG|}');
+    if LogFile <> '' then
+      Parameters := Parameters + ' /LOG="' + LogFile + '.update"';
+    if Exec(ExpandConstant('{srcexe}'), Parameters,
+      '', SW_SHOWNORMAL, ewNoWait, ExitCode) then
+      Result := False
+    else
+      RaiseException('Unable to start the update installer. The current version has been preserved.');
+  end;
+end;

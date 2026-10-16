@@ -103,12 +103,15 @@ class Journal:
             check_path(obj.root / row["slot"], obj.root)
         return obj
 
-    def rollback(self) -> list[str]:
+    def rollback(self, *, protected: set[Path] | None = None) -> list[str]:
         conflicts = []
         for row in reversed(self.record["files"]):
             path = check_path(Path(row["path"]))
             actual = file_hash(path)
             if actual == row["before"]:
+                continue
+            if protected and path in protected:
+                conflicts.append(path.name)
                 continue
             if actual != row["after"]:
                 conflicts.append(path.name)

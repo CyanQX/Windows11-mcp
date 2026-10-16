@@ -144,7 +144,7 @@ class UpdateService:
 
     def prepare(self, staged: Path, release: dict, target: Path, nonce=None):
         if release.get("kind") == "installer":
-            raise ManagerError("UPDATE_INSTALLER_REQUIRED", "安装版更新通过已校验的安装向导执行")
+            raise ManagerError("UPDATE_INSTALLER_REQUIRED", "安装版更新通过已校验的更新安装程序执行")
         staged = check_path(staged, self.data / "updates")
         target = check_path(target)
         if file_hash(staged) != release["sha256"] or not target.is_file() or target == staged:
@@ -161,11 +161,14 @@ class UpdateService:
         atomic_write(path, json.dumps(row, indent=2).encode())
         return path, row["nonce"]
 
-    def launch_installer(self, staged: Path, release: dict):
+    def launch_installer(self, staged: Path, release: dict, target: Path):
         check_path(staged, self.data / "updates")
         if release.get("kind") != "installer" or file_hash(staged) != release["sha256"]:
             raise ManagerError("UPDATE_VERIFY_FAILED", "安装包校验失败，未启动")
-        return subprocess.Popen([str(staged)], **background_args())
+        target = check_path(target)
+        if not target.is_file() or target.name.casefold() != "windows-mcp.exe":
+            raise ManagerError("UPDATE_TARGET_INVALID", "当前管理器位置无效，未启动更新")
+        return subprocess.Popen([str(staged), "/SILENT", "/SUPPRESSMSGBOXES", "/SP-", "/NORESTART", "/WMCPUPDATE=1", f"/DIR={target.parent}", f"/LOG={staged.parent / 'installer.log'}"], **background_args())
 
 
 def load_plan(path: Path, nonce: str):

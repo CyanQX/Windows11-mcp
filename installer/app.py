@@ -95,7 +95,7 @@ def isolated_test(root: Path) -> None:
     (root / "result.json").write_text(json.dumps({"version": manifest["version"], "profiles": installed, "install_and_uninstall": "PASS", "isolated": True, "duplicate_rejected": True, "real_handshakes": len(results), "zero_reference_runtime_cleanup": True}, indent=2), encoding="utf-8")
 
 
-def gui(review_request=None, finish_plan=None, update_nonce=None):
+def gui(review_request=None, finish_plan=None, update_nonce=None, installer_update=False):
     for name, mode in (("stdin", "r"), ("stdout", "w"), ("stderr", "w")):
         if getattr(sys, name) is None:
             setattr(sys, name, open(os.devnull, mode, encoding="utf-8"))
@@ -114,7 +114,7 @@ def gui(review_request=None, finish_plan=None, update_nonce=None):
     try:
         with ProcessLock(settings.path.parent / "manager-ui.lock"):
             app = application()
-            window = MainWindow(resources(), settings, Path(sys.executable), approval_store=ApprovalStore(settings.path.parent / "approvals"), wake_path=wake, auto_scan=finish_plan is None)
+            window = MainWindow(resources(), settings, Path(sys.executable), approval_store=ApprovalStore(settings.path.parent / "approvals"), wake_path=wake, auto_scan=finish_plan is None and not installer_update)
             window.show()
             if review_request:
                 QTimer.singleShot(400, lambda: window.open_operator(review_request))
@@ -124,18 +124,26 @@ def gui(review_request=None, finish_plan=None, update_nonce=None):
                 if Path(row["target"]).resolve() != Path(sys.executable).resolve() or row["version"] != window.version:
                     raise ManagerError("UPDATE_PLAN_INVALID", "新版程序与更新计划不一致")
 
+            if finish_plan or installer_update:
                 def finish():
                     try:
+                        window.service.report(0, "正在完成版本更新")
                         ids = window.service.upgrade_targets()
                         if ids:
                             plan = window.service.preview("upgrade", ids)
                             window.service.apply_plan("upgrade", ids, plan["digest"])
-                        atomic_write(finish_plan.parent / "result.json", b'{"ok":true}')
+                        window.service.report(1, "版本更新完成")
+                        window.service.log.emit("update", f"已更新至 {window.version}", level="SUCCESS")
+                        if finish_plan:
+                            atomic_write(finish_plan.parent / "result.json", b'{"ok":true}')
                         return True
                     except Exception:
-                        atomic_write(finish_plan.parent / "result.json", b'{"ok":false}')
-                        return False
-                QTimer.singleShot(500, lambda: window.run(finish, lambda ok: None if ok else window.close()))
+                        if finish_plan:
+                            atomic_write(finish_plan.parent / "result.json", b'{"ok":false}')
+                            return False
+                        raise
+                QTimer.singleShot(500, lambda: window.run(finish, lambda ok: window.close() if finish_plan and ok is False else None, title="正在完成版本更新"))
+                QTimer.singleShot(3000, window.check_update_hint)
             app.exec()
     except ManagerError as exc:
         if exc.code != "INSTALLER_BUSY":
@@ -163,14 +171,23 @@ def main():
     parser.add_argument("--review-request")
     parser.add_argument("--apply-update", type=Path)
     parser.add_argument("--finish-update", type=Path)
+    parser.add_argument("--finish-installer-update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--update-nonce")
     parser.add_argument("--ui-smoke", type=Path)
+    parser.add_argument("--ui-preview", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--glass-demo", action="store_true", help="Open the interactive tactile glass component preview")
+    parser.add_argument("--glass-capture", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--glass-verify", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--glass-background", choices=["cold", "dark"], default="cold", help=argparse.SUPPRESS)
     parser.add_argument("--ui-smoke-select", nargs="*", default=[])
     parser.add_argument("--ui-smoke-size", nargs=2, type=int)
-    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "processing", "uninstall", "settings", "report", "approval", "status", "verify", "repair", "appearance", "docking", "dark", "warm", "advanced", "progress", "progress-hidden", "edge-preview", "edge-parked"], default="ready")
+    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "selection", "selection-all", "selection-clear", "footer-nested", "footer-nested-parked", "footer-minimized", "footer-floating", "footer-floating-parked", "targets-nested-preview", "targets-nested-parked", "targets-nested-restored", "update-available", "processing", "uninstall", "settings", "report", "approval", "status", "verify", "repair", "appearance", "docking", "dark", "warm", "advanced", "progress", "progress-hidden", "edge-preview", "edge-parked", "edge-right", "edge-bottom", "edge-top", "drop-preview", "resize-redock", "choice-popup", "choice-strength", "backups", "restore-preview", "upgrade-preview", "undo-preview", "undo", "cancel-install"], default="ready")
     parser.add_argument("--ui-smoke-scale", type=float, default=1.0)
     args = parser.parse_args()
-    if args.self_test:
+    if args.glass_demo:
+        from installer.ui.glass_demo import run
+        run(resources(), capture_path=args.glass_capture, size=args.ui_smoke_size, scale=args.ui_smoke_scale, verify=args.glass_verify, dark=args.glass_background == "dark")
+    elif args.self_test:
         isolated_test(args.self_test)
     elif args.portable_check:
         from installer.portable_check import check
@@ -181,8 +198,13 @@ def main():
     elif args.ui_smoke:
         from installer.ui.smoke import run
         run(resources(), args.ui_smoke, args.ui_smoke_case, args.ui_smoke_size, args.ui_smoke_scale)
+    elif args.ui_preview or getattr(sys, "frozen", False) and Path(sys.executable).name.lower() == "windows-mcp-preview.exe":
+        from installer.ui.smoke import run
+        import tempfile
+        target = (Path(sys.executable).parent / "data" if getattr(sys, "frozen", False) else Path(tempfile.gettempdir()) / "windows-mcp-ui-preview") / "preview.png"
+        run(resources(), target, interactive=True)
     else:
-        gui(args.review_request, args.finish_update, args.update_nonce)
+        gui(args.review_request, args.finish_update, args.update_nonce, args.finish_installer_update)
 
 
 if __name__ == "__main__":
@@ -193,7 +215,7 @@ if __name__ == "__main__":
             # A windowed PyInstaller bootloader shows an error dialog for an
             # unhandled exception. Acceptance commands must fail and report,
             # so a headless runner never hangs waiting for that dialog.
-            for flag in ("--portable-check", "--ui-smoke", "--self-test"):
+            for flag in ("--portable-check", "--ui-smoke", "--self-test", "--glass-capture"):
                 if flag in sys.argv:
                     destination = Path(sys.argv[sys.argv.index(flag) + 1])
                     if flag == "--self-test":

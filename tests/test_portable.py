@@ -140,9 +140,12 @@ def test_installation_wizard_is_never_used_as_manager_replacement(tmp_path, monk
         service.prepare(staged, plan, Path("current.exe"))
     calls = []
     monkeypatch.setattr("installer.updates.subprocess.Popen", lambda args, **kwargs: calls.append(args))
-    service.launch_installer(staged, plan)
-    assert calls == [[str(staged)]]
+    current = tmp_path / "custom install directory" / "Windows-MCP.exe"
+    current.parent.mkdir()
+    current.write_bytes(b"MZ previous")
+    service.launch_installer(staged, plan, current)
+    assert calls == [[str(staged), "/SILENT", "/SUPPRESSMSGBOXES", "/SP-", "/NORESTART", "/WMCPUPDATE=1", f"/DIR={current.parent}", f"/LOG={staged.parent / 'installer.log'}"]]
     staged.write_bytes(b"MZ tampered")
     with pytest.raises(ManagerError, match="UPDATE_VERIFY_FAILED"):
-        service.launch_installer(staged, plan)
+        service.launch_installer(staged, plan, current)
     assert len(calls) == 1

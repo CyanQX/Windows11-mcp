@@ -86,6 +86,11 @@
       "name": "dismiss",
       "source": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/a347af95478f989038cccbf085978865264c048a/assets/Dismiss%20Circle/SVG/ic_fluent_dismiss_circle_24_regular.svg",
       "sha256": "edee69077d82eedc9c802b7ff7b71825b23258a28622904f5c9e63d2339b225a"
+    },
+    {
+      "name": "arrow-up",
+      "source": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/a347af95478f989038cccbf085978865264c048a/assets/Arrow%20Up/SVG/ic_fluent_arrow_up_24_regular.svg",
+      "sha256": "588b480f9fff053221c9288bfbe8a9a4f063ba2c27e06366e8ad804e4b11d309"
     }
   ]
 }

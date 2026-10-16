@@ -26,9 +26,9 @@ class IntegrationStatus(StrEnum):
 STATUS_LABELS = {
     IntegrationStatus.AVAILABLE: "可安装",
     IntegrationStatus.INSTALLED_MANAGED: "已安装",
-    IntegrationStatus.PARTIAL: "部分安装 · 需要修复",
-    IntegrationStatus.BROKEN: "异常 · 查看详情",
-    IntegrationStatus.EXTERNAL: "外部接入 · 未纳入管理",
+    IntegrationStatus.PARTIAL: "部分安装",
+    IntegrationStatus.BROKEN: "异常",
+    IntegrationStatus.EXTERNAL: "外部接入",
     IntegrationStatus.UNKNOWN: "状态未知",
 }
 
@@ -62,7 +62,7 @@ class TargetState:
     @property
     def label(self) -> str:
         if self.status == IntegrationStatus.AVAILABLE and self.presence != Presence.DETECTED:
-            return {Presence.NOT_FOUND: "未检测到客户端", Presence.PATH_INVALID: "客户端路径无效"}.get(self.presence, "客户端未知")
+            return {Presence.NOT_FOUND: "未检测", Presence.PATH_INVALID: "路径无效"}.get(self.presence, "状态未知")
         return STATUS_LABELS[self.status]
 
     def to_dict(self) -> dict:
@@ -100,4 +100,7 @@ class SelectionModel:
 
     def select_all(self) -> None:
         self.selected = {key for key, state in self.states.items() if state.install_eligible}
+
+    def clear_selection(self) -> None:
+        self.selected.clear()
 

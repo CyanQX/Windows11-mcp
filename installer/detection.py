@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import struct
+from collections import deque
 from pathlib import Path
 
 from installer.backend import Configuration, Installer, Profile, SERVER, mcp_entry, read_file
@@ -32,6 +33,50 @@ def is_desktop_executable(path: Path) -> bool:
             return struct.unpack("<H", stream.read(2))[0] == 2
     except (OSError, struct.error):
         return False
+
+
+LAUNCHERS = {
+    "codex": ("codex.exe", "chatgpt.exe"),
+    "claude": ("claude.exe", "claude.cmd", "claude.bat"),
+    "deepseek": ("deepseek harness.exe", "deepseek-harness.exe", "deepseekharness.exe", "dsh.exe", "dsh.cmd", "dsh.bat"),
+    "opencode": ("opencode.exe", "opencode.cmd", "opencode.bat"),
+    "gemini": ("gemini.exe", "gemini.cmd", "gemini.bat"),
+}
+
+
+def find_client_in_folder(folder: Path, profile_id: str) -> Path:
+    """Bounded read-only scan; never run a candidate or follow reparse points."""
+    root = check_path(folder)
+    if not root.is_dir() or root == Path(root.anchor):
+        raise ManagerError("INVALID_CLIENT_FOLDER", "请选择该编程端的安装文件夹")
+    pending, matches, count = deque([(root, 0)]), [], 0
+    excluded = {"node_modules", ".git", "cache", "caches", "logs", "data", "temp", "tmp"}
+    while pending:
+        directory, depth = pending.popleft()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    count += 1
+                    if count > 12000:
+                        raise ManagerError("CLIENT_SCAN_LIMIT", "文件夹内容较多，请选择更接近程序所在位置的文件夹")
+                    path = Path(entry.path)
+                    if entry.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+                        continue
+                    if entry.is_file(follow_symlinks=False) and entry.name.lower() in LAUNCHERS[profile_id]:
+                        check_path(path, root)
+                        if profile_id != "codex" or is_desktop_executable(path):
+                            matches.append((depth, LAUNCHERS[profile_id].index(entry.name.lower()), path))
+                    elif depth < 4 and entry.is_dir(follow_symlinks=False) and entry.name.lower() not in excluded:
+                        pending.append((path, depth + 1))
+        except PermissionError:
+            continue
+    if not matches:
+        raise ManagerError("CLIENT_NOT_IN_FOLDER", "此文件夹中未找到对应编程端，请重新选择安装文件夹")
+    matches.sort(key=lambda item: (item[0], item[1], str(item[2]).casefold()))
+    best = [item for item in matches if item[:2] == matches[0][:2]]
+    if len(best) > 1:
+        raise ManagerError("CLIENT_FOLDER_AMBIGUOUS", "找到多个同名程序，请选择当前使用版本所在的文件夹")
+    return matches[0][2]
 
 
 class ClientDiscovery:
@@ -102,6 +147,11 @@ class ClientDiscovery:
         override = self.overrides.get(profile.id)
         if override:
             path = check_path(Path(override))
+            if path.is_dir():
+                try:
+                    path = find_client_in_folder(path, profile.id)
+                except (ManagerError, OSError):
+                    return Presence.PATH_INVALID, str(path)
             valid = path.is_file() and path.suffix.lower() in {".exe", ".cmd", ".bat"}
             if profile.id == "codex":
                 valid = valid and path.name.lower() in {"codex.exe", "chatgpt.exe"} and is_desktop_executable(path)

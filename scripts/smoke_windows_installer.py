@@ -33,6 +33,27 @@ def main():
         report = Path(temporary) / "installed-validation.json"
         subprocess.run([sys.executable, str(ROOT / "scripts/smoke_setup.py"), str(executable), "--output", str(report)], check=True, timeout=420, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         validation = json.loads(report.read_text(encoding="utf-8"))
+        # Emulate the old manager's unqualified setup launch. The existing
+        # registered installation must skip the guide and retain its path.
+        executable.write_bytes(b"MZ isolated previous manager")
+        update_log = Path(temporary) / "update-install.log"
+        bootstrap = subprocess.Popen([str(args.installer.resolve()), "/WMCPNOLAUNCH=1", f"/LOG={update_log}"])
+        bootstrap.wait(timeout=60)
+        update_log = Path(str(update_log) + ".update")
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            try:
+                raw = update_log.read_bytes() if update_log.exists() else b""
+                content = raw.decode("utf-16" if raw.startswith(b"\xff\xfe") else "utf-8-sig", errors="replace")
+                if executable.is_file() and hashlib.sha256(executable.read_bytes()).hexdigest() == expected and "WMCP_UPDATE_MODE=progress-only" in content and "Installation process succeeded" in content:
+                    break
+            except OSError:
+                pass  # Installer may hold the payload briefly while replacing it.
+            time.sleep(.25)
+        else:
+            raise AssertionError("Existing installation did not complete its progress-only update")
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as entry:
+            assert str(destination) in winreg.QueryValueEx(entry, "UninstallString")[0]
         subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], check=True, timeout=120)
         deadline = time.monotonic() + 30
         while (executable.exists() or uninstaller.exists()) and time.monotonic() < deadline:
@@ -44,7 +65,7 @@ def main():
             pass
         else:
             raise AssertionError("System uninstall entry was not removed")
-    result = {"installer": args.installer.name, "sha256": hashlib.sha256(args.installer.read_bytes()).hexdigest(), "chosen_directory_installation": "PASS", "system_uninstall_registration": "PASS", "uninstall": "PASS", "payload_sha256": expected, "actual_executable_validation": validation}
+    result = {"installer": args.installer.name, "sha256": hashlib.sha256(args.installer.read_bytes()).hexdigest(), "chosen_directory_installation": "PASS", "system_uninstall_registration": "PASS", "existing_install_progress_only_update": "PASS", "original_install_location_preserved": "PASS", "uninstall": "PASS", "payload_sha256": expected, "actual_executable_validation": validation}
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=True, indent=2))
 

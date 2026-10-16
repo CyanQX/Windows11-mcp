@@ -4,14 +4,15 @@ import time
 from datetime import datetime
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QComboBox, QMessageBox
+from PySide6.QtWidgets import QMessageBox
+from installer.ui.controls import ChoiceBox as QComboBox
 from installer.ui.dialogs import Detail, text_box
 from installer.ui.theme import button, label, row
 
 
 class OperatorCenter(Detail):
     def __init__(self, owner, store, request_id=None):
-        super().__init__(owner, "本机操作审批", (850, 680), "请核对具体参数后批准一次；仅限原会话、原参数与有效期。", show=False)
+        super().__init__(owner, "本机操作审批", (850, 680), show=False)
         self.store, self.request_id, self.rows = store, request_id, {}
         self.selector = QComboBox()
         self.body.addWidget(self.selector)
@@ -57,11 +58,11 @@ class OperatorCenter(Detail):
         active = bool(record and not record["approved"] and record["expires_at"] > time.time())
         self.approve_button.setEnabled(active)
         self.reject_button.setEnabled(active)
-        text = "指定请求已过期、已使用或不存在；请重新申请。其他请求须手动选择并核对。" if self.request_id else "暂无待审请求。受保护操作的请求会自动打开此窗口。"
+        text = "请求已失效" if self.request_id else "暂无待审请求"
         if record:
             try:
                 arguments = self.store.operator_arguments(self.request_id)
-                text = json.dumps({"请求": self.request_id, "工具": record["tool"], "风险等级": record["risk"], "原因（来自请求方，请自行核对）": record["description"], "会话": record["session_id"], "精确操作 SHA-256": record["action_hash"], "截止时间": datetime.fromtimestamp(record["expires_at"]).astimezone().isoformat(timespec="seconds"), "具体参数（本机查看）": arguments if arguments is not None else record["scope"], "说明": "批准只授权以上原始参数。" if arguments is not None else "旧请求缺少完整参数，请拒绝并重新申请。"}, ensure_ascii=False, indent=2)
+                text = json.dumps({"请求": self.request_id, "工具": record["tool"], "风险等级": record["risk"], "原因": record["description"], "会话": record["session_id"], "精确操作 SHA-256": record["action_hash"], "截止时间": datetime.fromtimestamp(record["expires_at"]).astimezone().isoformat(timespec="seconds"), "具体参数": arguments if arguments is not None else record["scope"], "参数状态": "完整" if arguments is not None else "缺失"}, ensure_ascii=False, indent=2)
                 if arguments is None:
                     self.approve_button.setEnabled(False)
             except Exception as exc:
@@ -78,7 +79,7 @@ class OperatorCenter(Detail):
                 return
             if approve and self.store.operator_arguments(self.request_id) is None:
                 return
-            answer = QMessageBox.question(self, "确认本次决定", f"{'批准一次' if approve else '拒绝'} {record['tool']} 请求 {self.request_id[:10]}？\n请确认你已核对具体参数。", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            answer = QMessageBox.question(self, "确认本次决定", f"{'批准一次' if approve else '拒绝'} {record['tool']} 请求 {self.request_id[:10]}？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 return
             if approve:

@@ -7,17 +7,19 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 
-from PySide6.QtWidgets import QCheckBox, QDialog, QFileDialog, QLineEdit, QPlainTextEdit, QScrollArea, QWidget
+from PySide6.QtWidgets import QDialog, QFileDialog, QLineEdit, QPlainTextEdit, QScrollArea, QWidget
 
 from installer.models import IntegrationStatus, Presence
+from installer.ui.controls import GlassCheckBox as QCheckBox
 from installer.ui.theme import GlassFrame, button, column, label, row, backdrop
 
-NAMES = {"install": "安装 Skill + MCP", "uninstall": "卸载 Skill + MCP", "repair": "智能修复", "verify": "验证 MCP 连接", "backup": "备份配置", "adopt": "接管外部接入", "upgrade": "统一升级受管接入"}
-PROBLEMS = {"INCOMPLETE_INTEGRATION": "接入文件不完整，请使用智能修复", "MANAGED_FILE_MODIFIED": "受管文件已被修改，请先核对修改内容", "MCP_ENTRY_MODIFIED": "MCP 配置与安装记录不一致", "RUNTIME_MISSING": "MCP 运行时缺失", "RUNTIME_HASH_MISMATCH": "运行时校验不一致，请修复后再验证", "LEGACY_RECEIPT": "旧版安装记录，升级后可补全版本信息", "VERSION_DIFFERS": "接入版本与管理器不同，请在检查更新中升级", "CONFIG_OR_RECEIPT_INVALID": "配置或安装记录无法解析", "SCAN_FAILED": "无法读取状态，请查看诊断"}
+NAMES = {"install": "安装 Skill + MCP", "uninstall": "卸载 Skill + MCP", "repair": "智能修复", "verify": "验证 MCP 连接", "backup": "备份配置", "adopt": "接管外部接入", "upgrade": "升级已安装组件"}
+CLIENT_NAMES = {"claude": "Claude Code", "codex": "Codex 桌面端", "deepseek": "DeepSeek Harness", "opencode": "OpenCode", "gemini": "Gemini CLI"}
+PROBLEMS = {"INCOMPLETE_INTEGRATION": "接入不完整", "MANAGED_FILE_MODIFIED": "受管文件已修改", "MCP_ENTRY_MODIFIED": "MCP 配置与记录不一致", "RUNTIME_MISSING": "运行时缺失", "RUNTIME_HASH_MISMATCH": "运行时校验不一致", "LEGACY_RECEIPT": "旧版安装记录", "VERSION_DIFFERS": "接入版本不同", "CONFIG_OR_RECEIPT_INVALID": "配置或记录无效", "SCAN_FAILED": "状态读取失败"}
 
 
 class Detail(QDialog):
-    def __init__(self, owner, title, size=(780, 590), subtitle=None, *, show=True):
+    def __init__(self, owner, title, size=(780, 590), *, show=True):
         super().__init__(owner)
         self.owner = owner
         self.setWindowTitle(title)
@@ -28,8 +30,6 @@ class Detail(QDialog):
         self.setMinimumSize(min(540, available.width() - 35), min(320, available.height() - 65))
         self.body = column(self, 18, 12)
         self.body.addWidget(label(title, size=21, bold=True))
-        if subtitle:
-            self.body.addWidget(label(subtitle, role="secondary", wrap=True))
         owner.dialogs.append(self)
         self.finished.connect(lambda _: owner.dialogs.remove(self) if self in owner.dialogs else None)
         if show:
@@ -41,7 +41,7 @@ class Detail(QDialog):
         scroll.setWidgetResizable(True)
         self.body.addWidget(scroll, 1)
         scroll.setWidget(content)
-        return column(content, 0, 10)
+        return column(content, 2, 14)
 
 
 def text_box(parent, value):
@@ -59,6 +59,7 @@ def disclosure(layout, title, text):
     box.setReadOnly(True)
     box.setPlainText(text if isinstance(text, str) else json.dumps(text, ensure_ascii=False, indent=2))
     box.setMinimumHeight(140)
+    box.setMaximumHeight(240)
     box.hide()
     control.toggled.connect(box.setVisible)
     layout.addWidget(control)
@@ -74,22 +75,64 @@ def fact(layout, title, value, role=None):
     layout.addWidget(block)
 
 
+def path_field(layout, title, path):
+    layout.addWidget(label(title, size=11, role="secondary"))
+    field = QLineEdit(str(path))
+    field.setReadOnly(True)
+    field.setCursorPosition(0)
+    field.setAccessibleName(title)
+    layout.addWidget(field)
+
+
 class Preview(Detail):
-    def __init__(self, owner, title, plan, apply=None, *, warning=None):
-        super().__init__(owner, title, subtitle=warning or ("核对目标与文件后确认。文件在预览后发生变化时会停止操作。" if apply else "以下为本次读取的结果。"))
+    def __init__(self, owner, title, plan, apply=None):
+        height = min(720, 420 + len(plan["targets"]) * 104) if isinstance(plan, dict) and isinstance(plan.get("targets"), list) else 560
+        if isinstance(plan, dict) and plan.get("operation") == "undo_install":
+            height = min(700, 400 + len(plan["profiles"]) * 70)
+        super().__init__(owner, title, (820, height))
+        self.body.setContentsMargins(24, 22, 24, 22)
+        self.body.setSpacing(18)
         content = self.scroll()
         if isinstance(plan, dict) and "targets" in plan and isinstance(plan["targets"], list):
+            operation = plan["operation"]
+            summaries = {"install": "安装 Skill 与 MCP 连接", "upgrade": "更新 Skill、MCP 连接与共享服务", "repair": "修复 Skill、MCP 连接与服务", "uninstall": "移除本管理器安装的 Skill 与 MCP 连接", "adopt": "将现有接入纳入管理"}
+            summary = GlassFrame()
+            group = column(summary, 20, 10)
+            group.addWidget(row(label(NAMES.get(operation, operation), size=15, bold=True), None, label("v" + plan["version"], size=12, role="secondary")))
+            group.addWidget(label(summaries.get(operation, NAMES.get(operation, operation)) + f" · {len(plan['targets'])} 个编程端", size=12, role="secondary", wrap=True))
+            content.addWidget(summary)
             for target in plan["targets"]:
                 card = GlassFrame()
-                stack = column(card, 16, 9)
-                stack.addWidget(label(target["name"], size=15, bold=True))
-                fact(stack, "Skill 目录", target["skill"])
-                fact(stack, "MCP 配置", target["config"])
-                disclosure(stack, f"查看逐文件预览 · {len(target['fingerprints'])} 个文件", "\n\n".join(f"{path}\n当前 SHA-256：{digest or '不存在，将按计划创建'}" for path, digest in target["fingerprints"].items()))
+                stack = column(card, 20, 12)
+                stack.addWidget(row(label(target["name"], size=15, bold=True), None, label("待卸载" if operation == "uninstall" else "待更新" if operation == "upgrade" else "待处理", size=11, role="secondary")))
+                disclosure(stack, "安装位置与文件清单", {"Skill 文件夹": target["skill"], "连接配置文件": target["config"], "操作前文件校验": target["fingerprints"]})
                 content.addWidget(card)
-            fact(content, "共享 MCP 运行时", plan["runtime"])
-            fact(content, "操作与版本", f"{NAMES.get(plan['operation'], plan['operation'])} · {plan['version']}")
-            fact(content, "共享服务处理", plan["runtime_retention"])
+            if operation == "uninstall":
+                content.addWidget(label("其他软件仍在使用的共享服务会保留。", size=12, role="secondary", wrap=True))
+            disclosure(content, "共享服务与校验详情", {"服务程序": plan["runtime"], "共享服务保留规则": plan["runtime_retention"], "预览校验": plan["digest"]})
+        elif isinstance(plan, dict) and plan.get("operation") == "restore_config":
+            card = GlassFrame()
+            group = column(card, 20, 16)
+            group.addWidget(label(CLIENT_NAMES.get(plan["target"], plan["target"]), size=16, bold=True))
+            before, after = QWidget(), QWidget()
+            fact(column(before, 0, 6), "当前 MCP 连接", "已配置" if plan["current_entry"] is not None else "未配置")
+            fact(column(after, 0, 6), "恢复后的 MCP 连接", "恢复为备份中的连接" if plan["restore_entry"] is not None else "移除 Windows-MCP 连接", role="warning" if plan["restore_entry"] is None else "success")
+            group.addWidget(row(before, label("→", size=22, role="secondary"), after))
+            group.addWidget(label("保留当前 Skill 和其他软件配置", size=12, role="secondary"))
+            content.addWidget(card)
+            path_field(content, "配置文件", plan["path"])
+            disclosure(content, "查看连接内容与备份编号", {"当前连接": plan["current_entry"] or "无", "恢复后的连接": plan["restore_entry"] or "无（移除此连接）", "备份编号": plan["id"]})
+        elif isinstance(plan, dict) and plan.get("operation") == "undo_install":
+            content.addWidget(label("撤回这次安装，恢复安装前的文件与配置", size=15, bold=True, wrap=True))
+            for key in plan["profiles"]:
+                card = GlassFrame()
+                column(card, 20, 12).addWidget(label(CLIENT_NAMES.get(key, key), size=15, bold=True))
+                content.addWidget(card)
+            content.addWidget(label("本次安装的 Skill、MCP 连接和安装记录将撤回。", size=12, role="secondary", wrap=True))
+            if plan.get("conflicts"):
+                content.addWidget(label("安装后部分内容已变化，无法完整撤销。原内容会保留。", role="warning", wrap=True))
+                disclosure(content, "查看变化的文件", plan["conflicts"])
+            disclosure(content, "查看撤销范围", plan["files"])
         elif isinstance(plan, dict):
             for name, value in plan.items():
                 if name in {"digest", "current_hash", "sha256"}:
@@ -104,13 +147,16 @@ class Preview(Detail):
         controls = row(None)
         controls.layout().addWidget(button("取消" if apply else "关闭", self.close))
         if apply:
-            controls.layout().addWidget(button("确认执行", lambda: (self.close(), apply()), primary=True))
+            confirm = button("确认撤销" if isinstance(plan, dict) and plan.get("operation") == "undo_install" else "确认恢复" if isinstance(plan, dict) and plan.get("operation") == "restore_config" else "确认执行", lambda: (self.close(), apply()), primary=True)
+            if isinstance(plan, dict) and plan.get("operation") == "undo_install" and plan.get("conflicts"):
+                confirm.setEnabled(False)
+            controls.layout().addWidget(confirm)
         self.body.addWidget(controls)
 
 
 class StatusDialog(Detail):
     def __init__(self, owner):
-        super().__init__(owner, "安装状态", (850, 680), "分别查看客户端、Skill 文件与 MCP 配置；连接结果来自最近一次真实验证。")
+        super().__init__(owner, "安装状态", (850, 680))
         states = owner.selection.states
         self.body.addWidget(label(f"{sum(s.presence == Presence.DETECTED for s in states.values())} 个客户端已检测   ·   {sum(s.receipt_valid for s in states.values())} 个受管接入", size=14, bold=True))
         content = self.scroll()
@@ -119,11 +165,9 @@ class StatusDialog(Detail):
             stack = column(card, 16, 8)
             stack.addWidget(row(label(state.display_name, size=15, bold=True), None, label(state.label, role="success" if state.status == IntegrationStatus.INSTALLED_MANAGED else "secondary")))
             stack.addWidget(label(f"客户端  {'已检测' if state.presence == Presence.DETECTED else '未检测或不可用'}     Skill  {'已存在' if state.skill_present else '未安装'}     MCP 配置  {'已存在' if state.mcp_entry_present else '未配置'}", wrap=True))
-            checked = owner.service.health_results.get(key)
-            stack.addWidget(label(f"接入版本 {state.detected_version or '尚无版本记录'}  ·  " + (f"最近验证 {'通过' if checked['ok'] else '未通过'}，{checked['checked_at']}" if checked else "尚未执行连接验证"), size=11, role="secondary", wrap=True))
             if state.problem_codes:
                 stack.addWidget(label("\n".join(PROBLEMS.get(code, "需检查：" + code) for code in state.problem_codes), size=12, role="warning", wrap=True))
-            disclosure(stack, "路径与技术详情", state.to_dict())
+            disclosure(stack, "路径与技术详情", {"安装": state.to_dict(), "连接": owner.service.health_results.get(key)})
             content.addWidget(card)
         content.addStretch()
         self.body.addWidget(row(None, button("关闭", self.close)))
@@ -131,14 +175,14 @@ class StatusDialog(Detail):
 
 class Results(Detail):
     def __init__(self, owner, title, results):
-        super().__init__(owner, title, (760, 530), "结果来自本次实际操作；下方可展开技术详情。")
+        super().__init__(owner, title, (760, 530))
         content = self.scroll()
         for result in results:
             card = GlassFrame()
             body = column(card, 16, 8)
             key = result.get("id")
             name = owner.selection.states[key].display_name if key in owner.selection.states else "操作结果"
-            body.addWidget(row(label(name, size=15, bold=True), None, label("已完成" if result.get("ok") else "未完成", role="success" if result.get("ok") else "error")))
+            body.addWidget(row(label(name, size=15, bold=True), None, label("已撤销" if result.get("cancelled") else "已完成" if result.get("ok") else "未完成", role="success" if result.get("ok") or result.get("cancelled") else "error")))
             fact(body, "结论", result.get("message") or ("操作已提交，状态已核对" if result.get("ok") else "请查看日志与诊断"))
             if "tool_count" in result:
                 fact(body, "真实连接核验", f"服务版本 {result.get('server_version') or '未知'} · {result['tool_count']} 个工具 · 会话 {result.get('session_status') or '未就绪'}")
@@ -152,23 +196,26 @@ class Results(Detail):
 class Targets(Detail):
     def __init__(self, owner, operation):
         self.operation, self.variables = operation, {}
-        subtitle = "选择接入后执行真实握手，核对服务版本、全部工具和 Session READY。" if operation == "verify" else "选择目标 → 核对逐文件预览 → 确认执行与核验。"
         eligible = {key: state for key, state in owner.selection.states.items() if (state.status == IntegrationStatus.EXTERNAL if operation == "adopt" else state.receipt_valid if operation in {"uninstall", "repair", "verify", "upgrade"} else state.status != IntegrationStatus.UNKNOWN)}
-        super().__init__(owner, NAMES[operation], (720, min(620, 230 + len(eligible) * 90)), subtitle)
+        super().__init__(owner, NAMES[operation], (720, min(620, 190 + len(eligible) * 76)))
         body = self.scroll()
         for key, state in eligible.items():
             card = GlassFrame()
             stack = column(card, 12, 2)
             checkbox = QCheckBox(state.display_name)
-            stack.addWidget(checkbox)
-            stack.addWidget(label(f"{state.label} · 接入版本 {state.detected_version or '未记录'}", size=11, role="secondary"))
+            status = label(state.label, size=10, role="success" if state.receipt_valid else "secondary")
+            status.setProperty("badge", True)
+            status.setFixedHeight(28)
+            status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stack.addWidget(row(checkbox, status))
+            checkbox.toggled.connect(lambda checked, item=card: (item.setProperty("selected", checked), item.update()))
             if state.problem_codes:
                 stack.addWidget(label("；".join(PROBLEMS.get(code, code) for code in state.problem_codes), size=11, role="warning", wrap=True))
             body.addWidget(card)
             self.variables[key] = checkbox
             checkbox.toggled.connect(lambda _: self.next_button.setEnabled(any(item.isChecked() for item in self.variables.values())))
         if not eligible:
-            body.addWidget(label("没有符合条件的目标。请先检查安装状态。", role="secondary", wrap=True))
+            body.addWidget(label("暂无目标", role="secondary"))
         body.addStretch()
         self.next_button = button("开始验证" if operation == "verify" else "创建备份" if operation == "backup" else "查看操作预览", self.preview, primary=True)
         self.next_button.setEnabled(False)
@@ -204,7 +251,7 @@ class Targets(Detail):
 
 class Diagnostics(Detail):
     def __init__(self, owner, report=False):
-        super().__init__(owner, "日志与诊断", (850, 650), "先查看日志或预览脱敏报告，再选择复制、导出。")
+        super().__init__(owner, "日志与诊断", (850, 650))
         self.report_mode, self.value = report, None
         self.query = QLineEdit()
         self.query.setPlaceholderText("搜索客户端、会话、错误码或日志内容")
@@ -227,11 +274,11 @@ class Diagnostics(Detail):
         service = self.owner.service
         if self.report_mode:
             self.value = service.log.report(self.owner.selection.states, service.health_results)
-            self.summary.setText("报告包含版本、脱敏检测结论、连接结果与最近事件；不含完整配置、凭证和私人文件。")
+            self.summary.setText("错误报告")
             self.box.setPlainText(json.dumps(self.value, ensure_ascii=False, indent=2))
         else:
             self.value = service.log.history(self.query.text())
-            self.summary.setText(f"{len(self.value)} 条匹配事件 · 内容已脱敏")
+            self.summary.setText(f"{len(self.value)} 条事件")
             self.box.setPlainText("\n".join(f"{event['time_iso']}  {event['level']}  {event['message']}  {event.get('error_code') or ''}" for event in self.value))
 
     def copy(self):
@@ -245,6 +292,6 @@ class Diagnostics(Detail):
             from installer.storage import check_path
             try:
                 atomic_write(check_path(Path(target)), json.dumps(self.value, ensure_ascii=False, indent=2).encode("utf-8"))
-                self.summary.setText("导出完成：已保存预览中的脱敏内容。")
+                self.summary.setText("已导出")
             except Exception as exc:
                 self.owner.error("导出失败", str(exc))

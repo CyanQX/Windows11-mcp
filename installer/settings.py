@@ -82,7 +82,7 @@ class SettingsService:
             raise ManagerError("INVALID_APPEARANCE", "日志背景设置无效")
         strength = appearance.get("glass_strength")
         if type(strength) is not int or not 0 <= strength <= 100 or type(appearance.get("reduce_motion")) is not bool:
-            raise ManagerError("INVALID_APPEARANCE", "玻璃强度或动画设置无效")
+            raise ManagerError("INVALID_APPEARANCE", "视觉强度或动画设置无效")
         layout = value.get("layout", {})
         if not isinstance(layout, dict) or len(json.dumps(layout)) > 100000:
             raise ManagerError("INVALID_LAYOUT", "布局设置无效")
