@@ -53,6 +53,7 @@ Filename: "{app}\Windows-MCP.exe"; Parameters: "--finish-installer-update"; Flag
 [Code]
 var
   ManagerUpdate: Boolean;
+  PreviousDirectory: String;
 
 function IsManagerUpdate: Boolean;
 begin
@@ -66,33 +67,48 @@ end;
 
 function InitializeSetup: Boolean;
 var
-  PreviousDirectory: String;
-  Parameters: String;
-  LogFile: String;
-  ExitCode: Integer;
   UninstallKey: String;
 begin
   ManagerUpdate := ExpandConstant('{param:WMCPUPDATE|0}') = '1';
-  if ManagerUpdate then
-    Log('WMCP_UPDATE_MODE=progress-only');
   Result := True;
   UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B52D94AA-CB15-4BC1-BE81-8AD6A19A0C99}_is1';
   { Older managers launch the new package without switches. An existing
     installation goes directly to its progress page; the first install keeps
-    the normal location/license wizard. Never force-close applications. }
+    the normal location/license wizard. Avoid relaunching the active setup,
+    which Windows can deny during initialization. }
   if (not WizardSilent) and
      RegQueryStringValue(HKCU64, UninstallKey, 'InstallLocation', PreviousDirectory) and
      FileExists(AddBackslash(PreviousDirectory) + 'Windows-MCP.exe') then
+    ManagerUpdate := True;
+  if ManagerUpdate then
+    Log('WMCP_UPDATE_MODE=progress-only');
+end;
+
+procedure InitializeWizard;
+begin
+  if ManagerUpdate then
   begin
-    Parameters := '/SILENT /SUPPRESSMSGBOXES /SP- /NORESTART /WMCPUPDATE=1 /DIR="' + PreviousDirectory + '"' +
-      ' /WMCPNOLAUNCH=' + ExpandConstant('{param:WMCPNOLAUNCH|0}');
-    LogFile := ExpandConstant('{param:LOG|}');
-    if LogFile <> '' then
-      Parameters := Parameters + ' /LOG="' + LogFile + '.update"';
-    if Exec(ExpandConstant('{srcexe}'), Parameters,
-      '', SW_SHOWNORMAL, ewNoWait, ExitCode) then
-      Result := False
-    else
-      RaiseException('Unable to start the update installer. The current version has been preserved.');
+    WizardForm.Caption := 'Windows-MCP 更新';
+    if PreviousDirectory <> '' then
+      WizardForm.DirEdit.Text := RemoveBackslashUnlessRoot(PreviousDirectory);
+  end;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := ManagerUpdate and (PageID <> wpPreparing) and (PageID <> wpInstalling);
+end;
+
+procedure CurPageChanged(PageID: Integer);
+begin
+  if ManagerUpdate then
+  begin
+    WizardForm.BackButton.Visible := False;
+    WizardForm.NextButton.Visible := False;
+    { Inno always activates an initial/ready page even if ShouldSkipPage
+      excludes it. Queue a normal click after the page transition finishes;
+      a synchronous OnClick would be ignored while Inno is changing pages. }
+    if (PageID <> wpPreparing) and (PageID <> wpInstalling) then
+      PostMessage(WizardForm.NextButton.Handle, $00F5, 0, 0);
   end;
 end;

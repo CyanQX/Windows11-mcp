@@ -617,8 +617,8 @@ def drag_canvas_boundary(space, start, delta):
     QTest.qWait(310)
 
 
-@pytest.mark.parametrize("edge,maximized", [("left", False), ("left", True), ("right", False)])
-def test_nested_panels_slide_park_and_restore_as_one_complete_side(window, maximized, edge):
+@pytest.mark.parametrize("edge,maximized,origin", [("left", False, "targets"), ("left", False, "actions"), ("left", True, "targets"), ("right", False, "targets")])
+def test_nested_panels_slide_park_and_restore_as_one_complete_side(window, maximized, edge, origin):
     space = window.workspace
     dock, actions = space.docks["targets"], space.docks["actions"]
     original, minimum = window.size(), window.minimumSize()
@@ -642,15 +642,16 @@ def test_nested_panels_slide_park_and_restore_as_one_complete_side(window, maxim
             window.showMaximized()
         QTest.qWait(60)
         assert actions.minimumSizeHint().width() > dock.minimumSizeHint().width()
-        start = QPoint(dock.geometry().right() + 5 if edge == "left" else dock.x() - 5, dock.geometry().center().y())
-        assert set(space.divider_snapshot(space.canvas.mapToGlobal(start))) == {"targets", "maintenance"}, {key: (item.geometry(), space.canvas.dockWidgetArea(item), item.isVisible()) for key, item in space.docks.items()}
-        drag_canvas_boundary(space, start, QPoint((-1 if edge == "left" else 1) * (dock.width() + 100), 0))
-        assert dock.isHidden() and space.collapsed["targets"][0] == edge
+        handle_panel = space.docks[origin]
+        start = QPoint(handle_panel.geometry().right() + 5 if edge == "left" else handle_panel.x() - 5, handle_panel.geometry().center().y())
+        assert set(space.divider_snapshot(space.canvas.mapToGlobal(start))) == {origin, "maintenance"}, {key: (item.geometry(), space.canvas.dockWidgetArea(item), item.isVisible()) for key, item in space.docks.items()}
+        drag_canvas_boundary(space, start, QPoint((-1 if edge == "left" else 1) * (handle_panel.width() + 100), 0))
+        assert dock.isHidden() and space.collapsed[origin][0] == edge
         assert actions.isHidden()
-        assert set(space.park_groups["targets"]) == {"targets", "actions"}
+        assert set(space.park_groups[origin]) == {"targets", "actions"}
         assert len(space.collapsed) == 1
         assert space.docks["maintenance"].isVisible()
-        space.collapsed["targets"][1].control.click()
+        space.collapsed[origin][1].control.click()
         deadline = time.monotonic() + 2
         while space.transitions and time.monotonic() < deadline:
             QTest.qWait(20)

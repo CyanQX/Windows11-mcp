@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     expected = hashlib.sha256(args.payload.read_bytes()).hexdigest()
-    with tempfile.TemporaryDirectory(prefix="windows-mcp-wizard-check-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="windows-mcp-wizard-check-", ignore_cleanup_errors=True) as temporary:
         destination = Path(temporary) / "chosen-install-location"
         subprocess.run([str(args.installer.resolve()), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOICONS", "/TASKS=", f"/DIR={destination}"], check=True, timeout=180)
         executable = destination / "Windows-MCP.exe"
@@ -38,8 +38,13 @@ def main():
         executable.write_bytes(b"MZ isolated previous manager")
         update_log = Path(temporary) / "update-install.log"
         bootstrap = subprocess.Popen([str(args.installer.resolve()), "/WMCPNOLAUNCH=1", f"/LOG={update_log}"])
-        bootstrap.wait(timeout=60)
-        update_log = Path(str(update_log) + ".update")
+        try:
+            bootstrap.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            if update_log.exists():
+                raw = update_log.read_bytes()
+                print(raw.decode("utf-16" if raw.startswith(b"\xff\xfe") else "utf-8-sig", errors="replace")[-8000:], flush=True)
+            raise
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             try:
