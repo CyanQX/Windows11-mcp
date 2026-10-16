@@ -617,18 +617,21 @@ def drag_canvas_boundary(space, start, delta):
 
 
 @pytest.mark.parametrize("maximized", [False, True])
-def test_targets_nested_above_wider_actions_can_slide_left_independently(window, maximized):
+@pytest.mark.parametrize("edge", ["left", "right"])
+def test_targets_nested_above_wider_actions_can_slide_independently(window, maximized, edge):
     space = window.workspace
     dock, actions = space.docks["targets"], space.docks["actions"]
+    if edge == "right":
+        space.swap(dock, space.docks["maintenance"])
     space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
     if maximized:
         window.showMaximized()
     QTest.qWait(60)
     assert actions.minimumSizeHint().width() > dock.minimumSizeHint().width()
-    start = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
+    start = QPoint(dock.geometry().right() + 5 if edge == "left" else dock.x() - 5, dock.geometry().center().y())
     assert set(space.divider_snapshot(space.canvas.mapToGlobal(start))) == {"targets", "maintenance"}
-    drag_canvas_boundary(space, start, QPoint(-dock.width() - 100, 0))
-    assert dock.isHidden() and space.collapsed["targets"][0] == "left"
+    drag_canvas_boundary(space, start, QPoint((-1 if edge == "left" else 1) * (dock.width() + 100), 0))
+    assert dock.isHidden() and space.collapsed["targets"][0] == edge
     assert actions.isVisible() and "actions" not in space.collapsed and actions.height() <= 180
     assert window.settings_button.isVisible() and window.install_button.isVisible()
     space.collapsed["targets"][1].control.click()
@@ -646,7 +649,6 @@ def test_nested_targets_partial_slide_can_reverse_without_moving_the_actions(win
     initial = actions.geometry()
     start = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
     minimum = space.divider_minimum(dock, "left").width()
-    assert minimum >= actions.minimumSizeHint().width()
     QTest.mousePress(space.canvas, Qt.MouseButton.LeftButton, pos=start)
     for x in range(start.x(), minimum - 200, -8):
         point = QPoint(x, start.y())
@@ -660,6 +662,21 @@ def test_nested_targets_partial_slide_can_reverse_without_moving_the_actions(win
     QTest.qWait(230)
     assert not space.collapsed and space.preview is None and space.split_live is None
     assert dock.isVisible() and actions.isVisible() and actions.height() <= 180
+
+
+def test_native_separator_observes_a_shared_minimum_without_matching_panel_rectangles(window, monkeypatch):
+    space = window.workspace
+    dock, actions = space.docks["targets"], space.docks["actions"]
+    space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
+    QTest.qWait(60)
+    monkeypatch.setattr(space, "aligned_docks", lambda *args: [])
+    start = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
+    drag_canvas_boundary(space, start, QPoint(-dock.width() - 100, 0))
+    assert dock.isHidden() and "targets" in space.collapsed
+    assert actions.isVisible() and actions.height() <= 180
+    space.collapsed["targets"][1].control.click()
+    QTest.qWait(230)
+    assert dock.isVisible() and dock.x() >= 0 and actions.height() <= 180
 
 
 def test_automatic_update_hint_refreshes_open_menu_and_waits_for_user_click(window, monkeypatch):

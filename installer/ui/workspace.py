@@ -24,7 +24,7 @@ class SlidePreview(QWidget):
     viewport replaces both the title and body, so their minimum sizes cannot keep
     an empty footprint or leave the original glass border behind.
     """
-    def __init__(self, workspace, dock, edge):
+    def __init__(self, workspace, dock, edge, *, shared_span=None):
         super().__init__(dock)
         self.workspace, self.dock, self.edge, self.fraction = workspace, dock, edge, 0.0
         self.image = dock.grab()
@@ -32,7 +32,7 @@ class SlidePreview(QWidget):
         self.expanded = dock.size()
         self.original_rect = dock.geometry()
         self.horizontal = edge in {"left", "right"}
-        self.shared_span = bool(workspace.aligned_docks(dock, self.horizontal)) if not dock.isFloating() else False
+        self.shared_span = (bool(workspace.aligned_docks(dock, self.horizontal)) if shared_span is None else shared_span) if not dock.isFloating() else False
         self.extent = self.expanded.width() if self.horizontal else self.expanded.height()
         self.minimum, self.maximum = dock.minimumSize(), dock.maximumSize()
         self.body, self.title = dock.widget(), dock.titleBarWidget()
@@ -69,8 +69,8 @@ class SlidePreview(QWidget):
         painter.setOpacity(1 - self.fraction)
         # The right/bottom edge of the viewport already moves toward its edge as
         # the layout shrinks; start edges need an additional negative translation.
-        dx = -round(self.extent * self.fraction) if self.edge == "left" else 0
-        dy = -round(self.extent * self.fraction) if self.edge == "top" else 0
+        dx = -round(self.extent * self.fraction) if self.edge == "left" else round(self.extent * self.fraction) if self.shared_span and self.edge == "right" else 0
+        dy = -round(self.extent * self.fraction) if self.edge == "top" else round(self.extent * self.fraction) if self.shared_span and self.edge == "bottom" else 0
         scale = 1 - .04 * self.fraction
         painter.translate(dx, dy)
         painter.translate(self.expanded.width() / 2, self.expanded.height() / 2)
@@ -1006,6 +1006,14 @@ class Workspace(QWidget):
                 size = dock.width() if horizontal else dock.height()
                 limit = minimum.width() if horizontal else minimum.height()
                 wanted = (rect.width() + (delta.x() if edge == "left" else -delta.x())) if horizontal else rect.height() + (delta.y() if edge == "top" else -delta.y())
+                if near and not self.split_owned and size > limit + 16 and wanted < size - 16:
+                    # Qt can inset nested siblings differently across screens
+                    # and styles. Observe its actual stop rather than requiring
+                    # their painted rectangles to have identical boundaries.
+                    minimum = QSize(minimum)
+                    minimum.setWidth(size) if horizontal else minimum.setHeight(size)
+                    rects[key] = (rect, edge, minimum)
+                    limit = size
                 if near and (size <= limit + 16 or self.split_owned and self.split_key == key) and wanted < limit:
                     candidate = dock
                     if not self.preview or self.preview.dock != dock:
@@ -1024,7 +1032,8 @@ class Workspace(QWidget):
                             self.split_owned = True
                             self.split_key = key
                             self.canvas.grabMouse()
-                        self.preview = SlidePreview(self, dock, edge)
+                        own_minimum = dock.minimumSizeHint().width() if horizontal else dock.minimumSizeHint().height()
+                        self.preview = SlidePreview(self, dock, edge, shared_span=True if limit > own_minimum + 16 else None)
                     self.preview.advance(min(0.99, (limit - wanted) / max(1, limit)))
                     if releasing and self.preview.fraction >= PARK_THRESHOLD:
                         self.collapse(dock, edge)
