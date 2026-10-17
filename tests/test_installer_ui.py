@@ -293,8 +293,32 @@ def test_undo_button_cancels_background_install_and_preserves_previous_client(wi
 
 def test_settings_order_and_no_external_adoption_menu(window):
     popup = SettingsHub(window)
-    assert popup.names == ["外观", "高级设置", "配置与恢复", "安装目录", "检查更新", "日志与诊断", "关于"]
+    assert popup.names == ["外观", "高级设置", "操作授权", "配置与恢复", "安装目录", "检查更新", "日志与诊断", "关于"]
     popup.close()
+
+
+def test_trust_center_reflects_grant_and_revoke(window, tmp_path):
+    from installer.ui.operator_dialog import TrustCenter
+    from windows_mcp.infrastructure.approvals import ApprovalStore
+
+    window.approval_store = ApprovalStore(tmp_path / "approvals")
+    try:
+        dialog = TrustCenter(window)
+        QTest.qWait(30)
+        assert "每次操作都需要批准" in dialog.state.text()
+        dialog.confirm.setChecked(False)
+        dialog.grant()
+        assert "勾选" in dialog.notice.text()
+
+        dialog.store.grant("forever")
+        dialog.refresh()
+        assert "已完全授权" in dialog.state.text() and dialog.revoke_button.isEnabled()
+        dialog.store.revoke()
+        dialog.refresh()
+        assert "每次操作都需要批准" in dialog.state.text()
+        dialog.close()
+    finally:
+        window.approval_store = None
 
 
 def test_advanced_settings_groups_values_without_helper_descriptions(window):

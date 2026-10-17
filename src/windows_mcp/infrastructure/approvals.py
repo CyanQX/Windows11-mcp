@@ -34,6 +34,46 @@ def preview(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def authority_key(directory: Path) -> bytes:
+    """Read or create the per-installation signing key shared by approvals and trust."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "authority.key"
+    if not path.exists():
+        key = secrets.token_bytes(32)
+        temporary = path.with_suffix(f".{secrets.token_hex(8)}.tmp")
+        temporary.write_bytes(key)
+        try:
+            # Publish a fully written key atomically without overwriting an existing authority.
+            os.link(temporary, path)
+        except FileExistsError:
+            pass
+        finally:
+            temporary.unlink(missing_ok=True)
+    key = path.read_bytes()
+    if len(key) != 32:
+        raise PermissionError("Invalid local approval authority key")
+    return key
+
+
+def sign_record(directory: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return {"payload": payload, "signature": hmac.new(authority_key(directory), body, "sha256").hexdigest()}
+
+
+def read_signed_record(directory: Path, path: Path) -> dict[str, Any] | None:
+    """Return the verified payload, or None when the record is missing, malformed or forged."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        payload = record["payload"]
+        body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        signature = hmac.new(authority_key(directory), body, "sha256").hexdigest()
+        if not hmac.compare_digest(signature, record["signature"]):
+            return None
+        return payload
+    except (OSError, ValueError, KeyError, TypeError, PermissionError):
+        return None
+
+
 class ApprovalStore:
     def __init__(self, directory: Path, *, ttl: float = 300.0) -> None:
         self.directory = directory.resolve()
@@ -48,23 +88,7 @@ class ApprovalStore:
                 yield
 
     def _key(self) -> bytes:
-        self.directory.mkdir(parents=True, exist_ok=True)
-        path = self.directory / "authority.key"
-        if not path.exists():
-            key = secrets.token_bytes(32)
-            temporary = path.with_suffix(f".{secrets.token_hex(8)}.tmp")
-            temporary.write_bytes(key)
-            try:
-                # Publish a fully written key atomically without overwriting an existing authority.
-                os.link(temporary, path)
-            except FileExistsError:
-                pass
-            finally:
-                temporary.unlink(missing_ok=True)
-        key = path.read_bytes()
-        if len(key) != 32:
-            raise PermissionError("Invalid local approval authority key")
-        return key
+        return authority_key(self.directory)
 
     def _path(self, request_id: str) -> Path:
         if len(request_id) != 32 or any(ch not in "0123456789abcdef" for ch in request_id):

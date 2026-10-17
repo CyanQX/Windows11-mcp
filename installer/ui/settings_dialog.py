@@ -30,7 +30,7 @@ class SettingsHub(QDialog):
         column(self, 5, 0).addWidget(frame)
         body = column(frame, 12, 4)
         body.addWidget(label("设置", size=14, bold=True))
-        actions = [("外观", "settings", lambda: Appearance(owner)), ("高级设置", "settings", lambda: Preferences(owner)), ("配置与恢复", "restore", lambda: Backups(owner)), ("安装目录", "folder", lambda: Preferences(owner, paths=True)), ("检查更新", "update", lambda: Updates(owner)), ("日志与诊断", "document", lambda: Diagnostics(owner)), ("关于", "info", lambda: About(owner))]
+        actions = [("外观", "settings", lambda: Appearance(owner)), ("高级设置", "settings", lambda: Preferences(owner)), ("操作授权", "shield", self.trust), ("配置与恢复", "restore", lambda: Backups(owner)), ("安装目录", "folder", lambda: Preferences(owner, paths=True)), ("检查更新", "update", lambda: Updates(owner)), ("日志与诊断", "document", lambda: Diagnostics(owner)), ("关于", "info", lambda: About(owner))]
         self.names = []
         for name, icon, action in actions:
             self.names.append(name)
@@ -54,6 +54,10 @@ class SettingsHub(QDialog):
     def release_hint(self, release):
         self.update_badge.setVisible(bool(release and release.get("available")))
         self.adjustSize()
+
+    def trust(self):
+        from installer.ui.operator_dialog import TrustCenter
+        TrustCenter(self.owner)
 
 
 class Appearance(Detail):
@@ -386,7 +390,7 @@ class About(Detail):
         self.body.addWidget(label(owner.version, role="secondary"))
         tabs = QTabWidget()
         self.body.addWidget(tabs, 1)
-        texts = [("简介", "Windows MCP 为编程 AI 提供真实 Windows 操作能力。管理器负责 Skill 与 MCP 的安装、验证、修复、备份和更新。\n\nCodex 的安装目标为桌面端。\n\n本项目基于 CursorTouch/Windows-MCP，保留原项目许可与贡献者声明。"), ("使用政策", "请仅在有权操作的设备、应用、账号和文件范围内使用。\n\n禁止利用本工具实施恶意代码注入、进程劫持、窃取凭证、破坏数据、绕过权限或操控审批等危险行为。\n\n受保护操作须由本机用户核对具体参数后批准一次。不得让 AI 自行授予审批或通过注入绕过审批。\n\n以上为使用政策；权限边界由实际审批和服务策略执行。\n\n本政策不限制开源许可证允许的库替换、修改、调试及为调试该修改进行的逆向工程。"), ("许可证", (owner.base / "LICENSE.md").read_text(encoding="utf-8"))]
+        texts = [("简介", "Windows MCP 为编程 AI 提供真实 Windows 操作能力。管理器负责 Skill 与 MCP 的安装、验证、修复、备份和更新。\n\nCodex 的安装目标为桌面端。\n\n本项目基于 CursorTouch/Windows-MCP，保留原项目许可与贡献者声明。"), ("使用政策", "请仅在有权操作的设备、应用、账号和文件范围内使用。\n\n禁止利用本工具实施恶意代码注入、进程劫持、窃取凭证、破坏数据、绕过权限或操控审批等危险行为。\n\n受保护操作默认须由本机用户核对具体参数后逐次批准。仅本机用户可在“操作授权”中显式开启可撤销的完全授权，让 R2 输入操作不再逐次询问；不得让 AI 自行授予审批、延长授权或通过注入绕过审批。R3 能力仍须单独在服务配置中开启。\n\n以上为使用政策；权限边界由实际审批和服务策略执行。\n\n本政策不限制开源许可证允许的库替换、修改、调试及为调试该修改进行的逆向工程。"), ("许可证", (owner.base / "LICENSE.md").read_text(encoding="utf-8"))]
         texts.append(("Qt 许可与重建", (owner.base / "installer/resources/Qt-LICENSES.txt").read_text(encoding="utf-8")))
         notices = owner.base / "installer/resources/third-party-licenses.txt"
         if notices.exists():

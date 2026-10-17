@@ -10,6 +10,7 @@ from typing import Any
 from windows_mcp.infrastructure.approvals import ApprovalStore
 from windows_mcp.infrastructure.config import CONFIG_DIR
 from windows_mcp.infrastructure.runtime_paths import portable_data_directory
+from windows_mcp.infrastructure.trust import TrustStore
 
 
 class PolicyBlocked(PermissionError):
@@ -21,11 +22,13 @@ class PolicyBlocked(PermissionError):
 
 class PolicyGate:
     def __init__(self, *, roots: list[Path] | None = None, allow_r3: bool = False,
-                 allow_private_browser: bool = False, approvals: ApprovalStore | None = None) -> None:
+                 allow_private_browser: bool = False, approvals: ApprovalStore | None = None,
+                 trust: TrustStore | None = None) -> None:
         self.roots = [path.resolve() for path in (roots or [CONFIG_DIR / "workspace"])]
         self.allow_r3 = allow_r3
         self.allow_private_browser = allow_private_browser
         self.approvals = approvals or ApprovalStore(CONFIG_DIR / "approvals")
+        self.trust = trust if trust is not None else TrustStore(self.approvals.directory)
         self.protected = [CONFIG_DIR.resolve(), Path("~/.codex").expanduser().resolve(),
                           Path("~/.ssh").expanduser().resolve(), self.approvals.directory]
         portable = portable_data_directory()
@@ -133,6 +136,7 @@ class PolicyGate:
                 raise PolicyBlocked("The local human approval window is open; MCP input is paused until the operator decides and closes it")
         if risk == 3 and not self.allow_r3:
             raise PolicyBlocked("R3 tools are disabled; an operator must enable policy.allow_r3 locally")
-        if risk >= 2 and not self.approvals.consume(session_id, tool, args, approval_id):
+        trusted = risk == 2 and self.trust is not None and self.trust.allows()
+        if risk >= 2 and not trusted and not self.approvals.consume(session_id, tool, args, approval_id):
             raise PolicyBlocked(f"R{risk} requires a one-use local operator approval. Call RequestApproval with this exact tool and arguments")
         return risk

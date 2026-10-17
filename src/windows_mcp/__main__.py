@@ -875,6 +875,37 @@ def approve(request_id: str, yes: bool) -> None:
     click.echo("Approved once. Repeat the exact original tool call before this request expires.")
 
 
+@main.command()
+@click.option("--mode", type=click.Choice(["session", "forever"]), default="session", show_default=True, help="Session grants expire after 8 hours; forever lasts until revoked.")
+@click.option("--revoke", is_flag=True, help="Remove the local full-authorization grant.")
+@click.option("--yes", is_flag=True, help="Confirm without an interactive prompt.")
+def trust(mode: str, revoke: bool, yes: bool) -> None:
+    """Grant or revoke the operator trust that skips per-call R2 approval. This is never an MCP tool."""
+    from windows_mcp.infrastructure.trust import TrustStore
+
+    store = TrustStore(CONFIG_DIR / "approvals")
+    try:
+        if revoke:
+            if not yes:
+                click.confirm("Revoke the local full-authorization grant?", abort=True)
+            store.revoke()
+            click.echo("Revoked. Every protected action asks for approval again.")
+            return
+        if store.status() is not None and not yes:
+            click.confirm("A trust grant is already active; replace it?", abort=True)
+        if not yes:
+            click.confirm(f"Allow protected mouse/keyboard actions without a per-call prompt ({mode})?", abort=True)
+        payload = store.grant(mode, operator="cli")
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if payload["expires_at"] is None:
+        click.echo("Trust granted: protected R2 actions run without a prompt until revoked.")
+    else:
+        minutes = max(1, int((payload["expires_at"] - payload["granted_at"]) / 60))
+        click.echo(f"Trust granted: protected R2 actions run without a prompt for {minutes} minutes.")
+    click.echo("R3 tools stay disabled unless policy.allow_r3 is enabled in config.toml.")
+
+
 def _resolve_program() -> list[str]:
     """Return the argv prefix to invoke `windows-mcp serve` from Task Scheduler.
 

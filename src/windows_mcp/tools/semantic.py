@@ -160,7 +160,8 @@ def register(mcp, *, get_desktop, get_analytics):
         return {"status": Status.CANCELLED.value if session.cancelled.is_set() else "READY",
                 "session_id": session.session_id, "revision": session.revision,
                 "workspace_roots": [str(root) for root in runtime.policy.roots],
-                "r3_enabled": runtime.policy.allow_r3}
+                "r3_enabled": runtime.policy.allow_r3,
+                "trust_mode": (runtime.policy.trust.status() or {}).get("mode") if runtime.policy.trust else None}
 
     @mcp.tool(name="RequestApproval", description="Create an expiring approval request for an exact tool/argument object. This tool cannot grant permission. The packaged Windows manager opens a local human review window; alternatively the local operator can use windows-mcp approve REQUEST_ID. Approval stays exact-call/session-bound and single-use.", annotations=_WRITE)
     @with_analytics(get_analytics(), "RequestApproval-Tool", offload="background")
@@ -170,6 +171,9 @@ def register(mcp, *, get_desktop, get_analytics):
         risk = runtime.policy.risk(tool, normalized)
         if risk == 3 and not runtime.policy.allow_r3:
             raise PermissionError("BLOCKED_BY_POLICY: R3 is disabled by the local operator")
+        if risk == 2 and runtime.policy.trust and runtime.policy.trust.allows():
+            return {"status": "TRUSTED", "risk": risk, "approval_required": False,
+                    "operator_guidance": "本机操作员已开启完全授权：可直接调用该工具，无需逐次审批。"}
         request = runtime.policy.approvals.request(runtime.current().session_id, tool, normalized, risk, description)
         from windows_mcp.infrastructure.operator_ui import notify_operator
         notified = notify_operator(request["request_id"])
