@@ -11,10 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main():
+    from installer.ui.scenarios import SMOKE_CASES
     parser = argparse.ArgumentParser()
     parser.add_argument("executable", type=Path)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--cases", nargs="+", default=["ready", "status", "appearance", "advanced", "progress-hidden", "edge-preview", "edge-parked", "targets-nested-preview", "targets-nested-parked", "targets-nested-restored", "footer-minimized", "footer-floating-parked", "selection-clear", "update-available", "docking", "approval"])
+    parser.add_argument("--cases", nargs="+", choices=SMOKE_CASES, default=["ready", "status", "appearance", "advanced", "progress-hidden", "edge-preview", "edge-parked", "targets-nested-preview", "targets-nested-parked", "targets-nested-restored", "footer-minimized", "footer-floating-parked", "selection-clear", "update-available", "docking", "approval", "settings-update", "paths", "selection-bottom", "status-details", "approval-default-automatic"])
     args = parser.parse_args()
     from installer.storage import check_path
     executable = check_path(args.executable)
@@ -34,7 +35,7 @@ def main():
             assert min(picture.size) >= 90 and picture.convert("RGB").getextrema() != ((0, 0), (0, 0), (0, 0))
         record = json.loads(target.with_suffix(".json").read_text(encoding="utf-8"))
         assert record["case"] == case and record["isolated"]
-        if case in {"status", "installed", "selection", "verify", "repair", "progress", "progress-hidden", "backups", "restore-preview", "upgrade-preview", "undo-preview"}:
+        if case in {"status", "status-details", "installed", "selection", "selection-bottom", "verify", "repair", "progress", "progress-hidden", "backups", "restore-preview", "upgrade-preview", "undo-preview"}:
             assert record["health"]["codex"]["ok"] and record["health"]["codex"]["tool_count"] == 31
         if case in {"undo", "cancel-install"}:
             assert not record["health"]

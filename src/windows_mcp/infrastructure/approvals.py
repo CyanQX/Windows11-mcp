@@ -101,7 +101,10 @@ class ApprovalStore:
         record = {"payload": payload, "signature": hmac.new(self._key(), body, "sha256").hexdigest()}
         path = self._path(payload["request_id"])
         temporary = path.with_suffix(f".{secrets.token_hex(8)}.tmp")
-        temporary.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        if not temporary.is_relative_to(self.directory):
+            raise ValueError("Approval record is outside its private directory")
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(record, stream, ensure_ascii=False)
         os.replace(temporary, path)
 
     def read(self, request_id: str) -> dict:

@@ -339,9 +339,8 @@ class Installer:
         def backup_content(name: str | None):
             if name is None:
                 return None
-            path = Path(name).resolve()
-            if not path.is_relative_to((self.data / "backups").resolve()):
-                raise ValueError("备份路径超出安装器目录。")
+            from installer.storage import check_path
+            path = check_path(Path(name), self.data / "backups")
             return path.read_bytes()
 
         if receipt.get("mcp"):

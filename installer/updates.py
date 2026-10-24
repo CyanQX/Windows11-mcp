@@ -203,7 +203,7 @@ def start_update(path: Path, nonce: str):
 def apply_update(path: Path, nonce: str):
     """Runs in the verified *new* EXE; never overwrites a running parent image."""
     row = load_plan(path, nonce)
-    staged, target, backup = (Path(row[k]) for k in ("staged", "target", "backup"))
+    staged, target, backup = (check_path(Path(row[k])) for k in ("staged", "target", "backup"))
     if Path(sys.executable).resolve() != staged.resolve() or file_hash(staged) != row["sha256"]:
         raise ManagerError("UPDATE_HELPER_INVALID", "更新助手身份不一致")
     result_path = path.parent / "result.json"

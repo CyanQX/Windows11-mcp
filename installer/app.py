@@ -15,6 +15,7 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from installer.backend import Configuration, Installer, mcp_entry
+from installer.ui.scenarios import SMOKE_CASES
 
 
 def resources() -> Path:
@@ -124,7 +125,7 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
             if finish_plan:
                 from installer.updates import load_plan
                 row = load_plan(finish_plan, update_nonce)
-                if Path(row["target"]).resolve() != Path(sys.executable).resolve() or row["version"] != window.version:
+                if Path(row["target"]) != Path(sys.executable).absolute() or row["version"] != window.version:
                     raise ManagerError("UPDATE_PLAN_INVALID", "新版程序与更新计划不一致")
 
             if finish_plan or installer_update:
@@ -184,7 +185,7 @@ def main():
     parser.add_argument("--glass-background", choices=["cold", "dark"], default="cold", help=argparse.SUPPRESS)
     parser.add_argument("--ui-smoke-select", nargs="*", default=[])
     parser.add_argument("--ui-smoke-size", nargs=2, type=int)
-    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "selection", "selection-bottom", "selection-all", "selection-clear", "footer-nested", "footer-nested-parked", "footer-minimized", "footer-floating", "footer-floating-parked", "targets-nested-preview", "targets-nested-parked", "targets-nested-restored", "update-available", "processing", "uninstall", "settings", "settings-update", "paths", "report", "approval", "approval-default", "approval-default-automatic", "status", "status-details", "verify", "repair", "appearance", "docking", "dark", "warm", "advanced", "progress", "progress-hidden", "edge-preview", "edge-parked", "edge-right", "edge-bottom", "edge-top", "drop-preview", "resize-redock", "choice-popup", "choice-strength", "backups", "restore-preview", "upgrade-preview", "undo-preview", "undo", "cancel-install"], default="ready")
+    parser.add_argument("--ui-smoke-case", choices=SMOKE_CASES, default="ready")
     parser.add_argument("--ui-smoke-scale", type=float, default=1.0)
     args = parser.parse_args()
     if args.glass_demo:
