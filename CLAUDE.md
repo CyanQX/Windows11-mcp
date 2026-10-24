@@ -5,6 +5,13 @@ Guidance for Claude Code when working in this repository. User-facing documentat
 parameters and environment settings live in `skills/windows-mcp/references/advanced.md`.
 `tests/test_docs.py` checks the catalog, reference settings and internal links.
 
+Update README.md and CHANGELOG.md in the same change whenever user-visible behavior, UI
+controls, authorization, installation or release details change. README text and screenshots
+describe the current main source; clearly identify features awaiting a release. Verify the
+published tag and asset names before changing download links. On release, update the version,
+release status, screenshots and installation examples together. This is part of each change,
+not a separate documentation task.
+
 ## Project
 
 Windows-MCP is a Python MCP server (FastMCP) that operates the real Windows desktop: genuine

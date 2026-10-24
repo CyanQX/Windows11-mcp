@@ -3,15 +3,20 @@
   <p>给编程 AI 接入真实 Windows 桌面操作能力</p>
 </div>
 
+[![Tests](https://github.com/CyanQX/Windows11-mcp/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/CyanQX/Windows11-mcp/actions/workflows/test.yml)
+[![Windows EXE setup](https://github.com/CyanQX/Windows11-mcp/actions/workflows/setup.yml/badge.svg?branch=main)](https://github.com/CyanQX/Windows11-mcp/actions/workflows/setup.yml)
+
 ## 工具用途
+
+文档更新：**2026-10-24**。功能说明与截图跟随 [main 最新源码](https://github.com/CyanQX/Windows11-mcp/tree/main) 同步更新，改动记录见 [CHANGELOG](CHANGELOG.md)。当前公开稳定安装包为 [v1.4.3](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.4.3)；固定布局、全自动授权锁定及五份完整政策已合入 main，尚待后续正式版本打包发布。
 
 Windows-MCP 是面向 Claude Code、Codex、DeepSeek Harness、Gemini CLI、Zcode、Trae 的 Windows 自动化服务。连接后，AI 可以读取窗口和控件，操作真实应用、浏览器与文件，并核对实际结果。
 
 配套的 **Windows 安装与维护管理器**提供浅白背景和直角主面板：自动检测编程端，一次安装 Skill 和 MCP，随后可验证连接、修复、备份、恢复与安全卸载。编程端下拉列表居中显示、可内部滚动，已安装项目以圆点标识且不可重复选择；再次点击入口即可收起。Skill 提供操作说明，MCP 服务提供真正的 31 个工具。Codex 的安装目标为 **Codex 桌面端**，不安装或调用 Codex CLI。
 
-![Windows-MCP 1.4.3 安装与维护页面](assets/manager-v1.4.3.png)
+![main 最新源码的安装与维护固定布局](assets/manager-v1.4.3.png)
 
-界面实拍，图中检测状态为隔离验收示例。
+main 固定布局界面实拍，图中检测状态为隔离验收示例。
 
 本项目基于 [CursorTouch/Windows-MCP](https://github.com/CursorTouch/Windows-MCP) 二次开发，以 [MIT 许可证](LICENSE.md)发布。
 
@@ -21,10 +26,11 @@ Windows-MCP 是面向 Claude Code、Codex、DeepSeek Harness、Gemini CLI、Zcod
 - **语义执行与结果核对**：`Observe → Execute → Verify`，先定位目标，再操作并读回状态；支持真实鼠标键盘输入。
 - **浏览器自动化**：独立 Playwright 浏览器会话，读取页面、填表、操作 iframe 和弹窗。
 - **原生文件与状态监听**：授权目录内的文件操作、多个窗口的事件监听、有界等待和取消。
-- **视觉兜底与权限控制**：自绘界面可按窗口截图定位；受保护操作默认逐次本机审批，也可由操作员在“操作授权”中显式开启可撤销的完全授权。普通权限不能绕过 UAC、锁屏或管理员窗口限制。
+- **视觉兜底与权限控制**：自绘界面可按窗口截图定位；受保护操作默认逐次本机审批，也可由操作员在“设置 → 操作审批”中显式开启可撤销的全自动授权。普通权限不能绕过 UAC、锁屏或管理员窗口限制。
 - **一键接入客户端**：支持 Codex 桌面端、Claude Code、官方 DeepSeek Harness、Gemini CLI、Zcode 和 Trae；Harness 支持检测系统注册的自定义安装位置。已安装项禁用重复安装，卸载目标在独立窗口选择；保留其他 MCP、个人配置与仍被使用的共享服务。
 - **维护与诊断**：真实连接验证、事务备份与回滚、智能修复、脱敏错误报告和自定义安装目录；安装状态与连接结果以清晰的卡片展示。
 - **固定布局界面**：左侧为安装目标，右上为安装与维护，右下为安装操作；面板不能拖拽、换位、浮动或滑入边缘。保留浅白、暖色护眼、深色、跟随系统主题及独立日志背景；视觉强度提供常规与玻璃拟态，点击“完成”后应用。
+- **外观与程序路径设置**：全局主题、日志背景及视觉强度均支持点击展开、再次点击关闭。连接与日志的数字只通过加减按钮调整，不能选中文字；高级设置自动检测已安装程序，也可添加真实文件夹后点击“检测”，未安装时显示提示，保存前不改动配置。
 - **选择与撤销**：可一键全选或清除尚未安装的目标；安装期间可撤销整批操作，完成后也能预览并撤回最近一次安装，保留个人修改和其他接入。
 - **真实任务进度**：手动检测、安装、卸载、验证、修复和更新在日志上方显示 0–100% 单向进度；按真实完成阶段与下载字节计算。成功约 8 秒后淡出并保留占位，失败信息保留，日志布局保持稳定。
 - **可视化审批与全自动**：可在任务开始前进入左上角“设置 → 操作审批”，勾选“全自动”并“保存默认审批”，无需等待首个待审请求。也可以在任务触发的审批窗口中勾选并批准。未启用时逐次审批，启用后鼠标、键盘和网页等 R2 操作持续自动执行，重连后仍生效；勾选框保持选中并锁定，通过审批窗口下方“操作授权… → 撤销授权”恢复逐次审批，该入口也提供 8 小时授权。R3 能力仍需单独开启和逐次审批。
@@ -36,7 +42,7 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 
 ### Windows x64 安装版与便携版
 
-从 [1.4.3 Releases](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.4.3) 选择一种下载。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 选择一种下载，当前为 v1.4.3。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python；每个安装包的具体功能与更新说明见其对应 Release。
 
 | 下载 | 使用方法 | 管理数据位置 |
 |---|---|---|
@@ -52,9 +58,10 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 1. 在左侧选择已检测到、尚未接入的编程端，可多选。**Codex 目标为桌面端**，不安装或调用 Codex CLI。
 2. 点击“安装 Skill + MCP”，核对路径与文件预览后确认。Skill 和客户端配置始终安装到下表的官方用户目录，便携模式也一样。
 3. 安装完成会真实验证服务版本、全部 31 个工具及 Session READY。重启对应客户端或新建会话后使用。
-4. 检查、验证连接、修复使用右侧按钮；卸载从独立窗口进入。窗口左上角是透明无边框的“设置、关于”；设置包含外观、默认审批、备份恢复、安装目录、更新和诊断，菜单图标与文字统一靠左，新版仅在“检查更新”右侧显示红点。安装操作区只保留安装、卸载按钮。安装状态页只展示名称、状态和“详情”，详情内部滚动不带动外层页面；安装目录详情按内容高度展开。工作区为固定布局。高级设置自动检测程序路径，也可添加真实安装文件夹后点击右侧“检测”；找到和未安装的结果分别显示，保存前不改动配置。连接与日志的数字通过加减按钮调整，不能选中文字。
-5. “关于”提供完整的[使用政策](installer/resources/legal/usage.html)、[隐私政策](installer/resources/legal/privacy.html)、[用户协议](installer/resources/legal/agreement.html)、[第三方声明](installer/resources/legal/third-party.html)和[许可使用](installer/resources/legal/license.html)，可离线阅读并打开随包许可原文；维护及隐私联系邮箱为 jingyanx2@gmail.com。政策说明实际数据流与中国大陆适用规则，不缩减 MIT 或第三方开源许可权利。
-5. 发现新版后进入“设置 → 检查更新”，点击“更新安装”。安装版保留原安装位置，下载校验后直接进入更新进度页；便携版校验 ZIP 后替换程序并保留 data。完成后打开新版管理器并更新、验证受管 Skill 与 MCP。自动检查只提示，不会自行下载安装。
+4. 检查、验证连接、修复使用右侧按钮；卸载从独立窗口进入。固定工作区左上角是透明无边框的“设置、关于”，设置包含外观、操作审批、高级设置、备份恢复、安装目录、更新和诊断。安装状态只展示名称、状态和“详情”，详情内部滚动不带动外层页面；安装目录详情按内容高度展开。
+5. 需要指定程序位置时，进入“设置 → 高级设置”。页面自动检测程序路径，也可通过“添加文件夹”选择真实安装目录，再点击右侧“检测”；保存后应用。全自动的提前开启、锁定及撤销方式见上方“可视化审批与全自动”。
+6. “关于”提供完整的[使用政策](installer/resources/legal/usage.html)、[隐私政策](installer/resources/legal/privacy.html)、[用户协议](installer/resources/legal/agreement.html)、[第三方声明](installer/resources/legal/third-party.html)和[许可使用](installer/resources/legal/license.html)，可离线阅读并打开随包许可原文；维护及隐私联系邮箱为 jingyanx2@gmail.com。政策说明实际数据流与中国大陆适用规则，不缩减 MIT 或第三方开源许可权利。
+7. 发现新版后进入“设置 → 检查更新”，点击“更新安装”。安装版保留原安装位置，下载校验后直接进入更新进度页；便携版校验 ZIP 后替换程序并保留 data。完成后打开新版管理器并更新、验证受管 Skill 与 MCP。自动检查只提示，不会自行下载安装。
 
 修改前创建私有备份，失败执行散列校验回滚；保留其他 MCP、JSONC 注释与个人配置。多个客户端共享服务，仍有引用时保留运行时。界面显示最近一次真实验证结果及时间，MCP 由客户端按需启动。普通桌面与已安装 Edge 无需额外下载；其他 Playwright 通道需提供相应浏览器。
 
