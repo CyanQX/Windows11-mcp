@@ -28,7 +28,7 @@ import comtypes.client
 
 _LOCK_PATH: str = os.path.join(
     tempfile.gettempdir(),
-    "comtypes-gen-%s.lock" % hashlib.md5(sys.prefix.encode("utf-8")).hexdigest(),
+    "comtypes-gen-%s.lock" % hashlib.md5(sys.prefix.encode("utf-8"), usedforsecurity=False).hexdigest(),
 )
 
 # msvcrt.locking(LK_LOCK) retries for ~10s and then raises OSError with one of

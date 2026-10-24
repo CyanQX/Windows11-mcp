@@ -23,6 +23,7 @@ from installer.ui.task_strip import TaskStrip
 
 class MainWindow(QMainWindow):
     release_checked = Signal(object)
+    approvals_changed = Signal(int)
 
     def __init__(self, base, settings, executable, *, service=None, approval_store=None, wake_path=None, auto_scan=True):
         super().__init__()
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         self.service = service
         self.approval_store, self.wake_path = approval_store, wake_path
         self.operator_window, self.known_requests, self.dialogs = None, set(), []
+        self.pending_approvals = 0
         self.update_release = None
         self.install_cancel = None
         self.task_progress = TaskProgress()
@@ -48,9 +50,12 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         layout = column(root, 0, 0)
-        self.approval_button = button("操作审批", self.open_operator, icon="shield", compact=True)
-        from installer.ui.settings_dialog import SettingsHub
+        from installer.ui.settings_dialog import About, SettingsHub
         self.settings_button = button("设置", lambda: SettingsHub(self), icon="settings", compact=True)
+        self.about_button = button("关于", lambda: About(self), icon="info", compact=True)
+        self.top_bar = row(self.settings_button, self.about_button, None)
+        self.top_bar.layout().setContentsMargins(12, 6, 12, 2)
+        layout.addWidget(self.top_bar)
         self.workspace = Workspace(self)
         layout.addWidget(self.workspace, 1)
 
@@ -87,9 +92,9 @@ class MainWindow(QMainWindow):
         footer_body.setContentsMargins(16, 20, 16, 20)
         self.install_button = button("安装 Skill + MCP", self.install, primary=True)
         self.uninstall_button = button("卸载 Skill + MCP", lambda: Targets(self, "uninstall"))
-        footer_row = row(self.settings_button, self.approval_button, None, self.uninstall_button, self.install_button)
+        footer_row = row(None, self.uninstall_button, self.install_button)
         footer_row.layout().setSpacing(4)
-        for control in (self.settings_button, self.approval_button, self.uninstall_button, self.install_button):
+        for control in (self.uninstall_button, self.install_button):
             control.ensurePolished()
         # The stylesheet's compact button metrics must not let a restored dock
         # compress this toolbar below its complete, usable control height.
@@ -355,6 +360,8 @@ class MainWindow(QMainWindow):
             return
         from installer.ui.operator_dialog import OperatorCenter
         if self.operator_window and self.operator_window.isVisible():
+            if request_id is None:
+                self.operator_window.enable_defaults()
             self.operator_window.request_id = request_id or self.operator_window.request_id
             self.operator_window.refresh()
             self.operator_window.raise_()
@@ -379,7 +386,9 @@ class MainWindow(QMainWindow):
                 if new:
                     self.open_operator(next(iter(new)))
                 self.known_requests = pending
-                self.approval_button.setText(f"操作审批 ({len(pending)})" if pending else "操作审批")
+                if self.pending_approvals != len(pending):
+                    self.pending_approvals = len(pending)
+                    self.approvals_changed.emit(self.pending_approvals)
         except (OSError, ValueError, KeyError):
             pass
 

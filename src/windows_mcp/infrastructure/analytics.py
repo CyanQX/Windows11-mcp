@@ -131,7 +131,7 @@ class PostHogAnalytics:
                 event="exception",
                 properties={
                     "exception": str(error),
-                    "traceback": str(error) if not hasattr(error, "__traceback__") else str(error),
+                    "traceback": str(error),
                     "session_id": self.mcp_interaction_id,
                     "process_person_profile": True,
                     **context,

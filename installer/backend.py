@@ -29,7 +29,7 @@ class Profile:
     kind: str
 
 
-def profiles(home: Path, env: dict | None = None) -> list[Profile]:
+def profiles(home: Path, env: dict | None = None, *, include_legacy: bool = False) -> list[Profile]:
     env = os.environ if env is None else env
 
     def root(variable: str, fallback: Path) -> Path:
@@ -43,13 +43,24 @@ def profiles(home: Path, env: dict | None = None) -> list[Profile]:
     opencode_config = root("OPENCODE_CONFIG", opencode / "opencode.json")
     if not env.get("OPENCODE_CONFIG") and (opencode / "opencode.jsonc").exists():
         opencode_config = opencode / "opencode.jsonc"
-    return [
+    roaming = home / "AppData" / "Roaming"
+    trae_locations = [(roaming / app / "User" / "mcp.json", home / directory / "skills")
+                      for app, directory in (("Trae CN", ".trae-cn"), ("TRAE SOLO CN", ".trae-cn"),
+                                             ("Trae", ".trae"), ("TRAE SOLO", ".trae"))]
+    trae_locations += [(home / directory / "mcp.json", home / directory / "skills")
+                       for directory in (".trae-cn", ".trae")]
+    default_trae = next((item for item in trae_locations[:4] if item[0].parent.is_dir()), trae_locations[0])
+    trae_config, trae_skills = next((item for item in trae_locations if item[0].is_file()), default_trae)
+    result = [
         Profile("claude", "Claude Code", claude / "skills", home / ".claude.json", "json"),
         Profile("codex", "Codex", home / ".agents" / "skills", codex / "config.toml", "toml"),
         Profile("deepseek", "DeepSeek Harness", dsh / "skills", dsh / "cordis.patch.yml", "yaml"),
         Profile("opencode", "OpenCode", opencode / "skills", opencode_config, "opencode"),
         Profile("gemini", "Gemini CLI", home / ".gemini" / "skills", home / ".gemini" / "settings.json", "json"),
+        Profile("zcode", "Zcode", home / ".zcode" / "skills", home / ".zcode" / "cli" / "config.json", "zcode"),
+        Profile("trae", "Trae", trae_skills, trae_config, "json"),
     ]
+    return [profile for profile in result if include_legacy or profile.id != "opencode"]
 
 
 def digest(content: bytes) -> str:
@@ -57,6 +68,8 @@ def digest(content: bytes) -> str:
 
 
 def atomic_write(path: Path, content: bytes) -> None:
+    from installer.storage import check_path
+    path = check_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".windows-mcp-", delete=False) as stream:
         temporary = Path(stream.name)
@@ -94,9 +107,12 @@ class Configuration:
                     raise ValueError("Client configuration must be an object")
             if profile.kind != "yaml":
                 section = "mcp_servers" if profile.kind == "toml" else "mcp" if profile.kind == "opencode" else "mcpServers"
-                existing = self.document.get(section, {})
-                if not isinstance(existing, dict):
-                    raise ValueError("MCP section must be an object")
+                self.section_path = ["mcp", "servers"] if profile.kind == "zcode" else [section]
+                existing = self.document
+                for key in self.section_path:
+                    existing = existing.get(key, {})
+                    if not isinstance(existing, dict):
+                        raise ValueError("MCP section must be an object")
                 self.section = section
                 if SERVER in existing and not isinstance(existing[SERVER], dict):
                     raise ValueError("Windows-MCP entry must be an object")
@@ -105,7 +121,10 @@ class Configuration:
 
     def get(self):
         if self.profile.kind != "yaml":
-            return self.document.get(self.section, {}).get(SERVER)
+            section = self.document
+            for key in self.section_path:
+                section = section.get(key, {})
+            return section.get(SERVER)
         matches = [row for patch in self.document if isinstance(patch, dict) for row in patch.get("insert", []) if isinstance(row, dict) and (row.get("id") == ROW or (row.get("name") == "@deepseek-ai/dsh-mcp-client" and row.get("config", {}).get("serverName") == SERVER))]
         if len(matches) > 1:
             raise ValueError("Harness 中有多个 Windows-MCP 配置，请先合并重复项。")
@@ -113,12 +132,17 @@ class Configuration:
 
     def set(self, value) -> None:
         if self.profile.kind != "yaml":
+            section = self.document
+            for key in self.section_path:
+                if key not in section:
+                    if value is None:
+                        return
+                    section[key] = {}
+                section = section[key]
             if value is None:
-                self.document.get(self.section, {}).pop(SERVER, None)
+                section.pop(SERVER, None)
             else:
-                if self.section not in self.document:
-                    self.document[self.section] = {}
-                self.document[self.section][SERVER] = value
+                section[SERVER] = value
             return
         old = self.get()
         for patch in self.document:
@@ -144,7 +168,7 @@ class Configuration:
             return stream.getvalue().encode("utf-8")
         from installer.jsonpatch import patch_member
 
-        text = patch_member(self.original_text, [self.section, SERVER], self.get())
+        text = patch_member(self.original_text, [*self.section_path, SERVER], self.get())
         if json5.loads(text, allow_duplicate_keys=False) != self.document:
             raise ValueError("配置保真校验失败，原文件未修改")
         return (("\ufeff" if self.had_bom else "") + text).encode("utf-8")
@@ -160,6 +184,10 @@ def mcp_entry(profile: Profile, executable: Path) -> dict:
     if profile.kind == "yaml":
         return {"id": ROW, "name": "@deepseek-ai/dsh-mcp-client", "config": {"serverName": SERVER, "transport": "stdio", "command": command, "args": ["--serve"], "env": env, "cwd": str(executable.parent), "toolCallTimeoutMs": 60000, "failOnStartupError": False}}
     entry = {"command": command, "args": ["--serve"], "env": env}
+    if profile.id == "zcode":
+        entry.update(type="stdio", enable=True)
+    if profile.id == "trae":
+        entry["env"].update(START_MCP_TIMEOUT_MS="90000", RUN_MCP_TIMEOUT_MS="60000")
     if profile.id == "claude":
         entry["type"] = "stdio"
     return entry
@@ -172,7 +200,10 @@ class Installer:
         self.skill = skill
         self.source_executable = executable.absolute()
         self.executable = self.data / "Windows-MCP.exe"
-        self.clients = {profile.id: profile for profile in profiles(self.home, env)}
+        # Existing OpenCode receipts remain maintainable; it is no longer offered
+        # as a new installation target.
+        self.clients = {profile.id: profile for profile in profiles(self.home, env, include_legacy=True)
+                        if profile.id != "opencode" or (self.data / "receipts/opencode.json").is_file()}
         self.on_write = None
         self.emit = None
         self.version = None

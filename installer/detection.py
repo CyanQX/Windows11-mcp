@@ -41,6 +41,8 @@ LAUNCHERS = {
     "deepseek": ("deepseek harness.exe", "deepseek-harness.exe", "deepseekharness.exe", "dsh.exe", "dsh.cmd", "dsh.bat"),
     "opencode": ("opencode.exe", "opencode.cmd", "opencode.bat"),
     "gemini": ("gemini.exe", "gemini.cmd", "gemini.bat"),
+    "zcode": ("zcode.exe", "zcode.cmd", "zcode.bat"),
+    "trae": ("trae.exe", "trae cn.exe", "trae solo.exe", "trae solo cn.exe", "trae.cmd", "trae.bat"),
 }
 
 
@@ -165,11 +167,20 @@ class ClientDiscovery:
                 if path.is_file() and is_desktop_executable(path):
                     return Presence.DETECTED, str(path)
             return Presence.NOT_FOUND, None
-        names = {"claude": ("claude",), "deepseek": ("dsh", "deepseek-harness"), "opencode": ("opencode",), "gemini": ("gemini",)}
+        names = {"claude": ("claude",), "deepseek": ("dsh", "deepseek-harness"), "opencode": ("opencode",), "gemini": ("gemini",), "zcode": ("zcode",), "trae": ("trae", "trae-cn")}
         for name in names[profile.id]:
             path = shutil.which(name)
             if path:
                 return Presence.DETECTED, path
+        if profile.id in {"zcode", "trae"}:
+            folders = ("ZCode", "Zcode", "zcode") if profile.id == "zcode" else ("Trae", "Trae CN", "TRAE SOLO", "TRAE SOLO CN")
+            for folder in folders:
+                for root in (self.home / "AppData/Local/Programs" / folder, self.home / "AppData/Local" / folder):
+                    if root.is_dir():
+                        try:
+                            return Presence.DETECTED, str(find_client_in_folder(root, profile.id))
+                        except ManagerError:
+                            continue
         if profile.id == "deepseek":
             for path in self.registered_harness():
                 if path.is_file() and is_desktop_executable(path):

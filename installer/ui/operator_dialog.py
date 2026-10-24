@@ -17,17 +17,36 @@ class OperatorCenter(Detail):
     def __init__(self, owner, store, request_id=None):
         super().__init__(owner, "本机操作审批", (850, 680), show=False)
         self.store, self.request_id, self.rows = store, request_id, {}
+        self.trust = TrustStore(store.directory)
+        self.defaults_enabled = request_id is None
+        self._trust_active = self.trust.allows()
+        self.body.addWidget(label("默认审批方式", size=14, bold=True))
+        self.auto_approve = QCheckBox("全自动（一次授权，后续操作不再逐次审批）")
+        self.auto_approve.setChecked(self._trust_active)
+        self.body.addWidget(self.auto_approve)
+        self.trust_hint = label("", role="secondary", wrap=True)
+        self.body.addWidget(self.trust_hint)
+        self.body.addWidget(label(
+            "可在任务开始前勾选并保存全自动，后续鼠标、键盘和网页操作无需逐次审批。"
+            "不勾选则使用逐次审批。命令执行等高级权限仍按服务设置单独审批。",
+            role="secondary", wrap=True))
+        self.default_notice = label("", role="warning", wrap=True)
+        self.default_notice.hide()
+        self.body.addWidget(self.default_notice)
+        self.save_default_button = button("保存默认审批", self.save_defaults, primary=True)
+        self.defaults_row = row(self.save_default_button, None, button("关闭", self.close))
+        self.body.addWidget(self.defaults_row)
+        self.defaults_row.setVisible(self.defaults_enabled)
         self.selector = QComboBox()
         self.body.addWidget(self.selector)
         self.details = text_box(self.body, "正在读取待审请求…")
         self.expiry = label("", role="warning")
         self.body.addWidget(self.expiry)
-        self.trust_hint = label("", role="secondary", wrap=True)
-        self.body.addWidget(self.trust_hint)
         self.reject_button = button("拒绝本次操作", lambda: self.decide(False))
         self.approve_button = button("批准一次", lambda: self.decide(True), primary=True)
         trust_button = button("操作授权…", lambda: TrustCenter(self.owner), icon="shield")
         self.body.addWidget(row(self.reject_button, trust_button, None, self.approve_button))
+        self.auto_approve.toggled.connect(self.update_approval_mode)
         self.selector.currentIndexChanged.connect(self.select)
         self.refresh()
         from windows_mcp.infrastructure.operator_ui import mark_operator_window
@@ -55,14 +74,44 @@ class OperatorCenter(Detail):
         self.selector.blockSignals(False)
         self.render()
         try:
-            trust = TrustStore(self.store.directory).status()
+            trust = self.trust.status()
         except (OSError, ValueError):
             trust = None
+        active = trust is not None
+        if active != self._trust_active:
+            self._trust_active = active
+            self.auto_approve.setChecked(active)
         if trust is None:
-            self.trust_hint.setText("当前每次操作都需要批准一次；可在「操作授权」中由你本人开启完全授权。")
+            self.trust_hint.setText("当前为逐次审批；可提前保存全自动，也可在本次审批时勾选并批准。")
         else:
             until = "永久有效" if trust.get("expires_at") is None else "至 " + datetime.fromtimestamp(trust["expires_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
             self.trust_hint.setText(f"已开启完全授权（{until}）：鼠标、键盘等操作不再逐次询问，可随时撤销。")
+
+    def enable_defaults(self):
+        self.defaults_enabled = True
+        self.defaults_row.show()
+
+    def save_defaults(self):
+        if not self.defaults_enabled:
+            return
+        automatic = self.auto_approve.isChecked()
+        message = ("保存默认全自动？\n\n后续鼠标、键盘和网页操作将直接执行，无需等待首个审批请求。\n"
+                   "授权永久有效，直到手动关闭。") if automatic else "保存默认逐次审批？后续受保护操作将逐次询问。"
+        answer = QMessageBox.question(self, "保存默认审批方式", message,
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                      QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if automatic:
+                self.trust.grant("forever", operator="approval-settings")
+            else:
+                self.trust.revoke()
+            # Closing the human review sheet releases the desktop-input pause.
+            self.close()
+        except (OSError, ValueError) as exc:
+            self.default_notice.setText(f"默认审批未保存：{exc}")
+            self.default_notice.show()
 
     def select(self, index):
         self.request_id = self.selector.itemData(index)
@@ -73,7 +122,7 @@ class OperatorCenter(Detail):
         active = bool(record and not record["approved"] and record["expires_at"] > time.time())
         self.approve_button.setEnabled(active)
         self.reject_button.setEnabled(active)
-        text = "请求已失效" if self.request_id else "暂无待审请求"
+        text = "请求已失效" if self.request_id else "暂无待审请求。\n可在上方提前保存默认审批方式，然后开始自动化任务。"
         if record:
             try:
                 arguments = self.store.operator_arguments(self.request_id)
@@ -85,6 +134,13 @@ class OperatorCenter(Detail):
                 self.approve_button.setEnabled(False)
         self.details.setPlainText(text)
         self.expiry.setText(f"剩余 {max(0, int(record['expires_at'] - time.time()))} 秒" if record else "")
+        self.auto_approve.setEnabled(self.defaults_enabled or (self.approve_button.isEnabled() and record["risk"] == 2))
+        self.update_approval_mode()
+
+    def update_approval_mode(self, *_):
+        record = self.rows.get(self.request_id)
+        automatic = bool(record and record["risk"] == 2 and self.auto_approve.isChecked())
+        self.approve_button.setText("批准并开启全自动" if automatic else "批准一次")
 
     def decide(self, approve):
         try:
@@ -94,11 +150,26 @@ class OperatorCenter(Detail):
                 return
             if approve and self.store.operator_arguments(self.request_id) is None:
                 return
-            answer = QMessageBox.question(self, "确认本次决定", f"{'批准一次' if approve else '拒绝'} {record['tool']} 请求 {self.request_id[:10]}？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            automatic = approve and record["risk"] == 2 and self.auto_approve.isChecked()
+            if automatic:
+                title = "确认开启全自动"
+                message = (f"批准 {record['tool']} 并开启全自动？\n\n"
+                           "后续鼠标、键盘和网页操作将持续自动执行，不再逐次询问。\n"
+                           "授权永久有效，直到你在「操作授权」中撤销。")
+            else:
+                title = "确认本次决定"
+                message = f"{'批准一次' if approve else '拒绝'} {record['tool']} 请求 {self.request_id[:10]}？"
+                if approve and record["risk"] == 2 and self.trust.allows():
+                    message += "\n将关闭全自动，恢复后续操作逐次审批。"
+            answer = QMessageBox.question(self, title, message, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 return
             if approve:
+                if record["risk"] == 2 and not automatic:
+                    self.trust.revoke()
                 self.store.approve(self.request_id)
+                if automatic:
+                    self.trust.grant("forever", operator="approval-ui")
             else:
                 self.store.reject(self.request_id)
             self.close()

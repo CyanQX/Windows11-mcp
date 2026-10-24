@@ -97,7 +97,7 @@ class SettingsService:
             if target:
                 self.scoped_directory(Path(target).parent if name == "OPENCODE_CONFIG" else Path(target))
         executables = value.get("client_executables", {})
-        if not isinstance(executables, dict) or set(executables) - {"codex", "claude", "deepseek", "opencode", "gemini"}:
+        if not isinstance(executables, dict) or set(executables) - {"codex", "claude", "deepseek", "opencode", "gemini", "zcode", "trae"}:
             raise ManagerError("INVALID_CLIENT", "客户端路径设置无效")
         for target in executables.values():
             if target:

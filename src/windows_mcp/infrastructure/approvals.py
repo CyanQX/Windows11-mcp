@@ -11,6 +11,7 @@ import base64
 import hmac
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -91,7 +92,7 @@ class ApprovalStore:
         return authority_key(self.directory)
 
     def _path(self, request_id: str) -> Path:
-        if len(request_id) != 32 or any(ch not in "0123456789abcdef" for ch in request_id):
+        if not re.fullmatch(r"[a-f0-9]{32}", request_id):
             raise ValueError("Invalid approval request id")
         return self.directory / f"{request_id}.json"
 

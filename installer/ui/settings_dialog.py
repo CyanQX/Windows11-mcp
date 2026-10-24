@@ -23,6 +23,7 @@ from installer.updates import UpdateService, start_update
 class SettingsHub(QDialog):
     def __init__(self, owner):
         super().__init__(owner, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.owner = owner
         self.setWindowTitle("设置")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -30,30 +31,40 @@ class SettingsHub(QDialog):
         column(self, 5, 0).addWidget(frame)
         body = column(frame, 12, 4)
         body.addWidget(label("设置", size=14, bold=True))
-        actions = [("外观", "settings", lambda: Appearance(owner)), ("高级设置", "settings", lambda: Preferences(owner)), ("操作授权", "shield", self.trust), ("配置与恢复", "restore", lambda: Backups(owner)), ("安装目录", "folder", lambda: Preferences(owner, paths=True)), ("检查更新", "update", lambda: Updates(owner)), ("日志与诊断", "document", lambda: Diagnostics(owner)), ("关于", "info", lambda: About(owner))]
+        actions = [("外观", "settings", lambda: Appearance(owner)), ("高级设置", "settings", lambda: Preferences(owner)), ("操作审批", "shield", owner.open_operator), ("操作授权", "shield", self.trust), ("配置与恢复", "restore", lambda: Backups(owner)), ("安装目录", "folder", lambda: Preferences(owner, paths=True)), ("检查更新", "update", lambda: Updates(owner)), ("日志与诊断", "document", lambda: Diagnostics(owner))]
         self.names = []
+        self.controls = {}
         for name, icon, action in actions:
             self.names.append(name)
             control = button(name, lambda invoke=action: (self.close(), invoke()), icon=icon, compact=True)
-            control.setMinimumWidth(210)
+            control.setMinimumWidth(240)
+            control.setContentAlignment(Qt.AlignmentFlag.AlignLeft)
+            self.controls[name] = control
+            body.addWidget(control)
             if name == "检查更新":
-                self.update_badge = label("new", role="error", bold=True)
-                self.update_badge.setVisible(bool(owner.update_release and owner.update_release["available"]))
-                body.addWidget(row(control, self.update_badge))
                 owner.release_checked.connect(self.release_hint)
-            else:
-                body.addWidget(control)
+        self.release_hint(owner.update_release)
+        self.approval_hint(owner.pending_approvals)
+        owner.approvals_changed.connect(self.approval_hint)
         self.adjustSize()
         bounds = owner.screen().availableGeometry()
-        point = owner.settings_button.mapToGlobal(QPoint(owner.settings_button.width() - self.width(), owner.settings_button.height() + 5))
+        point = owner.settings_button.mapToGlobal(QPoint(0, owner.settings_button.height() + 5))
         self.move(max(bounds.left(), min(point.x(), bounds.right() - self.width())), max(bounds.top(), min(point.y(), bounds.bottom() - self.height())))
         owner.dialogs.append(self)
         self.finished.connect(lambda _: owner.dialogs.remove(self) if self in owner.dialogs else None)
         self.show()
 
     def release_hint(self, release):
-        self.update_badge.setVisible(bool(release and release.get("available")))
-        self.adjustSize()
+        control = self.controls["检查更新"]
+        available = bool(release and release.get("available"))
+        control.setNotificationDot(available)
+        control.setAccessibleDescription("有新版本可用" if available else "")
+
+    def approval_hint(self, count):
+        control = self.controls["操作审批"]
+        control.setEnabled(self.owner.approval_store is not None)
+        control.setNotificationDot(count > 0)
+        control.setAccessibleDescription(f"{count} 个待审操作" if count else "可提前设置默认审批方式")
 
     def trust(self):
         from installer.ui.operator_dialog import TrustCenter
@@ -71,7 +82,7 @@ class Appearance(Detail):
         group = column(card, 20, 16)
         body.addWidget(card)
         self.controls = {}
-        for key, title, values in (("theme", "全局主题", [("浅蓝玻璃", "light"), ("暖色护眼", "warm"), ("深色", "dark"), ("跟随系统", "system")]), ("log_background", "日志背景", [("浅蓝", "blue"), ("暖色", "warm"), ("深色", "dark"), ("自定义颜色", "custom")])):
+        for key, title, values in (("theme", "全局主题", [("浅白玻璃", "light"), ("暖色护眼", "warm"), ("深色", "dark"), ("跟随系统", "system")]), ("log_background", "日志背景", [("浅白", "blue"), ("暖色", "warm"), ("深色", "dark"), ("自定义颜色", "custom")])):
             choice = QComboBox()
             for text, value in values:
                 choice.addItem(text, value)

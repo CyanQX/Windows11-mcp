@@ -2,18 +2,20 @@
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 
 def check(output: Path):
     from installer.diagnostics import EventLog
     from installer.settings import SettingsService
-    from installer.storage import Journal, file_hash
+    from installer.storage import Journal, file_hash, check_path
     from windows_mcp.infrastructure.config import CONFIG_DIR
     from windows_mcp.infrastructure.policy import PolicyBlocked, PolicyGate
     from windows_mcp.infrastructure.runtime_paths import portable_data_directory
 
     data = portable_data_directory()
+    output = check_path(output, Path(tempfile.gettempdir()))
     assert data is not None, "Extract the complete portable ZIP first"
     settings = SettingsService(Path.home())
     assert settings.path == data / "config/manager.json" and CONFIG_DIR == data / "config"

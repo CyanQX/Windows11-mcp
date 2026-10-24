@@ -88,6 +88,30 @@ async def test_legacy_filesystem_uses_the_same_gate(secured):
     assert path.read_text() == "updated"
 
 
+async def test_trusted_tools_run_repeatedly_without_requesting_human_approval(secured, monkeypatch):
+    runtime, mcp, workspace = secured
+    path = workspace / "automatic.txt"
+    path.write_text("original")
+    arguments = {"operation": "write", "path": str(path), "content": "first", "overwrite": True}
+
+    def unexpected_review(*args):
+        pytest.fail("Active automatic authorization must not open human review")
+
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.notify_operator", unexpected_review)
+    runtime.policy.trust.grant("forever", operator="approval-ui")
+    assert (await mcp.tools["Session"]())["trust_mode"] == "forever"
+    result = await mcp.tools["RequestApproval"](tool="NativeAPI", arguments=arguments, description="automatic fixture")
+    assert result["status"] == "TRUSTED" and result["approval_required"] is False
+    for content in ("first", "second"):
+        assert (await mcp.tools["NativeAPI"](**{**arguments, "content": content}))["status"] == "VERIFIED"
+        assert path.read_text() == content
+    assert runtime.policy.approvals.pending() == []
+    runtime.policy.trust.revoke()
+    assert (await mcp.tools["Session"]())["trust_mode"] is None
+    with pytest.raises(PolicyBlocked):
+        await mcp.tools["NativeAPI"](**arguments)
+
+
 @pytest.mark.parametrize("tool", ["FileSystem", "NativeAPI", "Verify"])
 async def test_scope_escape_is_blocked_for_reads_and_verification(secured, tool):
     _, mcp, workspace = secured

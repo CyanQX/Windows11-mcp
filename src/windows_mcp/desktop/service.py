@@ -31,7 +31,7 @@ import win32gui
 import win32con
 import requests
 import logging
-import random
+import secrets
 import ctypes
 import csv
 import os
@@ -286,7 +286,7 @@ class Desktop:
                 scale = min(scale, scale_width, scale_height)
 
             applied_scale = scale
-            if scale != 1.0:
+            if not math.isclose(scale, 1.0, rel_tol=0.0, abs_tol=1e-12):
                 screenshot = screenshot.resize(
                     (int(screenshot.width * scale), int(screenshot.height * scale)),
                     Image.LANCZOS,
@@ -1297,7 +1297,7 @@ class Desktop:
             font = ImageFont.load_default()
 
         def get_random_color():
-            return "#{:06x}".format(random.randint(0, 0xFFFFFF))
+            return "#" + secrets.token_hex(3)
 
         def clamp(value: float, minimum: float, maximum: float) -> float:
             return max(minimum, min(value, maximum))

@@ -24,7 +24,7 @@ def backend(tmp_path):
     return Installer(tmp_path / "home", tmp_path / "app", skill, executable, {})
 
 
-@pytest.mark.parametrize("client", ["claude", "codex", "deepseek", "opencode", "gemini"])
+@pytest.mark.parametrize("client", ["claude", "codex", "deepseek", "gemini", "zcode", "trae"])
 def test_installs_real_skill_and_correct_client_entry_then_uninstalls(backend, client):
     profile = backend.clients[client]
     backend.install(profile)
@@ -41,9 +41,11 @@ def test_installs_real_skill_and_correct_client_entry_then_uninstalls(backend, c
     ("codex", '# preserve comment\nmodel = "keep-model"\n[mcp_servers.other]\ncommand = "keep"\n[mcp_servers.windows-mcp]\ncommand = "old"\n'),
     ("deepseek", '- insert:\n    - id: other\n      name: other-plugin\n      config:\n        cwd: !!js process.cwd()\n'),
     ("opencode", '{// a JSONC comment\n"model":"keep-model", "mcp":{"other":{"type":"local","command":["keep"]}}}'),
+    ("zcode", '{// keep comment\n"model":"keep-model", "mcp":{"servers":{"other":{"command":"keep"}},"personal":true}}'),
+    ("trae", '{"model":"keep-model","mcpServers":{"other":{"command":"keep"}}}'),
 ])
 def test_preserves_existing_settings_and_restores_previous_windows_mcp_entry(backend, client, initial):
-    profile = backend.clients[client]
+    profile = next(profile for profile in profiles(backend.home, {}, include_legacy=True) if profile.id == client)
     profile.config.parent.mkdir(parents=True)
     profile.config.write_text(initial, encoding="utf-8")
     before = Configuration(profile, initial.encode())
@@ -62,6 +64,13 @@ def test_preserves_existing_settings_and_restores_previous_windows_mcp_entry(bac
         assert "!!js" in profile.config.read_text()
     elif client == "claude":
         assert after.document["apiKeyHelper"] == "keep-command"
+        assert after.document["mcpServers"]["other"]["command"] == "keep"
+    elif client == "zcode":
+        assert after.document["mcp"]["servers"]["other"]["command"] == "keep"
+        assert after.document["mcp"]["personal"] is True
+        assert "// keep comment" in profile.config.read_text()
+    elif client == "trae":
+        assert after.document["model"] == "keep-model"
         assert after.document["mcpServers"]["other"]["command"] == "keep"
     else:
         assert after.document["model"] == "keep-model"
@@ -99,6 +108,30 @@ def test_environment_overrides_match_official_user_scopes(tmp_path):
     assert clients["codex"].skill_root == tmp_path / ".agents" / "skills"
     assert clients["deepseek"].skill_root == tmp_path / "custom-dsh" / "skills"
     assert clients["deepseek"].config == tmp_path / "custom-dsh" / "cordis.patch.yml"
+
+
+def test_new_client_profiles_and_trae_existing_region_config(tmp_path):
+    clients = {p.id: p for p in profiles(tmp_path, {})}
+    assert set(clients) == {"claude", "codex", "deepseek", "gemini", "zcode", "trae"}
+    assert clients["zcode"].config == tmp_path / ".zcode/cli/config.json"
+    assert clients["zcode"].skill_root == tmp_path / ".zcode/skills"
+    international = tmp_path / "AppData/Roaming/Trae/User/mcp.json"
+    international.parent.mkdir(parents=True)
+    empty_trae = next(profile for profile in profiles(tmp_path, {}) if profile.id == "trae")
+    assert empty_trae.config == international
+    international.write_text('{"mcpServers":{"personal":{"command":"keep"}}}')
+    trae = next(profile for profile in profiles(tmp_path, {}) if profile.id == "trae")
+    assert trae.config == international
+    assert trae.skill_root == tmp_path / ".trae/skills"
+
+
+def test_existing_opencode_receipt_is_still_maintainable_without_offering_new_installs(backend):
+    assert "opencode" not in backend.clients
+    profile = next(item for item in profiles(backend.home, {}, include_legacy=True) if item.id == "opencode")
+    backend.install(profile)
+    reloaded = Installer(backend.home, backend.data, backend.skill, backend.source_executable, {})
+    assert reloaded.uninstall(reloaded.clients["opencode"])["retained"] == []
+    assert "opencode" not in Installer(backend.home, backend.data, backend.skill, backend.source_executable, {}).clients
 
 
 def test_skill_only_does_not_touch_or_validate_unrelated_mcp_settings(backend):

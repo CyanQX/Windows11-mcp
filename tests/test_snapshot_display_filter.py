@@ -349,7 +349,7 @@ class TestDisplayFiltering:
         )
 
         with patch.object(desktop, "get_screenshot", return_value=screenshot):
-            with patch("windows_mcp.desktop.service.random.randint", return_value=0):
+            with patch("windows_mcp.desktop.service.secrets.token_hex", return_value="000000"):
                 annotated = desktop.get_annotated_screenshot(
                     nodes=[node],
                     capture_rect=Rect(1920, 0, 3840, 1080),
@@ -380,7 +380,7 @@ class TestDisplayFiltering:
 
         with patch.object(desktop, "get_screenshot", return_value=screenshot):
             with patch("windows_mcp.desktop.service.uia.GetVirtualScreenRect") as mock_virtual_rect:
-                with patch("windows_mcp.desktop.service.random.randint", return_value=0):
+                with patch("windows_mcp.desktop.service.secrets.token_hex", return_value="000000"):
                     mock_virtual_rect.return_value = (0, 0, 40, 30)
                     annotated = desktop.get_annotated_screenshot(nodes=[node])
 

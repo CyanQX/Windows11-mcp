@@ -172,7 +172,7 @@ class UpdateService:
 
 
 def load_plan(path: Path, nonce: str):
-    check_path(path)
+    path = check_path(path)
     row = json.loads(path.read_text(encoding="utf-8"))
     if row.get("nonce") != nonce or not re.fullmatch(r"[a-f0-9]{32}", nonce) or not 0 <= time.time() - row["created"] < 3600:
         raise ManagerError("UPDATE_PLAN_INVALID", "更新计划无效或已过期")
@@ -181,7 +181,11 @@ def load_plan(path: Path, nonce: str):
     if path.parent != Path(row["staged"]).parent or Path(row["backup"]) != path.parent / "previous.exe":
         raise ManagerError("UPDATE_PLAN_INVALID", "更新暂存路径不一致")
     for key in ("staged", "backup", "target"):
-        check_path(Path(row[key]))
+        row[key] = str(check_path(Path(row[key])))
+    if Path(row["staged"]) != path.parent / "next.exe" or Path(row["target"]).suffix.casefold() != ".exe":
+        raise ManagerError("UPDATE_PLAN_INVALID", "更新程序名称或目标类型无效")
+    if Path(row["target"]).is_relative_to(root):
+        raise ManagerError("UPDATE_PLAN_INVALID", "更新目标不能位于更新缓存中")
     return row
 
 

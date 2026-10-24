@@ -16,6 +16,7 @@ from windows_mcp.infrastructure.local_storage import private_directory, FileLock
 
 
 def file_hash(path: Path) -> str | None:
+    path = check_path(path)
     if not path.exists():
         return None
     if not path.is_file():

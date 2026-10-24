@@ -119,6 +119,24 @@ def test_update_helper_failed_launch_rolls_back_without_killing(tmp_path, monkey
     assert len(launched) == 2
 
 
+@pytest.mark.parametrize("change", ["staged", "target"])
+def test_update_plan_rejects_alternate_program_or_cache_target(tmp_path, change):
+    from installer.updates import load_plan
+    content = b"MZ" + b"x" * 2048
+    service = UpdateService(tmp_path, "1.2.1", Session(Response(release(content)), Response(content=content)))
+    metadata = service.check()
+    staged = service.download(metadata)
+    current = tmp_path / "current.exe"
+    current.write_bytes(b"MZ previous")
+    path, nonce = service.prepare(staged, metadata, current)
+    row = json.loads(path.read_text())
+    row[change] = str(path.parent / ("other.exe" if change == "staged" else "target.exe"))
+    path.write_text(json.dumps(row))
+    with pytest.raises(ManagerError, match="UPDATE_PLAN_INVALID"):
+        load_plan(path, nonce)
+    assert current.read_bytes() == b"MZ previous"
+
+
 def test_shared_runtime_requires_explicit_global_upgrade(tmp_path):
     service = make_service(tmp_path)
     assert service.install_targets(["codex", "claude"])[0]["ok"]

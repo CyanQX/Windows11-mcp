@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -21,10 +22,14 @@ def portable_name(version):
 
 
 def portable_root(version):
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[a-zA-Z0-9.+-]*)", version):
+        raise ValueError("Invalid portable version")
     return f"Windows-MCP-Portable-v{version}-x64"
 
 
 def verify_portable(path: Path, version: str) -> dict:
+    from installer.storage import check_path
+    path = check_path(path)
     root = portable_root(version)
     required = {f"{root}/{name}" for name in ("Windows-MCP.exe", PORTABLE_MARKER, "README.txt", "LICENSE.txt", "THIRD-PARTY-LICENSES.txt")}
     with zipfile.ZipFile(path) as archive:

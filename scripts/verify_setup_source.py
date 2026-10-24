@@ -32,6 +32,8 @@ def canonical(value):
 
 
 def verify(executable: Path):
+    from installer.storage import check_path
+    executable = check_path(executable)
     reader = CArchiveReader(str(executable))
     pyz = reader.open_embedded_archive("PYZ.pyz")
     checked, mismatch = [], []

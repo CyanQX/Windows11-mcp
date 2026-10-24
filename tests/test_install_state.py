@@ -108,7 +108,7 @@ def gui_exe(path, subsystem=2):
     return path
 
 
-@pytest.mark.parametrize("key,name", [("codex", "Codex.exe"), ("claude", "claude.exe"), ("deepseek", "DeepSeek Harness.exe"), ("opencode", "OpenCode.exe"), ("gemini", "gemini.cmd")])
+@pytest.mark.parametrize("key,name", [("codex", "Codex.exe"), ("claude", "claude.exe"), ("deepseek", "DeepSeek Harness.exe"), ("gemini", "gemini.cmd"), ("zcode", "ZCode.exe"), ("trae", "Trae.exe")])
 def test_selected_folder_is_persisted_and_detects_nested_client(tmp_path, key, name):
     from installer.settings import SettingsService
     folder = tmp_path / "program"

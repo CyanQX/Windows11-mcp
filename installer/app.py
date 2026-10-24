@@ -8,6 +8,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 if not getattr(sys, "frozen", False):
@@ -62,6 +63,8 @@ async def check_service(command: Path, *, home: Path | None = None) -> dict:
 
 
 def isolated_test(root: Path) -> None:
+    from installer.storage import check_path
+    root = check_path(root, Path(tempfile.gettempdir()))
     if root.exists() and any(root.iterdir()):
         raise ValueError("自测只能使用空的临时目录。")
     root.mkdir(parents=True, exist_ok=True)
@@ -181,7 +184,7 @@ def main():
     parser.add_argument("--glass-background", choices=["cold", "dark"], default="cold", help=argparse.SUPPRESS)
     parser.add_argument("--ui-smoke-select", nargs="*", default=[])
     parser.add_argument("--ui-smoke-size", nargs=2, type=int)
-    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "selection", "selection-all", "selection-clear", "footer-nested", "footer-nested-parked", "footer-minimized", "footer-floating", "footer-floating-parked", "targets-nested-preview", "targets-nested-parked", "targets-nested-restored", "update-available", "processing", "uninstall", "settings", "report", "approval", "status", "verify", "repair", "appearance", "docking", "dark", "warm", "advanced", "progress", "progress-hidden", "edge-preview", "edge-parked", "edge-right", "edge-bottom", "edge-top", "drop-preview", "resize-redock", "choice-popup", "choice-strength", "backups", "restore-preview", "upgrade-preview", "undo-preview", "undo", "cancel-install"], default="ready")
+    parser.add_argument("--ui-smoke-case", choices=["ready", "installed", "selection", "selection-bottom", "selection-all", "selection-clear", "footer-nested", "footer-nested-parked", "footer-minimized", "footer-floating", "footer-floating-parked", "targets-nested-preview", "targets-nested-parked", "targets-nested-restored", "update-available", "processing", "uninstall", "settings", "settings-update", "paths", "report", "approval", "approval-default", "approval-default-automatic", "status", "status-details", "verify", "repair", "appearance", "docking", "dark", "warm", "advanced", "progress", "progress-hidden", "edge-preview", "edge-parked", "edge-right", "edge-bottom", "edge-top", "drop-preview", "resize-redock", "choice-popup", "choice-strength", "backups", "restore-preview", "upgrade-preview", "undo-preview", "undo", "cancel-install"], default="ready")
     parser.add_argument("--ui-smoke-scale", type=float, default=1.0)
     args = parser.parse_args()
     if args.glass_demo:

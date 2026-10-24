@@ -371,6 +371,8 @@ class GlassDock(QDockWidget):
     def __init__(self, workspace, key, title, content):
         super().__init__(title, workspace.canvas)
         self.workspace, self.key, self.slide = workspace, key, None
+        if key in {"targets", "maintenance"}:
+            self.setProperty("cornerRadius", 0)
         self.setObjectName("dock-" + key)
         self.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | QDockWidget.DockWidgetFeature.DockWidgetFloatable | QDockWidget.DockWidgetFeature.DockWidgetClosable)

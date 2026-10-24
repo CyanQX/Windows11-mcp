@@ -147,6 +147,8 @@ class GlassCheckBox(QCheckBox):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         indicator = QRectF(10, (self.height() - 22) / 2, 22, 22)
         checked = self.checkState() != Qt.CheckState.Unchecked
+        installed = bool(self.property("installed"))
+        radius = 11 if installed else 7
         accent = QColor(c["accent"])
         if self.hasFocus():
             glow = QColor(accent)
@@ -155,7 +157,7 @@ class GlassCheckBox(QCheckBox):
             painter.setPen(QPen(glow, 2))
             painter.drawRoundedRect(indicator.adjusted(-3, -3, 3, 3), 10, 10)
         fill = QLinearGradient(indicator.topLeft(), indicator.bottomRight())
-        if checked and self.isEnabled():
+        if (checked and self.isEnabled()) or installed:
             fill.setColorAt(0, QColor("#408EFF"))
             fill.setColorAt(1, QColor("#1266ED"))
             border = QColor("#1266ED")
@@ -165,13 +167,17 @@ class GlassCheckBox(QCheckBox):
             border = QColor(c["border"])
             if self.underMouse() and self.isEnabled():
                 border = accent
-        if current.appearance["glass_strength"] and checked:
-            paint_glass(painter, indicator, 7, tokens_for("primary"), enabled=self.isEnabled(), shadow=False, texture=False)
+        if current.appearance["glass_strength"] and (checked or installed):
+            paint_glass(painter, indicator, radius, tokens_for("primary"), enabled=self.isEnabled(), shadow=False, texture=False)
         else:
             painter.setPen(QPen(border, 1.2))
             painter.setBrush(fill)
-            painter.drawRoundedRect(indicator, 7, 7)
-        if checked:
+            painter.drawRoundedRect(indicator, radius, radius)
+        if installed:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#FFFFFF"))
+            painter.drawEllipse(indicator.center(), 3.5, 3.5)
+        elif checked:
             path = QPainterPath()
             if self.checkState() == Qt.CheckState.PartiallyChecked:
                 path.moveTo(indicator.left() + 6, indicator.center().y())

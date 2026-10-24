@@ -20,7 +20,9 @@ def context(endpoint):
 def test_fresh_connections_keep_the_same_client_owner():
     runtime = EngineRuntime()
     endpoint = Endpoint()
-    assert runtime.owner(context(endpoint)) == runtime.owner(context(endpoint))
+    first, second = context(endpoint), context(endpoint)
+    assert first.session is not second.session
+    assert runtime.owner(first) == runtime.owner(second)
 
 
 def test_independent_transport_endpoints_never_share_owners():

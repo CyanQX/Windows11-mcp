@@ -156,4 +156,4 @@ def paint_panel(painter, rect, radius, *, popup=False, selected=False):
     painter.setPen(QPen(rim, 1.35 if popup or selected else 1))
     painter.drawPath(path)
     painter.setPen(QPen(alpha("#E7F9FF", 90 if current.mode != "dark" else 35), 1))
-    painter.drawRoundedRect(rect.adjusted(1.5, 1.5, -1.5, -1.5), radius - 1.5, radius - 1.5)
+    painter.drawRoundedRect(rect.adjusted(1.5, 1.5, -1.5, -1.5), max(0, radius - 1.5), max(0, radius - 1.5))

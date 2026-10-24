@@ -15,7 +15,7 @@ class LogView(QPlainTextEdit):
 
     def apply_appearance(self):
         value = theme().appearance
-        color = {"blue": "#E8F3FF", "warm": "#F5F0E3", "dark": "#18283D", "custom": value["log_custom_color"]}[value["log_background"]]
+        color = {"blue": "#FAFAFC", "warm": "#F5F0E3", "dark": "#18283D", "custom": value["log_custom_color"]}[value["log_background"]]
         channels = QColor(color).getRgbF()[:3]
         linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
         luminance = sum(weight * value for weight, value in zip((0.2126, 0.7152, 0.0722), linear))

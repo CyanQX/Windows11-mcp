@@ -2,9 +2,12 @@
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main():
@@ -13,11 +16,16 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cases", nargs="+", default=["ready", "status", "appearance", "advanced", "progress-hidden", "edge-preview", "edge-parked", "targets-nested-preview", "targets-nested-parked", "targets-nested-restored", "footer-minimized", "footer-floating-parked", "selection-clear", "update-available", "docking", "approval"])
     args = parser.parse_args()
+    from installer.storage import check_path
+    executable = check_path(args.executable)
+    if executable.name != "Windows-MCP.exe" or not executable.is_file():
+        parser.error("Native acceptance requires the built Windows-MCP.exe")
+    args.out = check_path(args.out)
     args.out.mkdir(parents=True, exist_ok=True)
     for case in args.cases:
         target = args.out / f"{case}.png"
         target.with_suffix(".error.json").unlink(missing_ok=True)
-        completed = subprocess.run([str(args.executable.resolve()), "--ui-smoke", str(target.resolve()), "--ui-smoke-case", case], timeout=180)
+        completed = subprocess.run([str(executable), "--ui-smoke", str(target.resolve()), "--ui-smoke-case", case], timeout=180)
         error = target.with_suffix(".error.json")
         if completed.returncode or error.exists():
             raise RuntimeError(error.read_text(encoding="utf-8") if error.exists() else f"Native UI exit {completed.returncode}")

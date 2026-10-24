@@ -690,10 +690,7 @@ class Tree:
                                    localized = node.CachedLocalizedControlType
 
                                    if not is_keyboard_focusable:
-                                        if localized == 'graphic':
-                                             is_image_check = True
-                                        else:
-                                             is_image_check = True
+                                        is_image_check = True
                                    elif localized == 'graphic':
                                         is_image_check = True
 

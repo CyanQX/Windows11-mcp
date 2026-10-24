@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout, QHBoxLa
 
 FONT = "Microsoft YaHei UI"
 PALETTES = {
-    "light": dict(bg="#DEE8F0", end="#EDF2F6", text="#203747", secondary="#4C6577", accent="#41667F", border="#B3C3CF", success="#087645", warning="#8E5A13", error="#B52B48", glass="#EAF0F5"),
+    "light": dict(bg="#F7F8FA", end="#FFFFFF", text="#203747", secondary="#4C6577", accent="#41667F", border="#CCD2D8", success="#087645", warning="#8E5A13", error="#B52B48", glass="#FCFCFD"),
     "warm": dict(bg="#ECE7D9", end="#FAF5E9", text="#3C4238", secondary="#656D59", accent="#446D58", border="#CECEB9", success="#256341", warning="#805523", error="#AD3744", glass="#FFFBEF"),
     "dark": dict(bg="#131F33", end="#243852", text="#ECF3FF", secondary="#B1C3D9", accent="#86B5FF", border="#48617E", success="#76DEB1", warning="#F5CE8B", error="#FF9DB2", glass="#233751"),
 }
@@ -85,6 +85,7 @@ QSlider::groove:horizontal {{ height: 6px; background: {c['border']}; border-rad
 QSlider::handle:horizontal {{ width: 18px; margin: -6px 0; background: {c['accent']}; border-radius: 9px; }}
 QToolTip {{ color: {c['text']}; background: {c['glass']}; border: 1px solid {c['border']}; padding: 8px; }}
 {tactile_rules}
+QPushButton[detailToggle='true'] {{ min-height: 44px; padding-top: 0px; padding-bottom: 0px; }}
 """)
         for widget in app.topLevelWidgets():
             widget.update()
@@ -111,12 +112,14 @@ def draw_glass(widget, *, popup=False):
     painter = QPainter(widget)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     rect = QRectF(widget.rect()).adjusted(1, 1, -1, -1)
+    radius = widget.property("cornerRadius")
+    radius = 20 if radius is None else float(radius)
     if current.appearance["glass_strength"]:
-        paint_panel(painter, rect, 20, popup=popup, selected=bool(widget.property("selected")))
+        paint_panel(painter, rect, radius, popup=popup, selected=bool(widget.property("selected")))
     else:
         painter.setBrush(QColor(current.colors["glass"]))
         painter.setPen(QColor(current.colors["border"]))
-        painter.drawRoundedRect(rect, 20, 20)
+        painter.drawRoundedRect(rect, radius, radius)
 
 
 class GlassFrame(QFrame):

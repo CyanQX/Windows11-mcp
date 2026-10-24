@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QEvent, QSize, QRectF, QTimer, QVariantAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QAccessible, QAccessibleEvent, QMouseEvent
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QAccessible, QAccessibleEvent, QMouseEvent, QIcon
+from PySide6.QtWidgets import QPushButton, QStyle, QStyleOptionButton
 
 from installer.ui.tactile_material import manager_theme, paint_glass, rounded_path, tokens_for
 
@@ -23,6 +23,8 @@ class TactileGlassButton(QPushButton):
         self._touch_id = None
         self._saved_description = ""
         self._icon_cache = None
+        self.content_alignment = Qt.AlignmentFlag.AlignHCenter
+        self.notification_dot = False
         self.setAutoDefault(False)
         self.setAutoRepeat(False)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -87,6 +89,14 @@ class TactileGlassButton(QPushButton):
 
     def minimumSizeHint(self):
         return self.sizeHint()
+
+    def setContentAlignment(self, alignment):
+        self.content_alignment = alignment
+        self.update()
+
+    def setNotificationDot(self, visible):
+        self.notification_dot = bool(visible)
+        self.update()
 
     def hitButton(self, point):
         return rounded_path(QRectF(self.rect()), min(self.width(), self.height()) / 2).contains(point)
@@ -248,7 +258,9 @@ class TactileGlassButton(QPushButton):
 
     def paintEvent(self, event):
         current = manager_theme()
-        if self.material is None and current and not current.appearance["glass_strength"]:
+        native = self.material is None and current and not current.appearance["glass_strength"]
+        aligned_left = bool(self.content_alignment & Qt.AlignmentFlag.AlignLeft)
+        if native and not aligned_left:
             return super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -263,14 +275,27 @@ class TactileGlassButton(QPushButton):
         if self.variant == "circle":
             side = min(rect.width(), rect.height())
             rect = QRectF(rect.center().x() - side / 2, rect.center().y() - side / 2, side, side)
-        paint_glass(painter, rect, min(rect.width(), rect.height()) / 2, tokens, hover=hover, press=press, enabled=self.isEnabled() or self._loading, focus=focus, motion_scale=0.0 if self.reduced_motion else 1.0)
+        if native:
+            option = QStyleOptionButton()
+            self.initStyleOption(option)
+            option.text, option.icon = "", QIcon()
+            self.style().drawControl(QStyle.ControlElement.CE_PushButton, option, painter, self)
+        else:
+            paint_glass(painter, rect, min(rect.width(), rect.height()) / 2, tokens, hover=hover, press=press, enabled=self.isEnabled() or self._loading, focus=focus, motion_scale=0.0 if self.reduced_motion else 1.0)
         content = rect.translated(0, tokens.press_distance * physical_press)
-        color = QColor(tokens.text if self.isEnabled() or self._loading else "#344852")
+        if native:
+            color = QColor(current.colors["text" if self.isEnabled() else "secondary"])
+        else:
+            color = QColor(tokens.text if self.isEnabled() or self._loading else "#344852")
         painter.setFont(self.font())
-        text = "" if self.variant == "circle" else self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, max(0, round(content.width() - 24 - (26 if self._loading or not self.icon().isNull() else 0))))
+        text = "" if self.variant == "circle" else self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, max(0, round(content.width() - (40 if aligned_left else 24) - (26 if self._loading or not self.icon().isNull() else 0))))
         icon_size = min(self.iconSize().width(), round(content.height() * .55)) if not self.icon().isNull() else 18 if self._loading else 0
         width = self.fontMetrics().horizontalAdvance(text) + (icon_size + 8 if icon_size and text else icon_size)
-        x = content.center().x() - width / 2
+        x = content.left() + 24 if aligned_left else content.center().x() - width / 2
+        if self.notification_dot:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#E53E4F"))
+            painter.drawEllipse(QRectF(content.right() - 15, content.center().y() - 3, 6, 6))
         if icon_size:
             target = QRectF(x, content.center().y() - icon_size / 2, icon_size, icon_size)
             if self._loading:

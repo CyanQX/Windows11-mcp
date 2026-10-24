@@ -5945,10 +5945,7 @@ def RunByHotKey(
     if exitHotKey and len(exitHotKey) == 2:
         modName = getModName(ModifierKey.__dict__, exitHotKey[0])
         keyName = _GetDictKeyName(Keys.__dict__, exitHotKey[1])
-        if ctypes.windll.user32.RegisterHotKey(0, exitHotKeyId, exitHotKey[0], exitHotKey[1]):
-            pass
-        else:
-            pass
+        ctypes.windll.user32.RegisterHotKey(0, exitHotKeyId, exitHotKey[0], exitHotKey[1])
     funcThread = None
     livingThreads = []
     stopEvent = threading.Event()

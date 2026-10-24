@@ -39,7 +39,8 @@ def test_tampered_trust_record_is_ignored(tmp_path):
     assert not store.allows()
 
 
-def test_policy_gate_skips_r2_approval_only_while_trusted(tmp_path):
+def test_policy_gate_skips_r2_approval_only_while_trusted(tmp_path, monkeypatch):
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.operator_review_active", lambda: False)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     gate = PolicyGate(roots=[workspace], approvals=ApprovalStore(tmp_path / "authority"))

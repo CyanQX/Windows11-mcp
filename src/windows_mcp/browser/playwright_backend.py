@@ -53,6 +53,7 @@ class PlaywrightBackend:
         self._manager = None
         self._sessions: dict[str, ManagedBrowser] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def _url(self, url: str) -> None:
         await asyncio.wait_for(asyncio.to_thread(validate_url, url, allow_private=self.allow_private), timeout=5)
@@ -62,7 +63,13 @@ class PlaywrightBackend:
             if known is page:
                 return page_id
         if len(browser.pages) >= 16:
-            asyncio.create_task(page.close())
+            task = asyncio.create_task(page.close())
+            self._background_tasks.add(task)
+            def finished(done):
+                self._background_tasks.discard(done)
+                if not done.cancelled() and done.exception() is not None:
+                    browser.diagnostics[:] = ["Closing an excess browser page failed"]
+            task.add_done_callback(finished)
             return "page-limit"
         page_id = f"page_{uuid.uuid4().hex[:12]}"
         browser.pages[page_id] = page
@@ -320,6 +327,8 @@ class PlaywrightBackend:
                 browser.profile.cleanup()
 
     async def close_all(self) -> None:
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
         for session in list(self._sessions):
             await self.close_session(session)
         if self._manager:

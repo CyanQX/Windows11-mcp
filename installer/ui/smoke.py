@@ -1,5 +1,6 @@
 """Native visual acceptance in temporary homes, including actual frozen stdio probes."""
 import json
+import math
 import os
 import sys
 import tempfile
@@ -27,10 +28,15 @@ class IsolatedDiscovery:
         return Presence.DETECTED, "isolated UI acceptance client"
 
 
+def require(condition, message="Native UI acceptance failed"):
+    if not condition:
+        raise RuntimeError(message)
+
+
 def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
     if not 0.75 <= scale <= 2.0:
         raise ValueError("UI acceptance scale outside bounds")
-    if scale != 1.0:
+    if not math.isclose(scale, 1.0, rel_tol=0.0, abs_tol=1e-12):
         os.environ["QT_SCALE_FACTOR"] = str(scale)
     app = application()
     manifest = json.loads((base / "manifest.json").read_text(encoding="utf-8"))
@@ -79,14 +85,14 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
             try:
                 subject = subject or window
                 app.processEvents()
-                for control in (window.install_button, window.uninstall_button, *window.action_buttons, window.selector.trigger):
+                for control in (window.settings_button, window.about_button, window.install_button, window.uninstall_button, *window.action_buttons, window.selector.trigger):
                     if control.isVisible():
-                        assert control.height() >= 30, "Primary control squeezed: " + control.text()
+                        require(control.height() >= 30, "Primary control squeezed: " + control.text())
                         if control.window() is window:
-                            assert window.rect().contains(control.mapTo(window, control.rect().bottomRight())), "Primary control clipped"
+                            require(window.rect().contains(control.mapTo(window, control.rect().bottomRight())), "Primary control clipped")
                 if case == "progress-hidden":
-                    assert window.task_strip.content.isHidden(), "Successful task did not fade after eight seconds"
-                    assert window.logs.geometry() == log_geometry, "Hiding the strip shifted the log layout"
+                    require(window.task_strip.content.isHidden(), "Successful task did not fade after eight seconds")
+                    require(window.logs.geometry() == log_geometry, "Hiding the strip shifted the log layout")
                 capture(subject, target)
                 if subject != window:
                     capture(window, target.with_name(target.stem + "-main.png"))
@@ -103,9 +109,9 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                 window.selector.toggle()
                 window.selector.select_all()
                 window.selector.clear_button.click()
-                assert not window.selection.selected and not window.install_button.isEnabled()
-                assert not window.selector.checks["codex"].isEnabled()
-                assert {path: path.read_bytes() for path in paths} == before
+                require(not window.selection.selected and not window.install_button.isEnabled(), 'Native UI acceptance failed: not window.selection.selected and not window.install_button.isEnabled()')
+                require(not window.selector.checks["codex"].isEnabled(), 'Native UI acceptance failed: not window.selector.checks["codex"].isEnabled()')
+                require({path: path.read_bytes() for path in paths} == before, 'Native UI acceptance failed: {path: path.read_bytes() for path in paths} == before')
                 verified_steps.extend(["select_all_then_clear", "installed_files_unchanged"])
                 QTimer.singleShot(200, lambda: take(window.selector.popup))
             elif case in {"backups", "restore-preview", "upgrade-preview", "undo-preview"}:
@@ -127,25 +133,35 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                 plan = service.preview_undo_install(transaction)
                 def undone(results):
                     profile = backend.clients["codex"]
-                    assert all(row["ok"] for row in results)
-                    assert not profile.config.exists() and not backend.receipt_path(profile).exists()
-                    assert not (profile.skill_root / "windows-mcp/SKILL.md").exists() and not backend.executable.exists()
+                    require(all(row["ok"] for row in results), 'Native UI acceptance failed: all(row["ok"] for row in results)')
+                    require(not profile.config.exists() and not backend.receipt_path(profile).exists(), 'Native UI acceptance failed: not profile.config.exists() and not backend.receipt_path(profile).exists()')
+                    require(not (profile.skill_root / "windows-mcp/SKILL.md").exists() and not backend.executable.exists(), 'Native UI acceptance failed: not (profile.skill_root / "windows-mcp/SKILL.md").exists() and not backend.executable.exists()')
                     dialog = Results(window, "撤销安装结果", results)
                     QTimer.singleShot(350, lambda: take(dialog))
                 window.run(lambda: service.undo_install(transaction, plan["digest"]), undone)
-            elif case in {"installed", "selection"}:
-                assert "codex" not in window.selection.selected
+            elif case in {"installed", "selection", "selection-bottom"}:
+                require("codex" not in window.selection.selected, 'Native UI acceptance failed: "codex" not in window.selection.selected')
                 if case == "selection":
                     window.selection.choose("deepseek", True)
                     window.selection_changed()
                 window.selector.toggle()
+                if case == "selection-bottom":
+                    def show_last_clients():
+                        scrollbar = window.selector.scroll.verticalScrollBar()
+                        scrollbar.setValue(scrollbar.maximum())
+                        take(window.selector.popup)
+                    QTimer.singleShot(400, show_last_clients)
+                    return
                 QTimer.singleShot(400, lambda: take(window.selector.popup))
             elif case in {"uninstall", "repair", "verify"}:
                 dialog = Targets(window, case)
-                assert not any(value.isChecked() for value in dialog.variables.values())
+                require(not any(value.isChecked() for value in dialog.variables.values()), 'Native UI acceptance failed: not any(value.isChecked() for value in dialog.variables.values())')
                 QTimer.singleShot(350, lambda: take(dialog))
-            elif case == "status":
+            elif case in {"status", "status-details"}:
                 dialog = StatusDialog(window)
+                if case == "status-details":
+                    from PySide6.QtWidgets import QPushButton
+                    next(item for item in dialog.findChildren(QPushButton) if item.text() == "详情").click()
                 QTimer.singleShot(350, lambda: take(dialog))
             elif case == "report":
                 dialog = Diagnostics(window, True)
@@ -172,28 +188,28 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     nonlocal requested, error, captured
                     try:
                         if not requested and "等待 MCP 握手" in window.task_progress.message:
-                            assert window.undo_button.isEnabled()
+                            require(window.undo_button.isEnabled(), 'Native UI acceptance failed: window.undo_button.isEnabled()')
                             window.undo_button.click()
                             requested = True
                         if requested and not window.busy:
                             profile = backend.clients["codex"]
-                            assert not profile.config.exists() and not backend.receipt_path(profile).exists()
-                            assert not (profile.skill_root / "windows-mcp/SKILL.md").exists() and not backend.executable.exists()
-                            assert any(event["phase"] == "undo" and event["level"] == "SUCCESS" for event in service.log.events)
+                            require(not profile.config.exists() and not backend.receipt_path(profile).exists(), 'Native UI acceptance failed: not profile.config.exists() and not backend.receipt_path(profile).exists()')
+                            require(not (profile.skill_root / "windows-mcp/SKILL.md").exists() and not backend.executable.exists(), 'Native UI acceptance failed: not (profile.skill_root / "windows-mcp/SKILL.md").exists() and not backend.executable.exists()')
+                            require(any(event["phase"] == "undo" and event["level"] == "SUCCESS" for event in service.log.events), 'Native UI acceptance failed: any(event["phase"] == "undo" and event["level"] == "SUCCESS" for event in service.log.events)')
                             take(next((dialog for dialog in window.dialogs if isinstance(dialog, Results)), window))
                         else:
                             QTimer.singleShot(20, cancel_and_check)
                     except Exception as exc:
                         error, captured = exc, True
                 QTimer.singleShot(20, cancel_and_check)
-            elif case in {"installed", "selection", "selection-clear", "processing", "uninstall", "repair", "verify", "status", "report", "progress", "progress-hidden", "backups", "restore-preview", "upgrade-preview", "undo-preview", "undo"}:
+            elif case in {"installed", "selection", "selection-bottom", "selection-clear", "processing", "uninstall", "repair", "verify", "status", "status-details", "report", "progress", "progress-hidden", "backups", "restore-preview", "upgrade-preview", "undo-preview", "undo"}:
                 window.run(lambda: service.install_targets(["codex"]), complete)
                 if case == "processing":
                     QTimer.singleShot(600, take)
             elif case == "selection-all":
                 window.selector.toggle()
                 window.selector.select_all()
-                assert window.selector.clear_button.isEnabled()
+                require(window.selector.clear_button.isEnabled(), 'Native UI acceptance failed: window.selector.clear_button.isEnabled()')
                 QTimer.singleShot(180, lambda: take(window.selector.popup))
             elif case.startswith("targets-nested-"):
                 space = window.workspace
@@ -210,8 +226,8 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                         point = QPoint(x, start.y())
                         app.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, point, canvas.mapToGlobal(point), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
                         app.processEvents()
-                    assert space.preview and space.preview.dock is dock and set(space.preview.members) == {dock, actions}
-                    assert actions.isVisible() and abs(actions.height() - initial) <= 16, f"Toolbar changed {initial} -> {actions.height()}; target {dock.geometry()}; shared {space.preview.shared_span}"
+                    require(space.preview and space.preview.dock is dock and set(space.preview.members) == {dock, actions}, 'Native UI acceptance failed: space.preview and space.preview.dock is dock and set(space.preview.members) == {dock, actions}')
+                    require(actions.isVisible() and abs(actions.height() - initial) <= 16, f"Toolbar changed {initial} -> {actions.height()}; target {dock.geometry()}; shared {space.preview.shared_span}")
                     verified_steps.append("whole_left_side_slides_continuously_with_both_panels")
                     if case == "targets-nested-preview":
                         take()
@@ -219,9 +235,9 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     app.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
                     QTimer.singleShot(310, target_parked)
                 def target_parked():
-                    assert dock.isHidden() and space.collapsed["targets"][0] == "left"
-                    assert actions.isHidden() and len(space.collapsed) == 1
-                    assert set(space.park_groups["targets"]) == {"targets", "actions"}
+                    require(dock.isHidden() and space.collapsed["targets"][0] == "left", 'Native UI acceptance failed: dock.isHidden() and space.collapsed["targets"][0] == "left"')
+                    require(actions.isHidden() and len(space.collapsed) == 1, 'Native UI acceptance failed: actions.isHidden() and len(space.collapsed) == 1')
+                    require(set(space.park_groups["targets"]) == {"targets", "actions"}, 'Native UI acceptance failed: set(space.park_groups["targets"]) == {"targets", "actions"}')
                     verified_steps.append("whole_left_side_parks_with_one_centered_handle")
                     if case == "targets-nested-restored":
                         space.collapsed["targets"][1].control.click()
@@ -229,17 +245,17 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     else:
                         take()
                 def target_restored():
-                    assert dock.isVisible() and dock.x() >= 0 and "targets" not in space.collapsed
-                    assert actions.height() <= 180
-                    assert actions.isVisible()
+                    require(dock.isVisible() and dock.x() >= 0 and "targets" not in space.collapsed, 'Native UI acceptance failed: dock.isVisible() and dock.x() >= 0 and "targets" not in space.collapsed')
+                    require(actions.height() <= 180, 'Native UI acceptance failed: actions.height() <= 180')
+                    require(actions.isVisible(), 'Native UI acceptance failed: actions.isVisible()')
                     verified_steps.append("side_handle_restores_all_panels_and_compact_actions")
                     take()
                 QTimer.singleShot(80, shrink_target)
             elif case == "update-available":
                 from installer.ui.settings_dialog import Updates
-                window.update_release = {"available": True, "current": window.version, "latest": "1.4.2", "kind": "installer", "notes": "隔离界面示例：用户点击更新安装后才会下载。更新只显示进度页，首次安装保留安装向导。"}
+                window.update_release = {"available": True, "current": window.version, "latest": "1.4.3", "kind": "installer", "notes": "隔离界面示例：用户点击更新安装后才会下载。更新只显示进度页，首次安装保留安装向导。"}
                 dialog = Updates(window)
-                assert dialog.download_button.isEnabled()
+                require(dialog.download_button.isEnabled(), 'Native UI acceptance failed: dialog.download_button.isEnabled()')
                 verified_steps.append("automatic_hint_shown_without_downloading_until_user_click")
                 QTimer.singleShot(150, lambda: take(dialog))
             elif case.startswith("footer-"):
@@ -247,12 +263,12 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                 space, dock = window.workspace, window.workspace.docks["actions"]
                 space.canvas.splitDockWidget(space.docks["targets"], dock, Qt.Orientation.Vertical)
                 def maximize():
-                    assert space.last_area["actions"] == "left"
+                    require(space.last_area["actions"] == "left", 'Native UI acceptance failed: space.last_area["actions"] == "left"')
                     window.showMaximized()
                     QTimer.singleShot(120, enlarge)
                 def enlarge():
                     start = QPoint(dock.geometry().center().x(), dock.y() - 5)
-                    assert space.divider_snapshot(space.canvas.mapToGlobal(start))["actions"][1] == "bottom"
+                    require(space.divider_snapshot(space.canvas.mapToGlobal(start))["actions"][1] == "bottom", 'Native UI acceptance failed: space.divider_snapshot(space.canvas.mapToGlobal(start))["actions"][1] == "bottom"')
                     drag_boundary(start, QPoint(0, -230))
                     verified_steps.append("nested_vertical_resize_while_maximized")
                     if case.startswith("footer-floating"):
@@ -261,7 +277,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                         space.start_title_drag(dock, title.mapToGlobal(title.rect().center()))
                         space.drag_title(point)
                         space.finish_title_drag(point)
-                        assert dock.isFloating()
+                        require(dock.isFloating(), 'Native UI acceptance failed: dock.isFloating()')
                         dock.resize(580, 400)
                     if case == "footer-minimized":
                         window.showMinimized()
@@ -273,17 +289,17 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     window.resize(original)
                     QTimer.singleShot(150, restored)
                 def restored():
-                    assert dock.height() <= 180
+                    require(dock.height() <= 180, 'Native UI acceptance failed: dock.height() <= 180')
                     verified_steps.append("compact_after_window_restore")
                     if case.startswith("footer-floating"):
-                        assert dock.isFloating()
+                        require(dock.isFloating(), 'Native UI acceptance failed: dock.isFloating()')
                         if case == "footer-floating":
                             take(dock)
                             return
                         start = QPoint(dock.width() // 2, 1)
                         point = dock.mapToGlobal(start)
                         app.sendEvent(dock, QMouseEvent(QEvent.Type.MouseButtonPress, start, point, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-                        assert space.floating_resize
+                        require(space.floating_resize, 'Native UI acceptance failed: space.floating_resize')
                         for distance in range(0, 250, 8):
                             dest = point + QPoint(0, distance)
                             app.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseMove, space.canvas.mapFromGlobal(dest), dest, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
@@ -296,7 +312,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                         return
                     QTimer.singleShot(310, parked)
                 def parked():
-                    assert dock.isHidden() and space.collapsed["actions"][0] == "bottom"
+                    require(dock.isHidden() and space.collapsed["actions"][0] == "bottom", 'Native UI acceptance failed: dock.isHidden() and space.collapsed["actions"][0] == "bottom"')
                     verified_steps.append("shrink_below_minimum_parks_at_bottom")
                     if case == "footer-minimized":
                         space.collapsed["actions"][1].control.click()
@@ -304,7 +320,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     else:
                         take()
                 def reopened():
-                    assert dock.isVisible() and dock.height() <= 180
+                    require(dock.isVisible() and dock.height() <= 180, 'Native UI acceptance failed: dock.isVisible() and dock.height() <= 180')
                     verified_steps.append("edge_handle_restores_compact_toolbar")
                     take()
                 QTimer.singleShot(80, maximize)
@@ -315,7 +331,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     initial = choice.currentIndex()
                     choice.showPopup()
                     choice.popup.list.setCurrentIndex(choice.model().index(0, 0))
-                    assert choice.popup.isVisible() and choice.currentIndex() == initial
+                    require(choice.popup.isVisible() and choice.currentIndex() == initial, 'Native UI acceptance failed: choice.popup.isVisible() and choice.currentIndex() == initial')
                     QTimer.singleShot(150, lambda: take(choice.popup))
                 QTimer.singleShot(150, popup)
             elif case == "drop-preview":
@@ -323,7 +339,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                 title = dock.titleBarWidget()
                 space.start_title_drag(dock, title.mapToGlobal(title.rect().center()))
                 space.drag_title(space.canvas.mapToGlobal(QPoint(space.canvas.width() - 20, 220)))
-                assert dock.isFloating() and space.drop_preview.isVisible()
+                require(dock.isFloating() and space.drop_preview.isVisible(), 'Native UI acceptance failed: dock.isFloating() and space.drop_preview.isVisible()')
                 QTimer.singleShot(200, take)
             elif case == "resize-redock":
                 original = window.size()
@@ -336,16 +352,37 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     window.resize(original)
                     space.move_to(dock, "bottom")
                     def checked():
-                        assert dock.height() <= 180, "Stale maximized footer extent"
+                        require(dock.height() <= 180, "Stale maximized footer extent")
                         take()
                     QTimer.singleShot(250, checked)
                 QTimer.singleShot(200, float_and_restore)
-            elif case in {"settings", "appearance", "advanced"}:
-                dialog = SettingsHub(window) if case == "settings" else Preferences(window) if case == "advanced" else Appearance(window)
+            elif case == "paths":
+                from installer.ui.settings_dialog import paths
+                from PySide6.QtWidgets import QPushButton
+                dialog = paths(window)
+                next(item for item in dialog.findChildren(QPushButton) if "展开详情" in item.text()).click()
                 QTimer.singleShot(350, lambda: take(dialog))
-            elif case == "approval":
-                request = store.request("isolated-acceptance-session", "Files", {"operation": "write", "path": "C:\\WindowsMCP-Example\\example.txt", "content": "isolated example"}, 2, "隔离界面验收示例；不会执行或批准操作")
-                window.open_operator(request["request_id"])
+            elif case in {"settings", "settings-update", "appearance", "advanced"}:
+                if case == "settings-update":
+                    window.update_release = {"available": True, "latest": "99.0.0"}
+                dialog = SettingsHub(window) if case.startswith("settings") else Preferences(window) if case == "advanced" else Appearance(window)
+                if case.startswith("settings"):
+                    require(len({item.width() for item in dialog.controls.values()}) == 1, 'Native UI acceptance failed: len({item.width() for item in dialog.controls.values()}) == 1')
+                    require(dialog.controls["检查更新"].notification_dot == (case == "settings-update"), 'Native UI acceptance failed: dialog.controls["检查更新"].notification_dot == (case == "settings-update")')
+                    verified_steps.append("aligned_settings_rows_with_fixed_trailing_update_dot")
+                QTimer.singleShot(350, lambda: take(dialog))
+            elif case in {"approval", "approval-default", "approval-default-automatic"}:
+                if case == "approval":
+                    request = store.request("isolated-acceptance-session", "Files", {"operation": "write", "path": "C:\\WindowsMCP-Example\\example.txt", "content": "isolated example"}, 2, "隔离界面验收示例；不会执行或批准操作")
+                    window.open_operator(request["request_id"])
+                else:
+                    window.open_operator()
+                    require(window.operator_window.auto_approve.isEnabled(), 'Native UI acceptance failed: window.operator_window.auto_approve.isEnabled()')
+                    require(window.operator_window.defaults_row.isVisible(), 'Native UI acceptance failed: window.operator_window.defaults_row.isVisible()')
+                    require(store.pending() == [], 'Native UI acceptance failed: store.pending() == []')
+                    window.operator_window.auto_approve.setChecked(case == "approval-default-automatic")
+                    require(not window.operator_window.trust.allows(), 'Native UI acceptance failed: not window.operator_window.trust.allows()')
+                    verified_steps.append("default_approval_available_without_requests_or_implicit_grants")
                 QTimer.singleShot(350, lambda: take(window.operator_window))
             elif case == "docking":
                 window.workspace.docks["maintenance"].setFloating(True)
@@ -363,7 +400,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     space.preview = SlidePreview(space, dock, edge)
                     space.preview.advance(.55)
                     actual = dock.width() if edge == "right" else dock.height()
-                    assert actual < (original.width() if edge == "right" else original.height()) * .65
+                    require(actual < (original.width() if edge == "right" else original.height()) * .65, 'Native UI acceptance failed: actual < (original.width() if edge == "right" else original.height()) * .65')
                     QTimer.singleShot(200, take)
                     return
                 dock = space.docks["targets"]
@@ -375,7 +412,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     position = QPoint(x, point.y())
                     app.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, position, canvas.mapToGlobal(position), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
                     app.processEvents()
-                assert space.preview and dock.isVisible() and "targets" not in space.collapsed
+                require(space.preview and dock.isVisible() and "targets" not in space.collapsed, 'Native UI acceptance failed: space.preview and dock.isVisible() and "targets" not in space.collapsed')
                 if case == "edge-parked":
                     app.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
                 QTimer.singleShot(350, take)

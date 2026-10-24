@@ -14,8 +14,10 @@ sys.path.insert(0, str(ROOT))
 
 def package(executable: Path, output: Path, version: str):
     from installer.distribution import portable_name, portable_root, verify_portable
+    from installer.storage import check_path
     from windows_mcp.infrastructure.runtime_paths import PORTABLE_MARKER, PORTABLE_MODE
 
+    executable, output = check_path(executable), check_path(output)
     output.mkdir(parents=True, exist_ok=True)
     target = output / portable_name(version)
     root = portable_root(version)

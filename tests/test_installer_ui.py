@@ -55,6 +55,10 @@ def window(native_window, tmp_path):
     service = make_service(tmp_path)
     service.install_targets(["codex"])
     native_window.service = service
+    from windows_mcp.infrastructure.approvals import ApprovalStore
+    native_window.approval_store = ApprovalStore(tmp_path / "manager-approvals")
+    native_window.known_requests = set()
+    native_window.pending_approvals = 0
     service.log.callback = lambda event: native_window.events.put(("log", event))
     native_window.selection = SelectionModel()
     native_window.selector.model = native_window.selection
@@ -100,9 +104,73 @@ def test_refresh_preserves_popup_and_clears_only_ineligible_selections(window):
     assert not window.selector.checks["claude"].isEnabled()
 
 
+def test_client_dropdown_second_click_closes_and_next_click_reopens(window):
+    trigger = window.selector.trigger
+    QTest.mouseClick(trigger, Qt.MouseButton.LeftButton)
+    assert window.selector.popup is not None and window.selector.popup.isVisible()
+    QTest.mouseClick(trigger, Qt.MouseButton.LeftButton)
+    assert window.selector.popup is None
+    QTest.mouseClick(trigger, Qt.MouseButton.LeftButton)
+    assert window.selector.popup is not None and window.selector.popup.isVisible()
+
+
+def test_client_popup_is_centered_scrollable_and_marks_installed_clients(window):
+    original = window.pos()
+    window.move(window.screen().availableGeometry().topLeft() + QPoint(300, 80))
+    try:
+        window.selector.toggle()
+        QTest.qWait(40)
+        popup, trigger = window.selector.popup, window.selector.trigger
+        assert abs(popup.geometry().center().x() - trigger.mapToGlobal(trigger.rect().center()).x()) <= 1
+        assert window.selector.scroll.verticalScrollBar().maximum() > 0
+        assert "opencode" not in window.selector.checks
+        assert {"zcode", "trae"} <= window.selector.checks.keys()
+        installed = window.selector.checks["codex"]
+        assert installed.property("installed") and not installed.isChecked() and not installed.isEnabled()
+        window.selector.scroll.verticalScrollBar().setValue(window.selector.scroll.verticalScrollBar().maximum())
+        assert window.selector.scroll.verticalScrollBar().value() > 0
+    finally:
+        if window.selector.popup:
+            window.selector.popup.close()
+        window.move(original)
+
+
+def test_details_fit_short_content_and_keep_wheel_inside_the_detail(window):
+    from installer.ui.dialogs import Preview
+    from PySide6.QtWidgets import QScrollArea
+
+    paths = Preview(window, "实际安装目录", {"Claude Code": {"skill": "C:/example/skills", "mcp": "C:/example/config.json", "custom": False}})
+    control = next(item for item in paths.findChildren(QPushButton) if "展开详情" in item.text())
+    control.click()
+    QTest.qWait(20)
+    short = paths.findChild(QPlainTextEdit)
+    assert short.isVisible() and short.height() < 160
+    assert short.verticalScrollBar().maximum() == 0
+    paths.close()
+    dialog = StatusDialog(window)
+    next(item for item in dialog.findChildren(QPushButton) if item.text() == "详情").click()
+    QTest.qWait(20)
+    controls = [item for item in dialog.findChildren(QPushButton) if item.text() == "详情"]
+    assert all(item.height() >= 44 for item in controls)
+    outer = dialog.findChild(QScrollArea).verticalScrollBar()
+    box = next(item for item in dialog.findChildren(QPlainTextEdit) if item.isVisible())
+    for delta in (120, -120):
+        box.verticalScrollBar().setValue(0 if delta > 0 else box.verticalScrollBar().maximum())
+        outer.setValue(outer.maximum() // 2)
+        before = outer.value()
+        position = box.viewport().rect().center()
+        event = QWheelEvent(QPointF(position), QPointF(box.viewport().mapToGlobal(position)), QPoint(), QPoint(0, delta),
+                            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(box.viewport(), event)
+        assert event.isAccepted() and outer.value() == before
+    dialog.close()
+
+
 def test_status_shows_readable_facts_and_collapses_raw_details(window):
     dialog = StatusDialog(window)
-    assert any("MCP 配置" in item.text() for item in dialog.findChildren(QLabel))
+    assert any(item.text().startswith("已安装 ") for item in dialog.findChildren(QLabel))
+    assert not any("MCP 配置" in item.text() or "客户端  " in item.text() for item in dialog.findChildren(QLabel))
+    assert any(item.text() == "详情" for item in dialog.findChildren(QPushButton))
     details = dialog.findChildren(QPlainTextEdit)
     assert details and all(item.isHidden() for item in details)
     dialog.close()
@@ -293,7 +361,7 @@ def test_undo_button_cancels_background_install_and_preserves_previous_client(wi
 
 def test_settings_order_and_no_external_adoption_menu(window):
     popup = SettingsHub(window)
-    assert popup.names == ["外观", "高级设置", "操作授权", "配置与恢复", "安装目录", "检查更新", "日志与诊断", "关于"]
+    assert popup.names == ["外观", "高级设置", "操作审批", "操作授权", "配置与恢复", "安装目录", "检查更新", "日志与诊断"]
     popup.close()
 
 
@@ -319,6 +387,251 @@ def test_trust_center_reflects_grant_and_revoke(window, tmp_path):
         dialog.close()
     finally:
         window.approval_store = None
+
+
+def test_top_navigation_stays_available_when_install_actions_are_parked(window):
+    assert window.top_bar.geometry().bottom() < window.workspace.geometry().top()
+    assert window.settings_button.geometry().right() < window.about_button.geometry().left()
+    window.workspace.collapse(window.workspace.docks["actions"])
+    wait_for_workspace(window.workspace)
+    assert window.workspace.docks["actions"].isHidden()
+    assert window.settings_button.isVisible() and window.about_button.isVisible()
+    window.about_button.click()
+    about = window.dialogs[-1]
+    assert about.windowTitle() == "关于 Windows MCP"
+    assert any(item.text() == window.version for item in about.findChildren(QLabel))
+    about.close()
+
+
+def test_settings_notification_dot_is_on_the_right_and_preserves_row_alignment(window):
+    popup = SettingsHub(window)
+    QTest.qWait(30)
+    rectangles = [control.geometry() for control in popup.controls.values()]
+    assert len({rect.left() for rect in rectangles}) == 1
+    assert len({rect.width() for rect in rectangles}) == 1
+    assert all(control.content_alignment == Qt.AlignmentFlag.AlignLeft for control in popup.controls.values())
+    original = popup.size(), [control.geometry() for control in popup.controls.values()]
+    popup.release_hint({"available": True})
+    control = popup.controls["检查更新"]
+    raster = control.grab().toImage()
+    red = [(x, y) for y in range(raster.height()) for x in range(raster.width())
+           if (color := raster.pixelColor(x, y)).red() > 170 and color.green() < 110 and color.blue() < 130]
+    assert red and min(x for x, _ in red) > raster.width() * .8
+    popup.release_hint({"available": False})
+    assert not control.notification_dot
+    assert (popup.size(), [item.geometry() for item in popup.controls.values()]) == original
+    popup.close()
+
+
+def test_settings_approval_entry_opens_defaults_before_any_request(window, monkeypatch):
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
+    popup = SettingsHub(window)
+    popup.controls["操作审批"].click()
+    dialog = window.operator_window
+    assert dialog is not None and dialog.isVisible()
+    assert dialog.defaults_row.isVisible() and dialog.auto_approve.isEnabled()
+    assert not dialog.auto_approve.isChecked()
+    assert window.approval_store.pending() == [] and not dialog.trust.allows()
+    dialog.close()
+
+
+def test_plain_settings_keep_left_alignment_and_update_dot(window):
+    previous = window.settings.value["appearance"]["glass_strength"]
+    window.settings.value["appearance"]["glass_strength"] = 0
+    window.apply_appearance()
+    popup = SettingsHub(window)
+    try:
+        popup.release_hint({"available": True})
+        control = popup.controls["检查更新"]
+        image = control.grab().toImage()
+        assert control.content_alignment == Qt.AlignmentFlag.AlignLeft
+        assert any((color := image.pixelColor(x, y)).red() > 170 and color.green() < 110
+                   for x in range(image.width() * 4 // 5, image.width()) for y in range(image.height()))
+    finally:
+        popup.close()
+        window.settings.value["appearance"]["glass_strength"] = previous
+        window.apply_appearance()
+
+
+def test_default_automatic_can_be_saved_before_requests_and_switched_off(window, monkeypatch):
+    from installer.ui.operator_dialog import OperatorCenter
+    from PySide6.QtWidgets import QMessageBox
+    from windows_mcp.infrastructure.policy import PolicyBlocked, PolicyGate
+
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.operator_review_active", lambda: False)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    store = window.approval_store
+    dialog = OperatorCenter(window, store)
+    assert dialog.auto_approve.isEnabled() and dialog.save_default_button.isEnabled()
+    dialog.auto_approve.setChecked(True)
+    assert not dialog.trust.allows()
+    dialog.save_default_button.click()
+    gate = PolicyGate(approvals=store)
+    assert gate.trust.status()["operator"] == "approval-settings"
+    assert store.pending() == [] and not dialog.isVisible()
+    assert gate.authorize("future-session", "Click", {"loc": [100, 200]}) == 2
+    assert gate.authorize("future-session", "Type", {"text": "next"}) == 2
+    reopened = OperatorCenter(window, store)
+    assert reopened.auto_approve.isChecked()
+    reopened.auto_approve.setChecked(False)
+    reopened.save_default_button.click()
+    assert not gate.trust.allows()
+    with pytest.raises(PolicyBlocked):
+        gate.authorize("future-session", "Click", {"loc": [100, 200]})
+
+
+def test_cancelling_default_approval_does_not_grant_or_approve_pending(window, monkeypatch):
+    from installer.ui.operator_dialog import OperatorCenter
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
+    store = window.approval_store
+    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click")
+    dialog = OperatorCenter(window, store)
+    dialog.auto_approve.setChecked(True)
+    dialog.save_default_button.click()
+    assert not dialog.trust.allows()
+    assert not store.read(request["request_id"])["approved"]
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    dialog.save_default_button.click()
+    assert dialog.trust.allows()
+    assert not store.read(request["request_id"])["approved"]
+
+
+@pytest.fixture
+def operator_dialog(window, tmp_path, monkeypatch):
+    from installer.ui.operator_dialog import OperatorCenter
+    from windows_mcp.infrastructure.approvals import ApprovalStore
+    from windows_mcp.infrastructure.policy import PolicyGate
+
+    # Exercise real widgets and signed temporary records without depending on
+    # another application's live human-review window or sending desktop input.
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.operator_review_active", lambda: False)
+    store = ApprovalStore(tmp_path / "approval-checkbox")
+    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click")
+    dialog = OperatorCenter(window, store, request["request_id"])
+    gate = PolicyGate(approvals=store)
+    yield dialog, gate, request
+    dialog.close()
+
+
+def test_operator_unchecked_approval_is_single_use(operator_dialog, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from windows_mcp.infrastructure.policy import PolicyBlocked
+
+    dialog, gate, _ = operator_dialog
+    assert not dialog.auto_approve.isChecked()
+    assert dialog.approve_button.text() == "批准一次"
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    dialog.approve_button.click()
+    assert not gate.trust.allows()
+    assert gate.authorize("fixture-session", "Click", {"loc": [100, 200]}) == 2
+    with pytest.raises(PolicyBlocked):
+        gate.authorize("fixture-session", "Click", {"loc": [100, 200]})
+
+
+def test_operator_automatic_approval_continues_across_calls_and_restarts(operator_dialog, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from windows_mcp.infrastructure.policy import PolicyBlocked, PolicyGate
+
+    dialog, gate, _ = operator_dialog
+    dialog.auto_approve.setChecked(True)
+    assert dialog.approve_button.text() == "批准并开启全自动"
+    assert not gate.trust.allows()  # Selection alone never grants access.
+    prompts = []
+
+    def confirm(*args):
+        prompts.append(args[2])
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", confirm)
+    dialog.approve_button.click()
+    assert len(prompts) == 1 and "永久有效" in prompts[0]
+    assert gate.trust.status()["mode"] == "forever"
+    assert gate.authorize("fixture-session", "Click", {"loc": [100, 200]}) == 2
+    assert gate.authorize("next-session", "Type", {"text": "next action"}) == 2
+    restarted = PolicyGate(approvals=gate.approvals)
+    assert restarted.authorize("reconnected", "Shortcut", {"shortcut": "down"}) == 2
+    with pytest.raises(PolicyBlocked, match="R3"):
+        restarted.authorize("reconnected", "PowerShell", {"command": "Get-Process"})
+    restarted.trust.revoke()
+    with pytest.raises(PolicyBlocked):
+        gate.authorize("fixture-session", "Type", {"text": "after revocation"})
+
+
+@pytest.mark.parametrize("decision,answer", [(True, False), (False, True)])
+def test_operator_cancel_or_reject_never_enables_automatic(operator_dialog, monkeypatch, decision, answer):
+    from PySide6.QtWidgets import QMessageBox
+
+    dialog, gate, _ = operator_dialog
+    dialog.auto_approve.setChecked(True)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes if answer else QMessageBox.StandardButton.No)
+    dialog.decide(decision)
+    assert not gate.trust.allows()
+    assert not gate.approvals.consume("fixture-session", "Click", {"loc": [100, 200]})
+
+
+def test_operator_refresh_preserves_checkbox_without_granting(operator_dialog):
+    dialog, gate, _ = operator_dialog
+    dialog.auto_approve.setChecked(True)
+    dialog.refresh()
+    assert dialog.auto_approve.isChecked()
+    assert dialog.approve_button.text() == "批准并开启全自动"
+    assert not gate.trust.allows()
+    dialog.auto_approve.setChecked(False)
+    dialog.refresh()
+    assert not dialog.auto_approve.isChecked()
+    assert dialog.approve_button.text() == "批准一次"
+
+
+def test_operator_unchecking_active_trust_restores_single_use(operator_dialog, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    dialog, gate, _ = operator_dialog
+    gate.trust.grant("forever")
+    dialog.auto_approve.setChecked(False)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    dialog.decide(True)
+    assert not gate.trust.allows()
+    assert gate.approvals.consume("fixture-session", "Click", {"loc": [100, 200]})
+
+
+def test_operator_expiry_during_confirmation_never_grants_trust(operator_dialog, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    dialog, gate, request = operator_dialog
+    dialog.auto_approve.setChecked(True)
+    errors = []
+    monkeypatch.setattr(dialog.owner, "error", lambda *args: errors.append(args))
+
+    def confirm(*args):
+        monkeypatch.setattr("windows_mcp.infrastructure.approvals.time.time", lambda: request["expires_at"] + 1)
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", confirm)
+    dialog.decide(True)
+    assert errors and not gate.trust.allows()
+    assert not dialog.auto_approve.isEnabled()
+    assert not dialog.approve_button.isEnabled()
+
+
+def test_operator_r3_request_cannot_enable_automatic(operator_dialog, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    dialog, gate, _ = operator_dialog
+    request = gate.approvals.request("fixture-session", "PowerShell", {"command": "Get-Process"}, 3, "isolated R3")
+    dialog.request_id = request["request_id"]
+    dialog.refresh()
+    assert not dialog.auto_approve.isEnabled()
+    dialog.auto_approve.setChecked(True)
+    assert dialog.approve_button.text() == "批准一次"
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    dialog.decide(True)
+    assert not gate.trust.allows()
+    assert gate.approvals.consume("fixture-session", "PowerShell", {"command": "Get-Process"})
 
 
 def test_advanced_settings_groups_values_without_helper_descriptions(window):
@@ -355,7 +668,9 @@ def test_main_and_panel_headers_have_no_helper_copy_or_permanent_layout_buttons(
     assert not any("可同时安装" in text or "Skill 提供" in text or "拖动" in text or "已接入项请" in text or "最近验证 20" in text for text in labels)
     for dock in window.workspace.docks.values():
         assert not dock.titleBarWidget().findChildren(QPushButton)
-    assert window.workspace.docks["actions"].isAncestorOf(window.settings_button)
+    assert window.top_bar.isAncestorOf(window.settings_button)
+    assert window.top_bar.isAncestorOf(window.about_button)
+    assert not window.workspace.docks["actions"].isAncestorOf(window.settings_button)
     actions = []
     def inspect_menu():
         menu = QApplication.activePopupWidget()
@@ -370,7 +685,9 @@ def test_main_and_panel_headers_have_no_helper_copy_or_permanent_layout_buttons(
 def test_no_duplicate_brand_banner_and_footer_contains_only_action_controls(window):
     assert not any(item.text() == "Windows MCP" for item in window.findChildren(QLabel))
     assert not window.workspace.docks["actions"].findChildren(QProgressBar)
-    assert window.settings_button.isVisible() and window.approval_button.isVisible()
+    assert window.settings_button.isVisible() and window.about_button.isVisible()
+    footer_buttons = {item.text() for item in window.workspace.docks["actions"].widget().findChildren(QPushButton)}
+    assert footer_buttons == {"安装 Skill + MCP", "卸载 Skill + MCP"}
 
 
 def test_progress_fades_without_moving_logs_and_new_task_cancels_old_timeout(window):
@@ -794,11 +1111,13 @@ def test_window_state_changes_finish_the_entire_side_without_leaking_size_limits
 def test_automatic_update_hint_refreshes_open_menu_and_waits_for_user_click(window, monkeypatch):
     window.update_release = None
     hub = SettingsHub(window)
-    assert not hub.update_badge.isVisible()
+    assert not hub.controls["检查更新"].notification_dot
+    original = hub.size(), {name: item.geometry() for name, item in hub.controls.items()}
     release = {"available": True, "current": window.version, "latest": "99.0.0", "notes": "新的更新", "kind": "installer"}
     window.events.put(("update_hint", release))
     window.poll()
-    assert hub.update_badge.isVisible()
+    assert hub.controls["检查更新"].notification_dot
+    assert (hub.size(), {name: item.geometry() for name, item in hub.controls.items()}) == original
     hub.close()
     calls = []
     monkeypatch.setattr(window, "run", lambda *args, **kwargs: calls.append((args, kwargs)))

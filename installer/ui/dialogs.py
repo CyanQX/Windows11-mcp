@@ -7,14 +7,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
 
-from PySide6.QtWidgets import QDialog, QFileDialog, QLineEdit, QPlainTextEdit, QScrollArea, QWidget
+from PySide6.QtWidgets import QDialog, QFileDialog, QLineEdit, QPlainTextEdit, QScrollArea, QWidget, QSizePolicy, QLayout, QStyle
 
-from installer.models import IntegrationStatus, Presence
+from installer.models import IntegrationStatus
 from installer.ui.controls import GlassCheckBox as QCheckBox
 from installer.ui.theme import GlassFrame, button, column, label, row, backdrop
 
 NAMES = {"install": "安装 Skill + MCP", "uninstall": "卸载 Skill + MCP", "repair": "智能修复", "verify": "验证 MCP 连接", "backup": "备份配置", "adopt": "接管外部接入", "upgrade": "升级已安装组件"}
-CLIENT_NAMES = {"claude": "Claude Code", "codex": "Codex 桌面端", "deepseek": "DeepSeek Harness", "opencode": "OpenCode", "gemini": "Gemini CLI"}
+CLIENT_NAMES = {"claude": "Claude Code", "codex": "Codex 桌面端", "deepseek": "DeepSeek Harness", "opencode": "OpenCode", "gemini": "Gemini CLI", "zcode": "Zcode", "trae": "Trae"}
 PROBLEMS = {"INCOMPLETE_INTEGRATION": "接入不完整", "MANAGED_FILE_MODIFIED": "受管文件已修改", "MCP_ENTRY_MODIFIED": "MCP 配置与记录不一致", "RUNTIME_MISSING": "运行时缺失", "RUNTIME_HASH_MISMATCH": "运行时校验不一致", "LEGACY_RECEIPT": "旧版安装记录", "VERSION_DIFFERS": "接入版本不同", "CONFIG_OR_RECEIPT_INVALID": "配置或记录无效", "SCAN_FAILED": "状态读取失败"}
 
 
@@ -52,14 +52,28 @@ def text_box(parent, value):
     return box
 
 
+class DetailsText(QPlainTextEdit):
+    """Keep wheel events inside this detail panel, including at either boundary."""
+    def wheelEvent(self, event):
+        super().wheelEvent(event)
+        event.accept()
+
+
 def disclosure(layout, title, text):
+    layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
     control = button(title, compact=True)
+    control.setProperty("detailToggle", True)
     control.setCheckable(True)
-    box = QPlainTextEdit()
+    box = DetailsText()
     box.setReadOnly(True)
     box.setPlainText(text if isinstance(text, str) else json.dumps(text, ensure_ascii=False, indent=2))
-    box.setMinimumHeight(140)
-    box.setMaximumHeight(240)
+    box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+    box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    box.ensurePolished()
+    margins = box.contentsMargins()
+    chrome = margins.top() + margins.bottom() + round(box.document().documentMargin() * 2)
+    chrome += box.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+    box.setFixedHeight(min(220, max(64, box.document().blockCount() * box.fontMetrics().lineSpacing() + chrome)))
     box.hide()
     control.toggled.connect(box.setVisible)
     layout.addWidget(control)
@@ -158,16 +172,15 @@ class StatusDialog(Detail):
     def __init__(self, owner):
         super().__init__(owner, "安装状态", (850, 680))
         states = owner.selection.states
-        self.body.addWidget(label(f"{sum(s.presence == Presence.DETECTED for s in states.values())} 个客户端已检测   ·   {sum(s.receipt_valid for s in states.values())} 个受管接入", size=14, bold=True))
+        self.body.addWidget(label(f"已安装 {sum(s.receipt_valid for s in states.values())} / {len(states)}", size=14, bold=True))
         content = self.scroll()
         for key, state in states.items():
             card = GlassFrame()
             stack = column(card, 16, 8)
             stack.addWidget(row(label(state.display_name, size=15, bold=True), None, label(state.label, role="success" if state.status == IntegrationStatus.INSTALLED_MANAGED else "secondary")))
-            stack.addWidget(label(f"客户端  {'已检测' if state.presence == Presence.DETECTED else '未检测或不可用'}     Skill  {'已存在' if state.skill_present else '未安装'}     MCP 配置  {'已存在' if state.mcp_entry_present else '未配置'}", wrap=True))
             if state.problem_codes:
                 stack.addWidget(label("\n".join(PROBLEMS.get(code, "需检查：" + code) for code in state.problem_codes), size=12, role="warning", wrap=True))
-            disclosure(stack, "路径与技术详情", {"安装": state.to_dict(), "连接": owner.service.health_results.get(key)})
+            disclosure(stack, "详情", {"安装": state.to_dict(), "连接": owner.service.health_results.get(key)})
             content.addWidget(card)
         content.addStretch()
         self.body.addWidget(row(None, button("关闭", self.close)))
@@ -217,7 +230,7 @@ class Targets(Detail):
         if not eligible:
             body.addWidget(label("暂无目标", role="secondary"))
         body.addStretch()
-        self.next_button = button("开始验证" if operation == "verify" else "创建备份" if operation == "backup" else "查看操作预览", self.preview, primary=True)
+        self.next_button = button("开始验证" if operation == "verify" else "创建备份" if operation == "backup" else "开始", self.preview, primary=True)
         self.next_button.setEnabled(False)
         self.body.addWidget(row(None, button("取消", self.close), self.next_button))
 

@@ -94,7 +94,8 @@ def test_restore_changes_only_windows_mcp_and_preserves_later_other_settings(tmp
 ])
 def test_jsonc_patch_preserves_unrelated_comments_and_values_through_install_uninstall(tmp_path, text):
     service = make_service(tmp_path)
-    profile = service.backend.clients["opencode"]
+    from installer.backend import profiles
+    profile = next(profile for profile in profiles(service.backend.home, {}, include_legacy=True) if profile.id == "opencode")
     config = Configuration(profile, text.encode())
     before = config.document
     config.set({"type": "local", "command": ["new"]})
