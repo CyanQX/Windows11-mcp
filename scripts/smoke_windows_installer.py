@@ -59,6 +59,21 @@ def main():
             raise AssertionError("Existing installation did not complete its progress-only update")
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as entry:
             assert str(destination) in winreg.QueryValueEx(entry, "UninstallString")[0]
+        # Use the exact flags passed by UpdateService.launch_installer. Both
+        # silent modes must complete without competing wizard Next messages.
+        silent_updates = []
+        for mode in ("/SILENT", "/VERYSILENT"):
+            executable.write_bytes(b"MZ isolated previous manager")
+            silent_log = Path(temporary) / (mode[1:].lower() + "-update.log")
+            subprocess.run([str(args.installer.resolve()), mode, "/SUPPRESSMSGBOXES", "/SP-", "/NORESTART", "/WMCPUPDATE=1", "/WMCPNOLAUNCH=1", f"/DIR={destination}", f"/LOG={silent_log}"], check=True, timeout=180)
+            assert hashlib.sha256(executable.read_bytes()).hexdigest() == expected
+            raw = silent_log.read_bytes()
+            content = raw.decode("utf-16" if raw.startswith(b"\xff\xfe") else "utf-8-sig", errors="replace")
+            assert "WMCP_UPDATE_MODE=progress-only" in content
+            assert "Installation process succeeded" in content
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as entry:
+                assert str(destination) in winreg.QueryValueEx(entry, "UninstallString")[0]
+            silent_updates.append(mode)
         subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], check=True, timeout=120)
         deadline = time.monotonic() + 30
         while (executable.exists() or uninstaller.exists()) and time.monotonic() < deadline:
@@ -70,7 +85,7 @@ def main():
             pass
         else:
             raise AssertionError("System uninstall entry was not removed")
-    result = {"installer": args.installer.name, "sha256": hashlib.sha256(args.installer.read_bytes()).hexdigest(), "chosen_directory_installation": "PASS", "system_uninstall_registration": "PASS", "existing_install_progress_only_update": "PASS", "original_install_location_preserved": "PASS", "uninstall": "PASS", "payload_sha256": expected, "actual_executable_validation": validation}
+    result = {"installer": args.installer.name, "sha256": hashlib.sha256(args.installer.read_bytes()).hexdigest(), "chosen_directory_installation": "PASS", "system_uninstall_registration": "PASS", "existing_install_progress_only_update": "PASS", "silent_update_modes": silent_updates, "silent_updates": "PASS", "original_install_location_preserved": "PASS", "uninstall": "PASS", "payload_sha256": expected, "actual_executable_validation": validation}
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=True, indent=2))
 

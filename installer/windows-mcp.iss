@@ -96,12 +96,15 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := ManagerUpdate and (PageID <> wpPreparing) and (PageID <> wpInstalling);
+  { Silent mode already skips the interactive wizard internally. Skipping its
+    initial/ready pages again prevents the engine from starting installation. }
+  Result := ManagerUpdate and (not WizardSilent) and
+    (PageID <> wpPreparing) and (PageID <> wpInstalling);
 end;
 
 procedure CurPageChanged(PageID: Integer);
 begin
-  if ManagerUpdate then
+  if ManagerUpdate and (not WizardSilent) then
   begin
     WizardForm.BackButton.Visible := False;
     WizardForm.NextButton.Visible := False;

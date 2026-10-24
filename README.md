@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Windows-MCP 1.4.4</h1>
+  <h1>Windows-MCP 1.4.5</h1>
   <p>给编程 AI 接入真实 Windows 桌面操作能力</p>
 </div>
 
@@ -8,7 +8,7 @@
 
 ## 工具用途
 
-文档更新：**2026-10-24**。功能说明与截图跟随 [main 最新源码](https://github.com/CyanQX/Windows11-mcp/tree/main) 同步更新，改动记录见 [CHANGELOG](CHANGELOG.md)。当前公开稳定安装包为 [v1.4.4](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.4.4)；本版安装包包含固定布局、全自动授权锁定及六个“关于”页面。
+文档更新：**2026-10-24**。功能说明与截图跟随 [main 最新源码](https://github.com/CyanQX/Windows11-mcp/tree/main) 同步更新，改动记录见 [CHANGELOG](CHANGELOG.md)。当前公开稳定安装包为 [v1.4.5](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.4.5)；本版包含固定布局、全自动授权锁定及六个“关于”页面，并修复静默更新在安装前退出的问题；发布验收使用管理器实际传入的更新参数。
 
 Windows-MCP 是面向 Claude Code、Codex、DeepSeek Harness、Gemini CLI、Zcode、Trae 的 Windows 自动化服务。连接后，AI 可以读取窗口和控件，操作真实应用、浏览器与文件，并核对实际结果。
 
@@ -42,12 +42,12 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 选择一种下载，当前为 v1.4.4。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python；每个安装包的具体功能与更新说明见其对应 Release。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 选择一种下载，当前为 v1.4.5。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python；每个安装包的具体功能与更新说明见其对应 Release。
 
 | 下载 | 使用方法 | 管理数据位置 |
 |---|---|---|
-| [Windows-MCP-Setup-v1.4.4-x64.exe](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.4/Windows-MCP-Setup-v1.4.4-x64.exe) | 首次运行安装向导选择位置，后续升级直接显示进度页 | 当前用户的 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [Windows-MCP-Portable-v1.4.4-x64.zip](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.4/Windows-MCP-Portable-v1.4.4-x64.zip) | 完整解压后双击 `Windows-MCP.exe`，直接打开管理页面 | 解压目录旁的 `data`，包含设置、日志、备份、收据、运行时和审批数据 |
+| [Windows-MCP-Setup-v1.4.5-x64.exe](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.5/Windows-MCP-Setup-v1.4.5-x64.exe) | 首次运行安装向导选择位置，后续升级直接显示进度页 | 当前用户的 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [Windows-MCP-Portable-v1.4.5-x64.zip](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.5/Windows-MCP-Portable-v1.4.5-x64.zip) | 完整解压后双击 `Windows-MCP.exe`，直接打开管理页面 | 解压目录旁的 `data`，包含设置、日志、备份、收据、运行时和审批数据 |
 
 安装版提供路径选择、开始菜单入口和系统卸载程序，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Windows-MCP`，无需管理员权限。可从 Windows“设置 → 应用 → 已安装的应用”卸载管理器；**Skill 与 MCP 接入在管理器页面中单独卸载**，卸载管理器会保留这些接入和个人数据。
 
@@ -85,7 +85,7 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 已有 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/) 时，可继续安装固定版本：
 
 ```powershell
-uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.4.4"
+uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.4.5"
 ```
 
 将 `%USERPROFILE%\.local\bin\windows-mcp.exe` 作为客户端 MCP 命令，参数为 `["serve"]`。使用 Skill 可从本仓库 `main` 的 `skills/windows-mcp` 复制到上表相应目录。工具参数与可选设置见 [Skill 参考](skills/windows-mcp/references/advanced.md)。
