@@ -26,10 +26,6 @@ class OperatorCenter(Detail):
         self.body.addWidget(self.auto_approve)
         self.trust_hint = label("", role="secondary", wrap=True)
         self.body.addWidget(self.trust_hint)
-        self.body.addWidget(label(
-            "可在任务开始前勾选并保存全自动，后续鼠标、键盘和网页操作无需逐次审批。"
-            "不勾选则使用逐次审批。命令执行等高级权限仍按服务设置单独审批。",
-            role="secondary", wrap=True))
         self.default_notice = label("", role="warning", wrap=True)
         self.default_notice.hide()
         self.body.addWidget(self.default_notice)
@@ -72,7 +68,6 @@ class OperatorCenter(Detail):
             index = self.selector.count() - 1
         self.selector.setCurrentIndex(index)
         self.selector.blockSignals(False)
-        self.render()
         try:
             trust = self.trust.status()
         except (OSError, ValueError):
@@ -81,18 +76,25 @@ class OperatorCenter(Detail):
         if active != self._trust_active:
             self._trust_active = active
             self.auto_approve.setChecked(active)
+        if active:
+            self.auto_approve.setChecked(True)
+        self.render()
         if trust is None:
             self.trust_hint.setText("当前为逐次审批；可提前保存全自动，也可在本次审批时勾选并批准。")
         else:
             until = "永久有效" if trust.get("expires_at") is None else "至 " + datetime.fromtimestamp(trust["expires_at"]).astimezone().strftime("%Y-%m-%d %H:%M")
-            self.trust_hint.setText(f"已开启完全授权（{until}）：鼠标、键盘等操作不再逐次询问，可随时撤销。")
+            self.trust_hint.setText(f"已开启全自动（{until}）。如需关闭，请点击「操作授权… → 撤销授权」。")
 
     def enable_defaults(self):
         self.defaults_enabled = True
         self.defaults_row.show()
+        self.refresh()
 
     def save_defaults(self):
         if not self.defaults_enabled:
+            return
+        if self.trust.allows():
+            self.refresh()
             return
         automatic = self.auto_approve.isChecked()
         message = ("保存默认全自动？\n\n后续鼠标、键盘和网页操作将直接执行，无需等待首个审批请求。\n"
@@ -105,8 +107,6 @@ class OperatorCenter(Detail):
         try:
             if automatic:
                 self.trust.grant("forever", operator="approval-settings")
-            else:
-                self.trust.revoke()
             # Closing the human review sheet releases the desktop-input pause.
             self.close()
         except (OSError, ValueError) as exc:
@@ -134,7 +134,8 @@ class OperatorCenter(Detail):
                 self.approve_button.setEnabled(False)
         self.details.setPlainText(text)
         self.expiry.setText(f"剩余 {max(0, int(record['expires_at'] - time.time()))} 秒" if record else "")
-        self.auto_approve.setEnabled(self.defaults_enabled or (self.approve_button.isEnabled() and record["risk"] == 2))
+        self.auto_approve.setEnabled(not self._trust_active and (self.defaults_enabled or (self.approve_button.isEnabled() and record["risk"] == 2)))
+        self.save_default_button.setEnabled(not self._trust_active)
         self.update_approval_mode()
 
     def update_approval_mode(self, *_):
@@ -159,16 +160,12 @@ class OperatorCenter(Detail):
             else:
                 title = "确认本次决定"
                 message = f"{'批准一次' if approve else '拒绝'} {record['tool']} 请求 {self.request_id[:10]}？"
-                if approve and record["risk"] == 2 and self.trust.allows():
-                    message += "\n将关闭全自动，恢复后续操作逐次审批。"
             answer = QMessageBox.question(self, title, message, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 return
             if approve:
-                if record["risk"] == 2 and not automatic:
-                    self.trust.revoke()
                 self.store.approve(self.request_id)
-                if automatic:
+                if automatic and not self.trust.allows():
                     self.trust.grant("forever", operator="approval-ui")
             else:
                 self.store.reject(self.request_id)
@@ -244,6 +241,8 @@ class TrustCenter(Detail):
             self.notice.setText("已开启完全授权，服务会在下一次操作时直接生效。")
             self.confirm.setChecked(False)
             self.refresh()
+            if getattr(self.owner, "operator_window", None):
+                self.owner.operator_window.refresh()
         except Exception as exc:
             self.notice.setText(f"授权失败：{exc}")
 
@@ -258,5 +257,7 @@ class TrustCenter(Detail):
             self.store.revoke()
             self.notice.setText("已撤销完全授权，已恢复逐次审批。")
             self.refresh()
+            if getattr(self.owner, "operator_window", None):
+                self.owner.operator_window.refresh()
         except Exception as exc:
             self.notice.setText(f"撤销失败：{exc}")

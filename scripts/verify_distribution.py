@@ -60,7 +60,7 @@ def verify(dist: Path, tag: str | None = None) -> dict:
             assert path in members, f"Source distribution is missing: {path}"
             assert archive.extractfile(members[path]).read() == content, f"Source distribution differs: {path}"
         required = ["README.md", "CHANGELOG.md", "LICENSE.md", "CLAUDE.md", "pyproject.toml", "manifest.json", "uv.lock", "MANIFEST.in"]
-        required.extend(path.relative_to(ROOT).as_posix() for folder in ("assets", "tests", "scripts", ".github", ".claude", "installer", "skills") for path in (ROOT / folder).rglob("*") if path.is_file() and path.suffix in {".py", ".png", ".svg", ".txt", ".json", ".yml", ".md", ".iss", ".isl"} and "__pycache__" not in path.parts)
+        required.extend(path.relative_to(ROOT).as_posix() for folder in ("assets", "tests", "scripts", ".github", ".claude", "installer", "skills") for path in (ROOT / folder).rglob("*") if path.is_file() and path.suffix in {".py", ".png", ".svg", ".txt", ".json", ".yml", ".md", ".iss", ".isl", ".html"} and "__pycache__" not in path.parts)
         for name in required:
             assert name in members, f"Source distribution is missing release file: {name}"
             assert archive.extractfile(members[name]).read() == (ROOT / name).read_bytes(), f"Source distribution differs: {name}"

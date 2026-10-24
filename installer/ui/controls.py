@@ -1,7 +1,7 @@
 """Crisp selection controls with native checkbox semantics and quiet focus feedback."""
-from PySide6.QtCore import Qt, QRectF, QSize, QPoint
+from PySide6.QtCore import Qt, QRectF, QSize, QPoint, QEvent, QTimer
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QCheckBox, QComboBox, QListView, QSizePolicy, QFrame, QVBoxLayout, QStyledItemDelegate, QStyle
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QListView, QSizePolicy, QFrame, QVBoxLayout, QStyledItemDelegate, QStyle, QLabel
 
 from installer.ui.theme import theme
 from installer.ui.tactile_material import paint_glass, tokens_for
@@ -87,11 +87,19 @@ class ChoiceBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.popup = ChoicePopup(self)
+        self._trigger_dismiss = False
+        QApplication.instance().installEventFilter(self)
         self.setMinimumHeight(42)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMaxVisibleItems(8)
 
     def showPopup(self):
+        if self._trigger_dismiss:
+            self._trigger_dismiss = False
+            return
+        if self.popup.isVisible():
+            self.hidePopup()
+            return
         if not self.isEnabled() or not self.count():
             return
         view = self.popup.list
@@ -115,6 +123,49 @@ class ChoiceBox(QComboBox):
     def hidePopup(self):
         self.popup.hide()
         super().hidePopup()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            if self.popup.isVisible() and self.rect().contains(self.mapFromGlobal(event.globalPosition().toPoint())):
+                self._trigger_dismiss = True
+                self.hidePopup()
+                QTimer.singleShot(0, self.clear_trigger_dismiss)
+        return super().eventFilter(watched, event)
+
+    def clear_trigger_dismiss(self):
+        self._trigger_dismiss = False
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class StepValue(QLabel):
+    """Display a number without allowing text selection or direct editing."""
+    def __init__(self):
+        super().__init__()
+        self._value, self._minimum, self._maximum = 0, 0, 99
+        self.setProperty("stepValue", True)
+        self.setMinimumHeight(42)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+
+    def setRange(self, minimum, maximum):
+        self._minimum, self._maximum = minimum, maximum
+        self.setValue(self._value)
+
+    def setValue(self, value):
+        self._value = min(self._maximum, max(self._minimum, value))
+        self.setText(str(self._value))
+
+    def value(self):
+        return self._value
+
+    def stepDown(self):
+        self.setValue(self._value - 1)
+
+    def stepUp(self):
+        self.setValue(self._value + 1)
 
     def wheelEvent(self, event):
         event.ignore()

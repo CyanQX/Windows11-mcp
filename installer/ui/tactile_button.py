@@ -258,9 +258,10 @@ class TactileGlassButton(QPushButton):
 
     def paintEvent(self, event):
         current = manager_theme()
+        transparent = bool(self.property("transparent"))
         native = self.material is None and current and not current.appearance["glass_strength"]
         aligned_left = bool(self.content_alignment & Qt.AlignmentFlag.AlignLeft)
-        if native and not aligned_left:
+        if native and not aligned_left and not transparent:
             return super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -275,15 +276,15 @@ class TactileGlassButton(QPushButton):
         if self.variant == "circle":
             side = min(rect.width(), rect.height())
             rect = QRectF(rect.center().x() - side / 2, rect.center().y() - side / 2, side, side)
-        if native:
+        if native and not transparent:
             option = QStyleOptionButton()
             self.initStyleOption(option)
             option.text, option.icon = "", QIcon()
             self.style().drawControl(QStyle.ControlElement.CE_PushButton, option, painter, self)
-        else:
+        elif not transparent:
             paint_glass(painter, rect, min(rect.width(), rect.height()) / 2, tokens, hover=hover, press=press, enabled=self.isEnabled() or self._loading, focus=focus, motion_scale=0.0 if self.reduced_motion else 1.0)
         content = rect.translated(0, tokens.press_distance * physical_press)
-        if native:
+        if native or transparent:
             color = QColor(current.colors["text" if self.isEnabled() else "secondary"])
         else:
             color = QColor(tokens.text if self.isEnabled() or self._loading else "#344852")
@@ -307,7 +308,10 @@ class TactileGlassButton(QPushButton):
             x += icon_size + (8 if text else 0)
         if text:
             text_rect = QRectF(x, content.top(), self.fontMetrics().horizontalAdvance(text) + 1, content.height())
-            painter.setPen(QColor(26, 43, 53, 90))
-            painter.drawText(text_rect.translated(.2, .8), Qt.AlignmentFlag.AlignCenter, text)
+            if not transparent:
+                painter.setPen(QColor(26, 43, 53, 90))
+                painter.drawText(text_rect.translated(.2, .8), Qt.AlignmentFlag.AlignCenter, text)
             painter.setPen(color)
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, text)
+            if transparent and focus:
+                painter.drawLine(text_rect.bottomLeft(), text_rect.bottomRight())

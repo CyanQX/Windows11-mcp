@@ -1,14 +1,14 @@
-"""Exercise the actual Qt widgets, dock persistence and background work lifecycle."""
+"""Exercise fixed panels, real widget interactions and background work lifecycle."""
 from pathlib import Path
 import copy
 import threading
 import time
 
 import pytest
-from PySide6.QtCore import Qt, QPoint, QPointF, QEvent, QTimer
-from PySide6.QtGui import QMouseEvent, QAccessible, QWheelEvent, QColor
+from PySide6.QtCore import Qt, QPoint, QPointF, QEvent, QUrl
+from PySide6.QtGui import QAccessible, QWheelEvent, QColor, QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QProgressBar, QMenu, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QProgressBar, QPushButton
 
 from installer.settings import SettingsService
 from installer.models import SelectionModel
@@ -22,16 +22,6 @@ from tests.installer_helpers import make_service
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def wait_for_workspace(space):
-    # Wait for the real animation endpoint on a busy Windows runner, while
-    # retaining a deadline that fails stalled transitions.
-    deadline = time.monotonic() + 3
-    while space.transitions and time.monotonic() < deadline:
-        QTest.qWait(20)
-    assert not space.transitions
-    QTest.qWait(20)
-
-
 @pytest.fixture(scope="module")
 def native_window(tmp_path_factory):
     app = application()
@@ -42,12 +32,20 @@ def native_window(tmp_path_factory):
     window.show()
     QTest.qWait(100)
     yield window
+    if window.selector.popup:
+        window.selector.popup.close()
     window.close()
     app.processEvents()
 
 
 @pytest.fixture
-def window(native_window, tmp_path):
+def window(native_window, tmp_path, monkeypatch):
+    from installer.detection import ClientDiscovery
+    from installer.models import Presence
+    class IsolatedDiscovery(ClientDiscovery):
+        def detect(self, profile):
+            return super().detect(profile) if self.overrides.get(profile.id) else (Presence.NOT_FOUND, None)
+    monkeypatch.setattr(native_window.settings, "discovery", lambda: IsolatedDiscovery(tmp_path))
     for dialog in list(native_window.dialogs):
         dialog.close()
     if native_window.selector.popup:
@@ -176,72 +174,6 @@ def test_status_shows_readable_facts_and_collapses_raw_details(window):
     dialog.close()
 
 
-def test_docks_swap_float_collapse_restore_and_persist(window):
-    space = window.workspace
-    left, right = space.docks["targets"], space.docks["maintenance"]
-    space.swap(left, right)
-    assert space.canvas.dockWidgetArea(left) == Qt.DockWidgetArea.RightDockWidgetArea
-    assert left.isVisible() and right.isVisible()
-    right.setFloating(True)
-    right.move(window.pos())
-    assert right.isFloating()
-    space.collapse(left)
-    assert left.isVisible()  # Slide first; park only after the animation.
-    wait_for_workspace(window.workspace)
-    assert left.isHidden() and space.collapsed["targets"][0] == "right"
-    snapshot = space.snapshot()
-    space.reset()
-    space.load(snapshot)
-    assert space.docks["maintenance"].isFloating()
-    assert "targets" in space.collapsed
-    space.collapsed["targets"][1].control.click()
-    assert left.isVisible() and "targets" not in space.collapsed
-    space.load({"schema": 1, "state": "broken!"})
-    assert not space.collapsed
-    assert all(not item.isFloating() for item in space.docks.values())
-
-
-def test_separator_drag_past_minimum_parks_panel_and_handle_drag_restores(window):
-    canvas = window.workspace.canvas
-    dock = window.workspace.docks["targets"]
-    point = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
-    global_point = canvas.mapToGlobal(point)
-    press = QMouseEvent(QEvent.Type.MouseButtonPress, point, global_point, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
-    assert window.workspace.eventFilter(canvas, press) is False
-    minimum = dock.minimumSizeHint().width()
-    canvas.resizeDocks([dock, window.workspace.docks["maintenance"]], [minimum, canvas.width() - minimum - 12], Qt.Orientation.Horizontal)
-    QTest.qWait(30)
-    destination = QPoint(dock.minimumSizeHint().width() - 160, point.y())
-    move = QMouseEvent(QEvent.Type.MouseMove, destination, canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
-    window.workspace.eventFilter(canvas, move)
-    assert dock.isVisible() and "targets" not in window.workspace.collapsed
-    assert window.workspace.preview.fraction > 0.4
-    release = QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
-    window.workspace.eventFilter(canvas, release)
-    wait_for_workspace(window.workspace)
-    assert "targets" in window.workspace.collapsed
-    handle = window.workspace.collapsed["targets"][1]
-    origin = handle.control.mapToGlobal(QPoint(5, 5))
-    handle.eventFilter(handle.control, QMouseEvent(QEvent.Type.MouseButtonPress, QPoint(5, 5), origin, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    handle.eventFilter(handle.control, QMouseEvent(QEvent.Type.MouseMove, QPoint(45, 5), origin + QPoint(40, 0), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    assert dock.isVisible() and window.workspace.preview and "targets" in window.workspace.collapsed
-    handle.eventFilter(handle.control, QMouseEvent(QEvent.Type.MouseMove, QPoint(605, 5), origin + QPoint(600, 0), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    handle.eventFilter(handle.control, QMouseEvent(QEvent.Type.MouseButtonRelease, QPoint(605, 5), origin + QPoint(600, 0), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-    wait_for_workspace(window.workspace)
-    assert "targets" not in window.workspace.collapsed and dock.isVisible()
-
-
-def test_footer_remains_compact_when_both_content_panels_are_parked(window):
-    space = window.workspace
-    space.collapse(space.docks["targets"])
-    space.collapse(space.docks["maintenance"])
-    wait_for_workspace(window.workspace)
-    assert space.placeholder.isVisible()
-    assert space.docks["actions"].height() < 230
-    assert space.collapsed["targets"][1].control.width() <= 38
-    space.reset()
-
-
 def test_appearance_commits_only_when_done_without_rescanning(window):
     service, events = window.service, list(window.service.log.events)
     original = copy.deepcopy(window.settings.value)
@@ -272,22 +204,23 @@ def test_appearance_wheel_and_cancel_never_change_saved_preferences(window, monk
     popup.choose_color()
     popup.controls["theme"].setCurrentIndex(2)
     popup.strength.setCurrentIndex(0)
-    popup.request_layout_reset()
     popup.close()
     QTest.qWait(250)
     assert window.settings.value == original
 
 
-def test_client_folder_picker_keeps_folder_and_scans_in_background(window, tmp_path, monkeypatch):
+def test_client_folder_picker_keeps_real_folder_for_explicit_background_detection(window, tmp_path, monkeypatch):
     folder = tmp_path / "Harness"
     folder.mkdir()
     (folder / "DeepSeek Harness.exe").write_bytes(b"fixture")
     monkeypatch.setattr("installer.ui.settings_dialog.QFileDialog.getExistingDirectory", lambda *_: str(folder))
     popup = Preferences(window)
+    QTest.qWait(50)
     popup.browse("exe:deepseek")
+    popup.detect_button.click()
     assert popup.fields["exe:deepseek"].text() == str(folder)
     deadline = time.monotonic() + 5
-    while window.busy and time.monotonic() < deadline:
+    while popup.folder_notices["exe:deepseek"].text() == "正在检测…" and time.monotonic() < deadline:
         QTest.qWait(30)
     assert not window.busy
     assert "DeepSeek Harness.exe" in popup.folder_notices["exe:deepseek"].text()
@@ -361,7 +294,7 @@ def test_undo_button_cancels_background_install_and_preserves_previous_client(wi
 
 def test_settings_order_and_no_external_adoption_menu(window):
     popup = SettingsHub(window)
-    assert popup.names == ["外观", "高级设置", "操作审批", "操作授权", "配置与恢复", "安装目录", "检查更新", "日志与诊断"]
+    assert popup.names == ["外观", "高级设置", "操作审批", "配置与恢复", "安装目录", "检查更新", "日志与诊断"]
     popup.close()
 
 
@@ -389,18 +322,116 @@ def test_trust_center_reflects_grant_and_revoke(window, tmp_path):
         window.approval_store = None
 
 
-def test_top_navigation_stays_available_when_install_actions_are_parked(window):
+def test_top_navigation_is_transparent_and_stays_above_fixed_panels(window):
     assert window.top_bar.geometry().bottom() < window.workspace.geometry().top()
     assert window.settings_button.geometry().right() < window.about_button.geometry().left()
-    window.workspace.collapse(window.workspace.docks["actions"])
-    wait_for_workspace(window.workspace)
-    assert window.workspace.docks["actions"].isHidden()
     assert window.settings_button.isVisible() and window.about_button.isVisible()
+    assert window.settings_button.property("transparent") and window.about_button.property("transparent")
     window.about_button.click()
     about = window.dialogs[-1]
     assert about.windowTitle() == "关于 Windows MCP"
     assert any(item.text() == window.version for item in about.findChildren(QLabel))
     about.close()
+
+
+def test_fixed_panels_ignore_title_and_boundary_drags_and_old_layout(window):
+    from PySide6.QtWidgets import QDockWidget, QSplitter
+    space = window.workspace
+    assert not space.findChildren(QDockWidget) and not space.findChildren(QSplitter)
+    initial = {key: panel.geometry() for key, panel in space.panels.items()}
+    for panel in space.panels.values():
+        for target, start in ((panel.heading, panel.heading.rect().center()), (space, QPoint(panel.x() + panel.width() + 5, panel.y() + 80))):
+            end = start + QPoint(-180, 60)
+            QTest.mousePress(target, Qt.MouseButton.LeftButton, pos=start)
+            QApplication.sendEvent(target, QMouseEvent(QEvent.Type.MouseMove, end, target.mapToGlobal(end), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+            QTest.mouseRelease(target, Qt.MouseButton.LeftButton, pos=end)
+    space.load({"state": "legacy native dock state", "collapsed": {"targets": "left"}})
+    assert all(panel.isVisible() and panel.geometry() == initial[key] for key, panel in space.panels.items())
+    assert space.snapshot() == {"schema": 2, "mode": "fixed"}
+    original_size = window.size()
+    window.resize(1000, 680)
+    QTest.qWait(30)
+    left, right, actions = (space.panels[key].geometry() for key in ("targets", "maintenance", "actions"))
+    assert left.top() == right.top() and left.bottom() == actions.bottom()
+    assert left.right() < right.left() and actions.left() == right.left()
+    assert right.bottom() < actions.top() and actions.height() == 150
+    window.resize(original_size)
+
+
+@pytest.mark.parametrize("key", ["theme", "log_background", "strength"])
+def test_appearance_choices_toggle_on_repeated_trigger_clicks(window, key):
+    dialog = Appearance(window)
+    choice = dialog.strength if key == "strength" else dialog.controls[key]
+    QTest.qWait(30)
+    original = choice.currentIndex()
+    for expected in (True, False, True, False):
+        QTest.mouseClick(choice, Qt.MouseButton.LeftButton)
+        QTest.qWait(20)
+        assert choice.popup.isVisible() == expected
+        assert choice.currentIndex() == original
+    dialog.close()
+
+
+def test_numeric_preferences_cannot_select_text_but_step_buttons_work(window):
+    dialog = Preferences(window)
+    QTest.qWait(30)
+    for key, title in (("health_timeout", "连接检查超时（秒）"), ("log_retention_days", "日志保留天数"), ("log_max_mb", "日志总容量上限（MB）")):
+        value = dialog.fields[key]
+        original = value.value()
+        QTest.mouseDClick(value, Qt.MouseButton.LeftButton)
+        QTest.mousePress(value, Qt.MouseButton.LeftButton, pos=QPoint(10, 15))
+        QTest.mouseMove(value, QPoint(value.width() - 10, 15))
+        QTest.mouseRelease(value, Qt.MouseButton.LeftButton, pos=QPoint(value.width() - 10, 15))
+        assert value.textInteractionFlags() == Qt.TextInteractionFlag.NoTextInteraction
+        assert not value.hasSelectedText() and value.value() == original
+        next(item for item in dialog.findChildren(QPushButton) if item.accessibleName() == "增加" + title).click()
+        assert value.value() == original + 1
+        next(item for item in dialog.findChildren(QPushButton) if item.accessibleName() == "减少" + title).click()
+        assert value.value() == original
+    dialog.close()
+
+
+def test_preferences_detects_existing_programs_without_saving_and_reports_absence(window, tmp_path, monkeypatch):
+    from installer.models import Presence
+    from installer.detection import ClientDiscovery
+    executable = tmp_path / "Trae.exe"
+    executable.write_bytes(b"fixture, never executed")
+    class Discovery(ClientDiscovery):
+        def detect(self, profile):
+            return (Presence.DETECTED, str(executable)) if profile.id == "trae" else (Presence.NOT_FOUND, None)
+    monkeypatch.setattr(window.settings, "discovery", lambda: Discovery(tmp_path))
+    original = copy.deepcopy(window.settings.value)
+    dialog = Preferences(window)
+    deadline = time.monotonic() + 3
+    while not dialog.fields["exe:trae"].text() and time.monotonic() < deadline:
+        QTest.qWait(20)
+    assert dialog.fields["exe:trae"].text() == str(executable)
+    assert dialog.folder_notices["exe:zcode"].text() == "未安装，无法检测"
+    assert window.settings.value == original and not window.busy
+    dialog.fields["exe:trae"].setText("user-edited-draft")
+    generation = dialog.detection_generations["exe:trae"]
+    dialog.detected({"exe:trae": (generation, "", str(executable), "late result")})
+    assert dialog.fields["exe:trae"].text() == "user-edited-draft"
+    dialog.close()
+
+
+def test_about_has_five_complete_local_policies_and_opens_bundled_licenses(window):
+    from installer.ui.settings_dialog import About, POLICIES
+    dialog = About(window)
+    assert [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())] == [name for name, _ in POLICIES]
+    for title, _ in POLICIES:
+        text = dialog.documents[title].toPlainText()
+        assert "jingyanx2@gmail.com" in text and "2026 年 10 月 24 日" in text
+        assert len(text) > 1000 and "CyanQX / Windows-MCP" in text
+    privacy = dialog.documents["隐私政策"].toPlainText()
+    assert all(phrase in privacy for phrase in ("默认关闭", "境外", "撤回", "删除", "DPAPI", "30 天", "50 MB", "AI 客户端"))
+    for url, required in (("license:mit", "Permission is hereby granted"), ("license:qt", "GNU LESSER GENERAL PUBLIC LICENSE"), ("license:thirdparty", "Declared license")):
+        dialog.open_reference(QUrl(url))
+        notice = window.dialogs[-1]
+        from PySide6.QtWidgets import QTextBrowser
+        assert required in notice.findChild(QTextBrowser).toPlainText()
+        notice.close()
+    dialog.close()
 
 
 def test_settings_notification_dot_is_on_the_right_and_preserves_row_alignment(window):
@@ -474,8 +505,16 @@ def test_default_automatic_can_be_saved_before_requests_and_switched_off(window,
     assert gate.authorize("future-session", "Type", {"text": "next"}) == 2
     reopened = OperatorCenter(window, store)
     assert reopened.auto_approve.isChecked()
-    reopened.auto_approve.setChecked(False)
-    reopened.save_default_button.click()
+    assert not reopened.auto_approve.isEnabled() and not reopened.save_default_button.isEnabled()
+    QTest.mouseClick(reopened.auto_approve, Qt.MouseButton.LeftButton)
+    assert reopened.auto_approve.isChecked() and gate.trust.allows()
+    from installer.ui.operator_dialog import TrustCenter
+    trust = TrustCenter(window)
+    trust.revoke_button.click()
+    reopened.refresh()
+    assert not reopened.auto_approve.isChecked() and reopened.auto_approve.isEnabled()
+    trust.close()
+    reopened.close()
     assert not gate.trust.allows()
     with pytest.raises(PolicyBlocked):
         gate.authorize("future-session", "Click", {"loc": [100, 200]})
@@ -587,15 +626,18 @@ def test_operator_refresh_preserves_checkbox_without_granting(operator_dialog):
     assert dialog.approve_button.text() == "批准一次"
 
 
-def test_operator_unchecking_active_trust_restores_single_use(operator_dialog, monkeypatch):
+def test_operator_cannot_uncheck_active_trust_or_revoke_while_approving(operator_dialog, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
     dialog, gate, _ = operator_dialog
     gate.trust.grant("forever")
-    dialog.auto_approve.setChecked(False)
+    dialog.refresh()
+    assert dialog.auto_approve.isChecked() and not dialog.auto_approve.isEnabled()
+    QTest.mouseClick(dialog.auto_approve, Qt.MouseButton.LeftButton)
+    assert dialog.auto_approve.isChecked()
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
     dialog.decide(True)
-    assert not gate.trust.allows()
+    assert gate.trust.allows()
     assert gate.approvals.consume("fixture-session", "Click", {"loc": [100, 200]})
 
 
@@ -642,8 +684,8 @@ def test_advanced_settings_groups_values_without_helper_descriptions(window):
     assert "连接与日志" in labels and "编程端程序路径" in labels
     assert not any("Codex CLI" in text for text in labels)
     assert dialog.fields["health_timeout"].width() >= 100
-    editor = dialog.fields["health_timeout"].lineEdit()
-    assert editor.width() >= editor.fontMetrics().horizontalAdvance(editor.displayText()) + 24
+    editor = dialog.fields["health_timeout"]
+    assert editor.width() >= editor.fontMetrics().horizontalAdvance(editor.text()) + 24
     assert dialog.fields["exe:deepseek"].accessibleName() == "DeepSeek Harness"
     dialog.close()
 
@@ -666,27 +708,18 @@ def test_glass_selection_keeps_keyboard_accessibility_and_disabled_protection(wi
 def test_main_and_panel_headers_have_no_helper_copy_or_permanent_layout_buttons(window):
     labels = [item.text() for item in window.findChildren(QLabel)]
     assert not any("可同时安装" in text or "Skill 提供" in text or "拖动" in text or "已接入项请" in text or "最近验证 20" in text for text in labels)
-    for dock in window.workspace.docks.values():
-        assert not dock.titleBarWidget().findChildren(QPushButton)
+    for panel in window.workspace.panels.values():
+        assert not panel.heading.findChildren(QPushButton)
     assert window.top_bar.isAncestorOf(window.settings_button)
     assert window.top_bar.isAncestorOf(window.about_button)
-    assert not window.workspace.docks["actions"].isAncestorOf(window.settings_button)
-    actions = []
-    def inspect_menu():
-        menu = QApplication.activePopupWidget()
-        if isinstance(menu, QMenu):
-            actions.extend(item.text() for item in menu.actions())
-            menu.close()
-    QTimer.singleShot(60, inspect_menu)
-    window.workspace.dock_menu(window.workspace.docks["targets"])
-    assert "收起面板" in actions and "恢复默认布局" in actions
+    assert not window.workspace.panels["actions"].isAncestorOf(window.settings_button)
 
 
 def test_no_duplicate_brand_banner_and_footer_contains_only_action_controls(window):
     assert not any(item.text() == "Windows MCP" for item in window.findChildren(QLabel))
-    assert not window.workspace.docks["actions"].findChildren(QProgressBar)
+    assert not window.workspace.panels["actions"].findChildren(QProgressBar)
     assert window.settings_button.isVisible() and window.about_button.isVisible()
-    footer_buttons = {item.text() for item in window.workspace.docks["actions"].widget().findChildren(QPushButton)}
+    footer_buttons = {item.text() for item in window.workspace.panels["actions"].content.findChildren(QPushButton)}
     assert footer_buttons == {"安装 Skill + MCP", "卸载 Skill + MCP"}
 
 
@@ -712,7 +745,7 @@ def test_progress_fades_without_moving_logs_and_new_task_cancels_old_timeout(win
 def test_success_hide_timer_also_runs_while_maintenance_panel_is_parked(window):
     strip = window.task_strip
     strip.begin()
-    dock = window.workspace.docks["maintenance"]
+    dock = window.workspace.panels["maintenance"]
     dock.hide()
     assert not strip.content.isVisible() and not strip.content.isHidden()
     strip.complete(True)
@@ -721,41 +754,6 @@ def test_success_hide_timer_also_runs_while_maintenance_panel_is_parked(window):
     QTest.qWait(420)
     dock.show()
     assert strip.content.isHidden()
-
-
-def test_drag_short_of_edge_threshold_returns_without_parking(window):
-    space, canvas = window.workspace, window.workspace.canvas
-    dock = space.docks["targets"]
-    point = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
-    space.eventFilter(canvas, QMouseEvent(QEvent.Type.MouseButtonPress, point, canvas.mapToGlobal(point), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    minimum = dock.minimumSizeHint().width()
-    canvas.resizeDocks([dock, space.docks["maintenance"]], [minimum, canvas.width() - minimum - 12], Qt.Orientation.Horizontal)
-    QTest.qWait(30)
-    destination = QPoint(minimum - 20, point.y())
-    space.eventFilter(canvas, QMouseEvent(QEvent.Type.MouseMove, destination, canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    assert space.preview and 0 < space.preview.fraction < 0.75
-    space.eventFilter(canvas, QMouseEvent(QEvent.Type.MouseButtonRelease, destination, canvas.mapToGlobal(destination), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-    wait_for_workspace(window.workspace)
-    assert dock.isVisible() and not space.collapsed and not space.transitions
-
-
-def test_native_splitter_dispatch_resizes_before_it_parks(window):
-    space, canvas = window.workspace, window.workspace.canvas
-    dock = space.docks["targets"]
-    point = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
-    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=point)
-    minimum = dock.minimumSizeHint().width()
-    for x in range(point.x(), minimum - 170, -10):
-        position = QPoint(x, point.y())
-        QApplication.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, position, canvas.mapToGlobal(position), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-        QApplication.processEvents()
-    assert dock.width() <= minimum + 16
-    assert space.preview and space.preview.fraction > 0.4
-    assert dock.isVisible() and not space.collapsed
-    assert space.docks["maintenance"].x() <= dock.geometry().right() + 13, "The native separator must release its old footprint too"
-    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(minimum - 160, point.y()))
-    wait_for_workspace(window.workspace)
-    assert "targets" in space.collapsed and dock.isHidden()
 
 
 def test_task_progress_waits_for_actual_completion_and_never_displays_premature_100(window):
@@ -806,84 +804,6 @@ def test_expired_explicit_approval_never_switches_or_grants(window, tmp_path):
     dialog.close()
 
 
-@pytest.mark.parametrize("key,edge", [("targets", "left"), ("maintenance", "right"), ("actions", "bottom"), ("actions", "top")])
-def test_slide_moves_the_whole_panel_and_releases_real_layout_space(window, key, edge):
-    from installer.ui.workspace import SlidePreview
-    space = window.workspace
-    dock = space.docks[key]
-    space.move_to(dock, edge)
-    QTest.qWait(60)
-    body, title = dock.widget(), dock.titleBarWidget()
-    horizontal = edge in {"left", "right"}
-    original = dock.width() if horizontal else dock.height()
-    other = space.docks["maintenance" if key != "maintenance" else "targets"]
-    other_extent = other.width() if horizontal else other.height()
-    space.preview = preview = SlidePreview(space, dock, edge)
-    preview.advance(.55)
-    QTest.qWait(35)
-    assert body.isHidden() and title.isHidden(), "The old frame/body must not stay behind the moving image"
-    assert original * .35 < (dock.width() if horizontal else dock.height()) < original * .6
-    assert (other.width() if horizontal else other.height()) > other_extent + original * .35
-    space.clear_preview()
-    QTest.qWait(35)
-    assert dock.widget() is body and dock.titleBarWidget() is title
-    assert not body.isHidden() and not title.isHidden() and dock.slide is None
-    assert dock.maximumWidth() > 10000 and dock.maximumHeight() > 10000
-
-
-def test_maximize_float_redock_restore_does_not_leave_a_giant_footer(window):
-    space, dock = window.workspace, window.workspace.docks["actions"]
-    original_size = window.size()
-    window.showMaximized()
-    QTest.qWait(120)
-    dock.setFloating(True)
-    dock.resize(1000, 550)
-    window.showNormal()
-    window.resize(original_size)
-    QTest.qWait(100)
-    space.move_to(dock, "bottom")
-    QTest.qWait(120)
-    assert dock.height() <= 180
-    assert window.install_button.isVisible() and window.uninstall_button.isVisible()
-    assert not space.drop_preview.isVisible()
-
-
-@pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
-def test_floating_drag_shows_destination_and_commits_that_destination(window, edge):
-    space, dock = window.workspace, window.workspace.docks["targets"]
-    title = dock.titleBarWidget()
-    start = title.mapToGlobal(title.rect().center())
-    space.start_title_drag(dock, start)
-    bounds = space.canvas.rect()
-    local = {"left": QPoint(8, bounds.center().y()), "right": QPoint(bounds.right() - 8, bounds.center().y()), "top": QPoint(bounds.center().x(), 8), "bottom": QPoint(bounds.center().x(), bounds.bottom() - 8)}[edge]
-    destination = space.canvas.mapToGlobal(local)
-    space.drag_title(destination)
-    assert dock.isFloating()
-    assert space.drop_preview.isVisible()
-    assert space.drop_preview.target.edge == edge
-    assert bounds.contains(space.drop_preview.target.rect)
-    space.finish_title_drag(destination)
-    QTest.qWait(50)
-    assert not dock.isFloating() and not space.drop_preview.isVisible()
-    assert space.last_area[dock.key] == edge
-
-
-def test_dragging_title_uses_mouse_events_and_escape_cancels_the_preview(window):
-    space, dock = window.workspace, window.workspace.docks["targets"]
-    title = dock.titleBarWidget()
-    start = title.rect().center()
-    destination = space.canvas.mapToGlobal(QPoint(space.canvas.width() - 15, 180))
-    QTest.mousePress(title, Qt.MouseButton.LeftButton, pos=start)
-    local = title.mapFromGlobal(destination)
-    QApplication.sendEvent(title, QMouseEvent(QEvent.Type.MouseMove, local, destination, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    assert dock.isFloating() and space.drop_preview.isVisible()
-    QTest.keyClick(title, Qt.Key.Key_Escape)
-    QTest.mouseRelease(title, Qt.MouseButton.LeftButton, pos=start)
-    QTest.qWait(50)
-    assert not dock.isFloating() and not space.drop_preview.isVisible()
-    assert space.last_area[dock.key] == "left"
-
-
 def test_choice_popup_has_rounded_delegate_and_commits_only_explicit_selection(window):
     from installer.ui.controls import ChoiceDelegate
     popup = Appearance(window)
@@ -905,207 +825,6 @@ def test_choice_popup_has_rounded_delegate_and_commits_only_explicit_selection(w
     assert choice.currentIndex() == 1 and not choice.popup.isVisible()
     assert window.settings.value["appearance"]["log_background"] != "warm"
     popup.close()
-
-
-def test_edge_handle_short_pull_returns_to_edge_and_full_pull_restores_live_controls(window):
-    space, dock = window.workspace, window.workspace.docks["targets"]
-    body = dock.widget()
-    space.collapse(dock, animate=False)
-    space.pull_from_edge(dock, 35)
-    assert space.preview and dock.width() <= 40
-    space.finish_reveal(dock)
-    wait_for_workspace(window.workspace)
-    assert dock.isHidden() and len(space.collapsed) == 1
-    space.pull_from_edge(dock, 1000)
-    space.finish_reveal(dock)
-    wait_for_workspace(window.workspace)
-    assert dock.isVisible() and not space.collapsed and dock.widget() is body
-    assert not body.isHidden() and not space.transitions and not space.preview
-
-
-def test_native_divider_can_reverse_out_of_a_partial_slide_without_a_gap(window):
-    space, canvas, dock = window.workspace, window.workspace.canvas, window.workspace.docks["targets"]
-    point = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
-    minimum = dock.minimumSizeHint().width()
-    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=point)
-    for x in range(point.x(), minimum - 160, -8):
-        destination = QPoint(x, point.y())
-        QApplication.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, destination, canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-        QApplication.processEvents()
-    assert space.preview and space.split_owned
-    for x in range(minimum - 140, minimum + 140, 8):
-        destination = QPoint(x, point.y())
-        QApplication.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, destination, canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-        QApplication.processEvents()
-    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=destination)
-    QTest.qWait(30)
-    assert space.preview is None and not space.collapsed and dock.slide is None
-    assert dock.width() > minimum + 30
-    assert space.docks["maintenance"].x() <= dock.geometry().right() + 13
-
-
-def test_reverse_drag_cannot_force_the_restored_window_wider_than_its_canvas(window):
-    space, canvas, dock = window.workspace, window.workspace.canvas, window.workspace.docks["targets"]
-    original = window.size()
-    space.split_owned = True
-    space.resize_owned_split(dock, "left", canvas.width() * 2, dock.minimumSizeHint().width())
-    QTest.qWait(40)
-    assert window.size() == original
-    assert space.docks["maintenance"].width() >= space.docks["maintenance"].minimumSizeHint().width()
-    space.release_live_split()
-    space.split_owned = False
-
-
-def drag_canvas_boundary(space, start, delta):
-    canvas = space.canvas
-    QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=start)
-    count = max(2, (abs(delta.x()) + abs(delta.y())) // 8)
-    for step in range(1, count + 1):
-        point = start + QPoint(round(delta.x() * step / count), round(delta.y() * step / count))
-        QApplication.sendEvent(canvas, QMouseEvent(QEvent.Type.MouseMove, point, canvas.mapToGlobal(point), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-        QApplication.processEvents()
-    QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=start + delta)
-    wait_for_workspace(space)
-
-
-@pytest.mark.parametrize("edge,maximized,origin", [("left", False, "targets"), ("left", False, "actions"), ("left", True, "targets"), ("right", False, "targets")])
-def test_nested_panels_slide_park_and_restore_as_one_complete_side(window, maximized, edge, origin):
-    space = window.workspace
-    dock, actions = space.docks["targets"], space.docks["actions"]
-    original, minimum = window.size(), window.minimumSize()
-    # A manually constructed native split needs enough width for both columns.
-    # Narrow user drops use the separately tested tab-merge destination instead.
-    window.showNormal()
-    window.setMinimumWidth(actions.minimumSizeHint().width() + space.docks["maintenance"].minimumSizeHint().width() + 80)
-    try:
-        if edge == "right":
-            other = space.docks["maintenance"]
-            space.canvas.removeDockWidget(dock)
-            space.canvas.removeDockWidget(other)
-            space.canvas.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, other)
-            space.canvas.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
-            other.show()
-            dock.show()
-            space.canvas.layout().activate()
-            QTest.qWait(40)
-        space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
-        if maximized:
-            window.showMaximized()
-        QTest.qWait(60)
-        assert actions.minimumSizeHint().width() > dock.minimumSizeHint().width()
-        handle_panel = space.docks[origin]
-        start = QPoint(handle_panel.geometry().right() + 5 if edge == "left" else handle_panel.x() - 5, handle_panel.geometry().center().y())
-        assert set(space.divider_snapshot(space.canvas.mapToGlobal(start))) == {origin, "maintenance"}, {key: (item.geometry(), space.canvas.dockWidgetArea(item), item.isVisible()) for key, item in space.docks.items()}
-        drag_canvas_boundary(space, start, QPoint((-1 if edge == "left" else 1) * (handle_panel.width() + 100), 0))
-        assert dock.isHidden() and space.collapsed[origin][0] == edge
-        assert actions.isHidden()
-        assert set(space.park_groups[origin]) == {"targets", "actions"}
-        assert len(space.collapsed) == 1
-        assert space.docks["maintenance"].isVisible()
-        space.collapsed[origin][1].control.click()
-        deadline = time.monotonic() + 2
-        while space.transitions and time.monotonic() < deadline:
-            QTest.qWait(20)
-        QTest.qWait(30)
-        assert not space.transitions
-        assert dock.isVisible() and "targets" not in space.collapsed
-        assert actions.isVisible() and actions.height() <= 180, {key: (item.geometry(), item.minimumSizeHint()) for key, item in space.docks.items()}
-        assert window.settings_button.isVisible() and window.install_button.isVisible()
-    finally:
-        window.showNormal()
-        window.setMinimumSize(minimum)
-        window.resize(original)
-        space.reset()
-
-
-def test_nested_side_partial_slide_moves_both_panels_and_can_reverse(window):
-    space = window.workspace
-    dock, actions = space.docks["targets"], space.docks["actions"]
-    space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
-    QTest.qWait(60)
-    initial = actions.geometry()
-    start = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
-    minimum = space.divider_minimum(dock, "left").width()
-    QTest.mousePress(space.canvas, Qt.MouseButton.LeftButton, pos=start)
-    for x in range(start.x(), minimum - 200, -8):
-        point = QPoint(x, start.y())
-        QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseMove, point, space.canvas.mapToGlobal(point), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-        QApplication.processEvents()
-    assert space.preview and space.preview.dock is dock and set(space.preview.members) == {dock, actions}
-    assert abs(actions.height() - initial.height()) <= 16
-    assert actions.width() < initial.width() and actions.widget() is not window.settings_button.parentWidget()
-    destination = QPoint(start.x() + 20, start.y())
-    QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseMove, destination, space.canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-    QTest.mouseRelease(space.canvas, Qt.MouseButton.LeftButton, pos=destination)
-    wait_for_workspace(window.workspace)
-    assert not space.collapsed and space.preview is None and space.split_live is None
-    assert dock.isVisible() and actions.isVisible() and actions.height() <= 180
-
-
-def test_native_separator_observes_a_shared_minimum_without_matching_panel_rectangles(window, monkeypatch):
-    space = window.workspace
-    dock, actions = space.docks["targets"], space.docks["actions"]
-    space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
-    QTest.qWait(60)
-    monkeypatch.setattr(space, "aligned_docks", lambda *args: [])
-    start = QPoint(dock.geometry().right() + 5, dock.geometry().center().y())
-    drag_canvas_boundary(space, start, QPoint(-dock.width() - 100, 0))
-    assert dock.isHidden() and "targets" in space.collapsed
-    assert actions.isHidden() and set(space.park_groups["targets"]) == {"targets", "actions"}
-    space.collapsed["targets"][1].control.click()
-    wait_for_workspace(window.workspace)
-    assert dock.isVisible() and dock.x() >= 0 and actions.height() <= 180
-
-
-def test_complete_side_group_persists_and_handle_pull_restores_all_controls(window):
-    space, dock = window.workspace, window.workspace.docks["targets"]
-    actions = space.docks["actions"]
-    space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
-    QTest.qWait(60)
-    space.collapse(dock, "left")
-    wait_for_workspace(window.workspace)
-    saved = space.snapshot()
-    assert set(saved["groups"]["targets"]) == {"targets", "actions"}
-    space.reset()
-    space.load(saved)
-    QTest.qWait(60)
-    assert dock.isHidden() and actions.isHidden() and len(space.collapsed) == 1
-    space.pull_from_edge(dock, 50)
-    assert set(space.preview.members) == {dock, actions}
-    space.finish_reveal(dock)
-    wait_for_workspace(window.workspace)
-    assert dock.isHidden() and actions.isHidden()
-    space.pull_from_edge(dock, 10000)
-    space.finish_reveal(dock)
-    wait_for_workspace(window.workspace)
-    assert dock.isVisible() and actions.isVisible() and not space.collapsed
-    assert dock.slide is None and actions.slide is None
-    assert window.install_button.isVisible() and window.settings_button.isVisible()
-
-
-def test_window_state_changes_finish_the_entire_side_without_leaking_size_limits(window):
-    space, dock = window.workspace, window.workspace.docks["targets"]
-    actions = space.docks["actions"]
-    original = window.size()
-    try:
-        space.canvas.splitDockWidget(dock, actions, Qt.Orientation.Vertical)
-        QTest.qWait(60)
-        space.collapse(dock, "left")
-        window.showMaximized()
-        QTest.qWait(60)
-        assert dock.isHidden() and actions.isHidden() and not space.transitions
-        space.restore(dock, animate=True)
-        window.showNormal()
-        window.resize(original)
-        QTest.qWait(120)
-        assert dock.isVisible() and actions.isVisible() and not space.transitions
-        assert not space.collapsed and not space.park_groups
-        assert dock.maximumWidth() > dock.minimumWidth()
-        assert actions.maximumWidth() > actions.minimumWidth() and actions.height() <= 180
-    finally:
-        window.showNormal()
-        window.resize(original)
-        space.reset()
 
 
 def test_automatic_update_hint_refreshes_open_menu_and_waits_for_user_click(window, monkeypatch):
@@ -1168,147 +887,3 @@ def test_clear_all_selection_keeps_popup_and_does_not_change_installed_files(win
     assert not selector.checks["codex"].isEnabled()
     window.accept_states(service.inspect_all())
     assert not window.selection.selected and {path: path.read_bytes() for path in files} == before
-
-
-@pytest.mark.parametrize("minimize", [False, True])
-def test_nested_footer_maximized_resize_then_restore_can_shrink_and_park(window, minimize):
-    space, dock = window.workspace, window.workspace.docks["actions"]
-    original = window.size()
-    try:
-        space.canvas.splitDockWidget(space.docks["targets"], dock, Qt.Orientation.Vertical)
-        QTest.qWait(60)
-        assert space.last_area["actions"] == "left"
-        window.showMaximized()
-        QTest.qWait(100)
-        start = QPoint(dock.geometry().center().x(), dock.y() - 5)
-        assert space.divider_snapshot(space.canvas.mapToGlobal(start))["actions"][1] == "bottom"
-        drag_canvas_boundary(space, start, QPoint(0, -230))
-        assert space.maximized_footer_height is not None
-        if minimize:
-            window.showMinimized()
-            QTest.qWait(50)
-        window.showNormal()
-        window.resize(original)
-        QTest.qWait(100)
-        assert dock.height() <= 180
-        start = QPoint(dock.geometry().center().x(), dock.y() - 5)
-        drag_canvas_boundary(space, start, QPoint(0, dock.height() + 100))
-        assert dock.isHidden() and space.collapsed["actions"][0] == "bottom"
-        space.collapsed["actions"][1].control.click()
-        wait_for_workspace(window.workspace)
-        assert dock.isVisible() and dock.height() <= 180
-        assert window.install_button.height() >= 44 and window.settings_button.height() >= 44
-        assert window.install_button.width() >= window.install_button.sizeHint().width()
-    finally:
-        window.showNormal()
-        window.resize(original)
-        space.reset()
-
-
-@pytest.mark.parametrize("edge", ["top", "bottom"])
-def test_floating_footer_after_restore_can_resize_past_minimum_and_park(window, edge):
-    space, dock = window.workspace, window.workspace.docks["actions"]
-    original = window.size()
-    try:
-        window.showMaximized()
-        QTest.qWait(50)
-        dock.setFloating(True)
-        QTest.qWait(40)
-        dock.resize(580, 400)
-        window.showNormal()
-        window.resize(original)
-        QTest.qWait(80)
-        assert dock.height() <= 180 and dock.minimumHeight() <= dock.minimumSizeHint().height()
-        start = QPoint(dock.width() // 2, 1 if edge == "top" else dock.height() - 1)
-        global_start = dock.mapToGlobal(start)
-        QTest.mousePress(dock, Qt.MouseButton.LeftButton, pos=start)
-        assert space.floating_resize is not None
-        direction = 1 if edge == "top" else -1
-        for distance in range(0, 240, 8):
-            global_point = global_start + QPoint(0, distance * direction)
-            point = space.canvas.mapFromGlobal(global_point)
-            QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseMove, point, global_point, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-            QApplication.processEvents()
-        assert space.preview and space.preview.fraction > .4
-        QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseButtonRelease, point, global_point, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-        wait_for_workspace(window.workspace)
-        assert dock.isHidden() and "actions" in space.collapsed
-        space.collapsed["actions"][1].control.click()
-        QTest.qWait(50)
-        assert dock.isFloating() and dock.isVisible() and dock.height() <= 180
-        assert window.install_button.isVisible()
-        assert window.install_button.height() >= 44
-        assert window.install_button.width() >= window.install_button.sizeHint().width()
-    finally:
-        window.showNormal()
-        window.resize(original)
-        space.reset()
-
-
-def test_restoring_window_during_a_resize_releases_temporary_size_constraints(window):
-    space, dock = window.workspace, window.workspace.docks["actions"]
-    original = window.size()
-    try:
-        space.canvas.splitDockWidget(space.docks["targets"], dock, Qt.Orientation.Vertical)
-        window.showMaximized()
-        QTest.qWait(80)
-        point = QPoint(dock.geometry().center().x(), dock.y() - 5)
-        QTest.mousePress(space.canvas, Qt.MouseButton.LeftButton, pos=point)
-        for offset in range(0, dock.height() + 30, 8):
-            destination = point + QPoint(0, offset)
-            QApplication.sendEvent(space.canvas, QMouseEvent(QEvent.Type.MouseMove, destination, space.canvas.mapToGlobal(destination), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
-            QApplication.processEvents()
-        window.showNormal()
-        window.resize(original)
-        QTest.qWait(100)
-        assert space.press is None and space.preview is None and space.split_live is None
-        assert dock.minimumHeight() <= dock.minimumSizeHint().height()
-        assert dock.height() <= 180
-        drag_canvas_boundary(space, QPoint(dock.geometry().center().x(), dock.y() - 5), QPoint(0, 250))
-        assert "actions" in space.collapsed
-    finally:
-        window.showNormal()
-        window.resize(original)
-        space.reset()
-
-
-def test_window_state_change_finishes_edge_animation_without_leaking_fixed_sizes(window):
-    space, dock = window.workspace, window.workspace.docks["actions"]
-    original = window.size()
-    try:
-        space.canvas.splitDockWidget(space.docks["targets"], dock, Qt.Orientation.Vertical)
-        space.collapse(dock)
-        assert "actions" in space.transitions
-        window.showMaximized()
-        QTest.qWait(50)
-        assert dock.isHidden() and not space.transitions
-        space.restore(dock, animate=True)
-        window.showNormal()
-        window.resize(original)
-        QTest.qWait(80)
-        assert not space.transitions and dock.slide is None
-        assert dock.height() <= 180 and dock.minimumHeight() <= dock.minimumSizeHint().height()
-        drag_canvas_boundary(space, QPoint(dock.geometry().center().x(), dock.y() - 5), QPoint(0, 250))
-        assert "actions" in space.collapsed
-    finally:
-        window.showNormal()
-        window.resize(original)
-        space.reset()
-
-
-def test_legacy_nested_layout_does_not_reapply_a_maximized_footer_ratio(window):
-    space, dock = window.workspace, window.workspace.docks["actions"]
-    space.canvas.splitDockWidget(space.docks["targets"], dock, Qt.Orientation.Vertical)
-    space.footer_height = 340
-    space.normalize_layout()
-    QTest.qWait(40)
-    saved = space.snapshot()
-    saved.pop("footer_height")
-    saved.pop("maximized_footer_height")
-    saved["footer_ratio"] = .42
-    space.reset()
-    space.load(saved)
-    QTest.qWait(80)
-    assert space.last_area["actions"] == "left" and dock.height() <= 180
-    drag_canvas_boundary(space, QPoint(dock.geometry().center().x(), dock.y() - 5), QPoint(0, 250))
-    assert "actions" in space.collapsed

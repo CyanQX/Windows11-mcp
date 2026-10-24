@@ -1,0 +1,21 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>第三方声明</title></head><body>
+<h1>Windows-MCP 第三方声明</h1>
+<p>更新及生效日期：2026 年 10 月 24 日<br>维护者：CyanQX / Windows-MCP<br>许可与隐私联系：<a href="mailto:jingyanx2@gmail.com">jingyanx2@gmail.com</a></p>
+<h2>一、上游与组件许可</h2>
+<p>本项目基于 <a href="https://github.com/CursorTouch/Windows-MCP">CursorTouch/Windows-MCP</a> 二次开发，保留 Jeomon George 及相应贡献者的原有著作权与许可。UI Automation 适配代码含来自 yinkaisheng/Python-UIAutomation-for-Windows 的代码，其原有声明随源码保留。Python 运行时、PySide6/Qt、FastMCP、MCP、Playwright、Windows 接口及其他依赖各有自己的权利人和许可证；使用第三方名称不表示认证、赞助、合作或官方关联。</p>
+<p>完整依赖清单、版本、版权及许可证正文见<a href="license:thirdparty">随包第三方许可汇编</a>；Qt、PySide6 和 Shiboken 的许可全文及来源见<a href="license:qt">Qt 许可与重建说明</a>；项目许可见<a href="license:mit">MIT 原文</a>。这些文件在源码及打包资源中提供。汇编中的特定许可证适用于对应组件，不把全部依赖统一改为 MIT；分发者应核对自己实际分发的版本和组件。</p>
+<h2>二、Qt 与 LGPL 权利</h2>
+<p>当前界面采用 PySide6 Essentials / Shiboken6 与动态加载的 Qt 库，按随包 LGPL v3 等适用条款使用，未修改 Qt 库源码。用户可依许可证取得相应库源码、替换或修改库并重新链接或重建应用，并为调试这类修改进行许可证允许的逆向工程；本项目不对此施加额外禁止。</p>
+<p>请使用随包 Qt 说明中列出的对应版本源码和项目重建脚本。源码方式可安装兼容的替换库并直接运行管理器；单文件 EXE 的临时解包目录不作为可靠的持久替换方式，应使用项目源码和替换库重新打包。重建命令及库源码入口见许可使用页和随包说明。分发者如修改或更换库，应更新对应源码、构建信息及许可材料，不应只提供一个无法重建的 EXE。</p>
+<h2>三、网络服务与独立接收方</h2>
+<table border="1" cellspacing="0" cellpadding="7"><tr><th>服务</th><th>用途与触发</th><th>数据及规则</th></tr>
+<tr><td>GitHub / 发布资源 CDN</td><td>读取官方版本、用户启动的下载、打开项目主页或提交 Issues；更新检查可在管理器启动后进行。</td><td>连接 IP、请求头和路径等网络元数据；用户主动提交的账号资料、反馈及附件。参阅<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub 隐私声明</a>。公开 Issues 可被其他人看到。</td></tr>
+<tr><td>PostHog</td><td>仅显式开启遥测后用于运行统计与异常分析，默认关闭。</td><td>随机标识、会话、工具名、耗时、状态、客户端版本及异常信息等。默认美国接收端可能处理 IP 地理位置；详见隐私政策及<a href="https://posthog.com/privacy">PostHog 隐私政策</a>。关闭后重启服务可停止后续发送。</td></tr>
+<tr><td>你选择的 AI 客户端 / 模型服务</td><td>由用户配置 MCP 连接并发起任务。</td><td>可能取得截图、控件文本、网页及文件结果，并按其规则在本地或云端处理。提供者、地区和留存取决于你的选择，本项目不替第三方作训练用途或零留存承诺。</td></tr>
+<tr><td>浏览器、目标网站及应用</td><td>用户授权的浏览或桌面操作。</td><td>登录、Cookie、播放、提交和网络记录按各应用的实际行为及政策处理。使用现有登录桌面可能以当前账号身份执行操作。</td></tr>
+<tr><td>Gmail / GitHub 反馈渠道</td><td>用户主动发送支持邮件或提交问题。</td><td>处理主动提供的联系方式、正文和附件。可能涉及境外服务；不愿使用这些渠道时，无须提交材料即可继续相应本地功能。可先使用无敏感内容的简要询问。</td></tr></table>
+<h2>四、选择、变更与申诉</h2>
+<p>本地依赖组件不因被打包就当然接收数据；是否联网以实际功能、代码及配置为准。第三方服务可能调整规则，使用前请阅读其最新条款。涉及个人信息提供、敏感数据或跨境传输时，应依法具备相应处理依据和必要程序；本声明不构成统一授权，也不把维护者应承担的责任转嫁给第三方。</p>
+<p>如发现漏列组件、许可文本或源码入口失效，请通过上述邮箱告知组件名称、版本和问题。维护者将核对实际分发内容并补正。关于数据权利，可同时联系实际接收方与维护者；请勿在公开 Issues 中提交未脱敏数据。</p>
+<p>Qt 权利说明：<a href="https://www.qt.io/development/open-source-lgpl-obligations">Qt 官方 GPL / LGPL 义务说明</a>。</p>
+</body></html>

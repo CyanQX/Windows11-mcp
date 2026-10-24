@@ -3,7 +3,8 @@ Copyright The Qt Company Ltd. and contributors.
 Used under LGPL-3.0-only. Qt DLLs are dynamically loaded; no Qt source modifications.
 Sources: https://download.qt.io/archive/qt/6.12/6.12.0/submodules/
 PySide/Shiboken: https://code.qt.io/cgit/pyside/pyside-setup.git/tag/?h=v6.12.0
-Application source and rebuild scripts: https://github.com/CyanQX/Windows11-mcp/tree/v1.4.1
+Application source and rebuild scripts: https://github.com/CyanQX/Windows11-mcp
+Use the source archive or exact revision supplied with the binary; the main branch can change.
 Rebuild with uv sync --extra installer --extra browser --group build then python scripts/build_setup.py.
 You may replace/rebuild the LGPL libraries and debug those modifications as permitted by their licenses.
 

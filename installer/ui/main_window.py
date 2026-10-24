@@ -1,4 +1,4 @@
-"""Qt manager: durable dock workspace and one bounded background operation at a time."""
+"""Qt manager: fixed workspace and one bounded background operation at a time."""
 from __future__ import annotations
 
 import json
@@ -53,6 +53,8 @@ class MainWindow(QMainWindow):
         from installer.ui.settings_dialog import About, SettingsHub
         self.settings_button = button("设置", lambda: SettingsHub(self), icon="settings", compact=True)
         self.about_button = button("关于", lambda: About(self), icon="info", compact=True)
+        for control in (self.settings_button, self.about_button):
+            control.setProperty("transparent", True)
         self.top_bar = row(self.settings_button, self.about_button, None)
         self.top_bar.layout().setContentsMargins(12, 6, 12, 2)
         layout.addWidget(self.top_bar)
@@ -96,8 +98,7 @@ class MainWindow(QMainWindow):
         footer_row.layout().setSpacing(4)
         for control in (self.uninstall_button, self.install_button):
             control.ensurePolished()
-        # The stylesheet's compact button metrics must not let a restored dock
-        # compress this toolbar below its complete, usable control height.
+        # Keep complete action controls within the fixed-height lower panel.
         footer_row.setMinimumSize(footer_row.sizeHint().width(), 44)
         footer.setMinimumWidth(max(510, footer_row.minimumWidth() + 32))
         footer_body.addWidget(footer_row)
@@ -139,9 +140,6 @@ class MainWindow(QMainWindow):
         from installer.ui.tactile_button import TactileGlassButton
         self.theme.apply()
         self.logs.apply_appearance()
-        # Edge sliding has its own animation. Qt's independent dock animation can
-        # reapply stale maximized extents while a panel is being restored.
-        self.workspace.canvas.setAnimated(False)
         for widget in QApplication.allWidgets():
             if isinstance(widget, TactileGlassButton):
                 widget.refresh_appearance()
@@ -407,13 +405,9 @@ class MainWindow(QMainWindow):
             self.error("布局未保存", str(exc))
             event.ignore()
             return
-        self.workspace.closing = True
         self.poll_timer.stop()
         self.scan_timer.stop()
         self.operator_timer.stop()
-        for dock in self.workspace.docks.values():
-            if dock.isFloating():
-                dock.close()
         for dialog in list(self.dialogs):
             dialog.close()
         event.accept()

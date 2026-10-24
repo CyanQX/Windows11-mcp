@@ -32,7 +32,7 @@ def glass():
     button.resize(260, 70)
     button.show()
     button.activateWindow()
-    QTest.qWait(50)
+    assert QTest.qWaitForWindowActive(button)
     yield button
     button.close()
     app.processEvents()

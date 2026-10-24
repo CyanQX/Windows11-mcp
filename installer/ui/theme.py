@@ -45,6 +45,7 @@ TactileGlassButton[primary='true'], TactileGlassButton[primary='true']:hover, Ta
 QWidget {{ color: {c['text']}; font-family: '{FONT}'; }}
 QMainWindow, QDialog {{ background: {c['bg']}; }}
 QLabel {{ background: transparent; border: none; }}
+QLabel[stepValue='true'] {{ background: {fill}; border: 1px solid {c['border']}; border-radius: 9px; padding: 9px 12px; }}
 QLabel[role='secondary'] {{ color: {c['secondary']}; }}
 QLabel[role='success'] {{ color: {c['success']}; }}
 QLabel[role='warning'] {{ color: {c['warning']}; }}
@@ -59,9 +60,6 @@ QPushButton[primary='true']:hover {{ background: #2379FC; }}
 QPushButton:disabled {{ color: {c['secondary']}; background: transparent; border-color: {c['border']}; }}
 QPushButton[compact='true'] {{ padding: 5px 9px; min-height: 16px; border-radius: 9px; background: transparent; }}
 QPushButton[compact='true'][primary='true'] {{ background: #1266ED; color: #FFFFFF; }}
-QDockWidget {{ background: transparent; border: none; }}
-QMainWindow::separator {{ background: transparent; width: 12px; height: 12px; }}
-QMainWindow::separator:hover {{ background: {c['border']}; border-radius: 5px; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 QScrollBar:vertical {{ background: transparent; width: 8px; margin: 4px 0; }}
 QScrollBar::handle:vertical {{ background: {c['border']}; border-radius: 4px; min-height: 30px; }}
@@ -85,6 +83,7 @@ QSlider::groove:horizontal {{ height: 6px; background: {c['border']}; border-rad
 QSlider::handle:horizontal {{ width: 18px; margin: -6px 0; background: {c['accent']}; border-radius: 9px; }}
 QToolTip {{ color: {c['text']}; background: {c['glass']}; border: 1px solid {c['border']}; padding: 8px; }}
 {tactile_rules}
+TactileGlassButton[transparent='true'], TactileGlassButton[transparent='true']:hover, TactileGlassButton[transparent='true']:pressed, TactileGlassButton[transparent='true']:focus {{ background: transparent; border: none; padding: 5px 9px; }}
 QPushButton[detailToggle='true'] {{ min-height: 44px; padding-top: 0px; padding-bottom: 0px; }}
 """)
         for widget in app.topLevelWidgets():

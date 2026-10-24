@@ -7,14 +7,18 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QPoint, QTimer
+from PySide6.QtCore import Qt, QPoint, QTimer, QObject, QRunnable, QThreadPool, Signal, Slot
 from PySide6.QtGui import QColor
 from shiboken6 import isValid
-from PySide6.QtWidgets import QColorDialog, QDialog, QFileDialog, QLineEdit, QProgressBar, QSpinBox, QTabWidget, QTextBrowser
+from PySide6.QtWidgets import QColorDialog, QDialog, QFileDialog, QLineEdit, QProgressBar, QTabWidget, QTextBrowser
 
 from installer.settings import ENV_KEYS
+from installer.detection import find_client_in_folder
+from installer.models import Presence
+from installer.storage import check_path
 from installer.ui.controls import GlassCheckBox as QCheckBox
 from installer.ui.controls import ChoiceBox as QComboBox
+from installer.ui.controls import StepValue
 from installer.ui.dialogs import CLIENT_NAMES, Detail, Diagnostics, Preview, Targets, disclosure, fact
 from installer.ui.theme import GlassFrame, button, column, label, row
 from installer.updates import UpdateService, start_update
@@ -31,7 +35,7 @@ class SettingsHub(QDialog):
         column(self, 5, 0).addWidget(frame)
         body = column(frame, 12, 4)
         body.addWidget(label("设置", size=14, bold=True))
-        actions = [("外观", "settings", lambda: Appearance(owner)), ("高级设置", "settings", lambda: Preferences(owner)), ("操作审批", "shield", owner.open_operator), ("操作授权", "shield", self.trust), ("配置与恢复", "restore", lambda: Backups(owner)), ("安装目录", "folder", lambda: Preferences(owner, paths=True)), ("检查更新", "update", lambda: Updates(owner)), ("日志与诊断", "document", lambda: Diagnostics(owner))]
+        actions = [("外观", "settings", lambda: Appearance(owner)), ("高级设置", "settings", lambda: Preferences(owner)), ("操作审批", "shield", owner.open_operator), ("配置与恢复", "restore", lambda: Backups(owner)), ("安装目录", "folder", lambda: Preferences(owner, paths=True)), ("检查更新", "update", lambda: Updates(owner)), ("日志与诊断", "document", lambda: Diagnostics(owner))]
         self.names = []
         self.controls = {}
         for name, icon, action in actions:
@@ -66,16 +70,10 @@ class SettingsHub(QDialog):
         control.setNotificationDot(count > 0)
         control.setAccessibleDescription(f"{count} 个待审操作" if count else "可提前设置默认审批方式")
 
-    def trust(self):
-        from installer.ui.operator_dialog import TrustCenter
-        TrustCenter(self.owner)
-
-
 class Appearance(Detail):
     def __init__(self, owner):
         super().__init__(owner, "外观", (700, 650))
         self.draft = copy.deepcopy(owner.settings.value)
-        self.reset_layout = False
         self.body.setContentsMargins(24, 22, 24, 22)
         body = self.scroll()
         card = GlassFrame()
@@ -107,15 +105,9 @@ class Appearance(Detail):
         self.reduced.setChecked(owner.settings.value["appearance"]["reduce_motion"])
         group.addWidget(self.reduced)
         body.addStretch()
-        self.layout_button = button("恢复默认布局", self.request_layout_reset, icon="restore")
-        body.addWidget(row(self.layout_button, None))
         self.notice = label("", role="secondary", wrap=True)
         self.body.addWidget(self.notice)
         self.body.addWidget(row(None, button("取消", self.close), button("完成", self.save, primary=True)))
-
-    def request_layout_reset(self):
-        self.reset_layout = True
-        self.layout_button.setText("完成后恢复默认布局")
 
     def choose_color(self):
         color = QColorDialog.getColor(QColor(self.draft["appearance"]["log_custom_color"]), self, "日志背景颜色")
@@ -136,8 +128,6 @@ class Appearance(Detail):
             value["appearance"].update(log_background=self.controls["log_background"].currentData(), log_custom_color=self.draft["appearance"]["log_custom_color"], glass_strength=self.strength.currentData(), reduce_motion=self.reduced.isChecked())
             self.owner.settings.save(value)
             self.owner.apply_appearance()
-            if self.reset_layout:
-                self.owner.workspace.reset()
             self.close()
         except Exception as exc:
             self.notice.setText(str(exc))
@@ -148,6 +138,38 @@ def paths(owner):
         state = owner.selection.states.get(key)
         value[state.display_name if state else key] = details
     return Preview(owner, "实际安装目录", value)
+
+
+class DetectionSignals(QObject):
+    finished = Signal(object)
+
+
+class PathDetection(QRunnable):
+    """Read-only filesystem discovery, independent of installer transactions."""
+    def __init__(self, discovery, profiles, entries):
+        super().__init__()
+        self.discovery, self.profiles, self.entries = discovery, profiles, entries
+        self.signals = DetectionSignals()
+
+    def run(self):
+        results = {}
+        for key, (generation, original) in sorted(self.entries.items(), key=lambda item: not item[1][1]):
+            try:
+                profile = self.profiles[key[4:]]
+                if original:
+                    self.discovery.overrides[profile.id] = original
+                presence, found = self.discovery.detect(profile)
+                if presence == Presence.DETECTED and found:
+                    path = check_path(Path(found))
+                    path = find_client_in_folder(path, profile.id) if path.is_dir() else path
+                    if not path.is_file():
+                        raise ValueError("程序路径不存在")
+                    results[key] = (generation, original, str(path.resolve()), "已检测 · " + path.name)
+                else:
+                    results[key] = (generation, original, None, "路径不可用，无法检测" if original else "未安装，无法检测")
+            except (OSError, ValueError, RuntimeError) as exc:
+                results[key] = (generation, original, None, str(exc))
+            self.signals.finished.emit({key: results[key]})
 
 
 class Preferences(Detail):
@@ -161,15 +183,22 @@ class Preferences(Detail):
         body.setSpacing(18)
         self.fields = {}
         self.folder_notices = {}
+        self.detection_generations = {}
         value = owner.settings.value
         def section(title):
             card = GlassFrame()
             stack = column(card, 20, 14)
-            stack.addWidget(label(title, size=15, bold=True))
+            heading = label(title, size=15, bold=True)
+            if title == "编程端程序路径":
+                self.detect_button = button("检测", self.detect_paths, icon="search", compact=True)
+                self.detect_button.setAccessibleName("检测所有编程端程序路径")
+                stack.addWidget(row(heading, None, self.detect_button))
+            else:
+                stack.addWidget(heading)
             body.addWidget(card)
             return stack
         def field(stack, key, title, initial, limits=None):
-            control = QSpinBox() if limits else QLineEdit(str(initial))
+            control = StepValue() if limits else QLineEdit(str(initial))
             control.setAccessibleName(title)
             if limits:
                 control.setRange(*limits)
@@ -213,6 +242,7 @@ class Preferences(Detail):
             for key, profile in owner.service.backend.clients.items():
                 name = owner.selection.states[key].display_name if key in owner.selection.states else "Codex 桌面端" if key == "codex" else profile.name
                 field(clients, "exe:" + key, name, value["client_executables"].get(key, ""))
+            QTimer.singleShot(0, self.detect_paths)
         body.addStretch()
         self.body.addWidget(row(button("恢复本页默认", lambda: self.save(True)), None, button("取消", self.close), button("保存", self.save, primary=True)))
 
@@ -222,20 +252,39 @@ class Preferences(Detail):
         current = Path(self.fields[key].text()) if self.fields[key].text() else self.owner.settings.home
         path = QFileDialog.getExistingDirectory(self, "选择编程端安装文件夹", str(current.parent if current.is_file() else current))
         if path:
-            self.fields[key].setText(path)
-            notice = self.folder_notices[key]
-            notice.setText("正在查找程序…")
-            notice.show()
-            from installer.detection import find_client_in_folder
-            def scan():
-                try:
-                    return True, str(find_client_in_folder(Path(path), key[4:]))
-                except Exception as exc:
-                    return False, str(exc)
-            def found(result):
-                if isValid(self):
-                    notice.setText("已找到 · " + Path(result[1]).name if result[0] else result[1])
-            self.owner.run(scan, found, rescan=False, title="正在扫描所选文件夹")
+            try:
+                folder = check_path(Path(path)).resolve()
+                if not folder.is_dir():
+                    raise ValueError("请选择真实存在的文件夹")
+                self.detection_generations[key] = self.detection_generations.get(key, 0) + 1
+                self.fields[key].setText(str(folder))
+                self.folder_notices[key].setText("已选择文件夹，点击「检测」查找程序")
+            except (OSError, ValueError, RuntimeError) as exc:
+                self.folder_notices[key].setText(str(exc))
+            self.folder_notices[key].show()
+
+    def detect_paths(self):
+        if self.paths_mode:
+            return
+        entries = {}
+        for key in self.folder_notices:
+            generation = self.detection_generations.get(key, 0) + 1
+            self.detection_generations[key] = generation
+            entries[key] = (generation, self.fields[key].text().strip())
+            self.folder_notices[key].setText("正在检测…")
+            self.folder_notices[key].show()
+        task = PathDetection(self.owner.settings.discovery(), dict(self.owner.service.backend.clients), entries)
+        task.signals.finished.connect(self.detected)
+        QThreadPool.globalInstance().start(task)
+
+    @Slot(object)
+    def detected(self, results):
+        for key, (generation, original, path, notice) in results.items():
+            if generation != self.detection_generations.get(key) or self.fields[key].text().strip() != original:
+                continue
+            if path and not original:
+                self.fields[key].setText(path)
+            self.folder_notices[key].setText(notice)
 
     def save(self, reset=False):
         owner = self.owner
@@ -249,9 +298,16 @@ class Preferences(Detail):
                 if key in ENV_KEYS:
                     updated["environment_overrides"][key] = "" if reset else control.text().strip()
                 elif key.startswith("exe:"):
-                    updated["client_executables"][key[4:]] = "" if reset else control.text().strip()
+                    path = "" if reset else control.text().strip()
+                    if path:
+                        target = check_path(Path(path))
+                        if target.is_dir():
+                            find_client_in_folder(target, key[4:])
+                        elif not target.is_file():
+                            raise ValueError("程序路径不存在：" + path)
+                    updated["client_executables"][key[4:]] = path
                 else:
-                    updated[key] = owner.settings.defaults[key] if reset else control.value() if isinstance(control, QSpinBox) else control.text().strip()
+                    updated[key] = owner.settings.defaults[key] if reset else control.value() if isinstance(control, StepValue) else control.text().strip()
             owner.settings.save(updated)
             structural = any(updated[key] != previous[key] for key in ("data_dir", "environment_overrides"))
             discovery_changed = updated["client_executables"] != previous["client_executables"]
@@ -395,19 +451,45 @@ class Updates(Detail):
             owner.close()
 
 
+POLICIES = (
+    ("使用政策", "usage.html"),
+    ("隐私政策", "privacy.html"),
+    ("用户协议", "agreement.html"),
+    ("第三方声明", "third-party.html"),
+    ("许可使用", "license.html"),
+)
+
+
 class About(Detail):
     def __init__(self, owner):
-        super().__init__(owner, "关于 Windows MCP", (780, 630))
+        super().__init__(owner, "关于 Windows MCP", (900, 740))
         self.body.addWidget(label(owner.version, role="secondary"))
-        tabs = QTabWidget()
-        self.body.addWidget(tabs, 1)
-        texts = [("简介", "Windows MCP 为编程 AI 提供真实 Windows 操作能力。管理器负责 Skill 与 MCP 的安装、验证、修复、备份和更新。\n\nCodex 的安装目标为桌面端。\n\n本项目基于 CursorTouch/Windows-MCP，保留原项目许可与贡献者声明。"), ("使用政策", "请仅在有权操作的设备、应用、账号和文件范围内使用。\n\n禁止利用本工具实施恶意代码注入、进程劫持、窃取凭证、破坏数据、绕过权限或操控审批等危险行为。\n\n受保护操作默认须由本机用户核对具体参数后逐次批准。仅本机用户可在“操作授权”中显式开启可撤销的完全授权，让 R2 输入操作不再逐次询问；不得让 AI 自行授予审批、延长授权或通过注入绕过审批。R3 能力仍须单独在服务配置中开启。\n\n以上为使用政策；权限边界由实际审批和服务策略执行。\n\n本政策不限制开源许可证允许的库替换、修改、调试及为调试该修改进行的逆向工程。"), ("许可证", (owner.base / "LICENSE.md").read_text(encoding="utf-8"))]
-        texts.append(("Qt 许可与重建", (owner.base / "installer/resources/Qt-LICENSES.txt").read_text(encoding="utf-8")))
-        notices = owner.base / "installer/resources/third-party-licenses.txt"
-        if notices.exists():
-            texts.append(("第三方声明", notices.read_text(encoding="utf-8")))
-        for title, text in texts:
+        self.tabs = QTabWidget()
+        self.body.addWidget(self.tabs, 1)
+        self.documents = {}
+        for title, filename in POLICIES:
             box = QTextBrowser()
-            box.setPlainText(text)
-            tabs.addTab(box, title)
+            box.setAccessibleName(title)
+            box.setOpenExternalLinks(False)
+            box.setOpenLinks(False)
+            box.setHtml((owner.base / "installer/resources/legal" / filename).read_text(encoding="utf-8"))
+            box.anchorClicked.connect(self.open_reference)
+            self.documents[title] = box
+            self.tabs.addTab(box, title)
         self.body.addWidget(row(button("项目主页", lambda: webbrowser.open("https://github.com/CyanQX/Windows11-mcp")), None, button("关闭", self.close)))
+
+    def open_reference(self, url):
+        notices = {
+            "license:mit": ("MIT 许可证原文", "LICENSE.md"),
+            "license:qt": ("Qt 许可与重建说明", "installer/resources/Qt-LICENSES.txt"),
+            "license:thirdparty": ("第三方许可汇编", "installer/resources/third-party-licenses.txt"),
+        }
+        if url.toString() in notices:
+            title, relative = notices[url.toString()]
+            dialog = Detail(self.owner, title, (900, 740))
+            text = QTextBrowser()
+            text.setPlainText((self.owner.base / relative).read_text(encoding="utf-8"))
+            dialog.body.addWidget(text, 1)
+            dialog.body.addWidget(row(None, button("关闭", dialog.close)))
+        elif url.scheme() in {"https", "mailto"}:
+            webbrowser.open(url.toString())

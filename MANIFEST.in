@@ -8,5 +8,5 @@ recursive-include .claude *.md
 recursive-include skills *.md
 recursive-include installer *.py
 recursive-include installer *.iss
-recursive-include installer/resources *.png *.svg *.json *.txt *.isl
+recursive-include installer/resources *.png *.svg *.json *.txt *.isl *.html
 global-exclude __pycache__ *.py[cod]
