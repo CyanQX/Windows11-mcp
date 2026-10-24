@@ -22,6 +22,15 @@ def resources() -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
 
+def argument_value(arguments, flag):
+    for index, value in enumerate(arguments):
+        if value.startswith(flag + "="):
+            return value[len(flag) + 1:]
+        if value == flag and index + 1 < len(arguments):
+            return arguments[index + 1]
+    return None
+
+
 def restore_stdio() -> None:
     """The windowed Windows bootloader sets Python streams to None; MCP inherits pipes."""
     if os.name != "nt":
@@ -220,8 +229,9 @@ if __name__ == "__main__":
             # unhandled exception. Acceptance commands must fail and report,
             # so a headless runner never hangs waiting for that dialog.
             for flag in ("--portable-check", "--ui-smoke", "--self-test", "--glass-capture"):
-                if flag in sys.argv:
-                    destination = Path(sys.argv[sys.argv.index(flag) + 1])
+                value = argument_value(sys.argv[1:], flag)
+                if value is not None:
+                    destination = Path(value)
                     if flag == "--self-test":
                         destination = destination / "acceptance-error.json"
                     else:
@@ -229,6 +239,6 @@ if __name__ == "__main__":
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_text(json.dumps({"error": type(exc).__name__, "message": str(exc)}, ensure_ascii=True), encoding="utf-8")
                     raise SystemExit(1) from exc
-        if getattr(sys, "frozen", False) and not any(arg in sys.argv for arg in ("--serve", "serve", "auth", "--self-test", "--portable-check", "--apply-update", "--ui-smoke")):
+        if getattr(sys, "frozen", False) and not any(arg.split("=", 1)[0] in {"--serve", "serve", "auth", "--self-test", "--portable-check", "--apply-update", "--ui-smoke"} for arg in sys.argv[1:]):
             ctypes.windll.user32.MessageBoxW(None, f"管理器未能启动：{exc}\n原配置与文件已保留。", "Windows MCP", 16)
         raise

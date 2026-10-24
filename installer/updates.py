@@ -197,11 +197,12 @@ def start_update(path: Path, nonce: str):
     row = load_plan(path, nonce)
     if file_hash(Path(row["staged"])) != row["sha256"]:
         raise ManagerError("UPDATE_VERIFY_FAILED", "暂存文件发生变化")
-    return subprocess.Popen([row["staged"], "--apply-update", str(path), "--update-nonce", nonce], **background_args())
+    return subprocess.Popen([row["staged"], f"--apply-update={path.absolute()}", f"--update-nonce={nonce}"], **background_args())
 
 
 def apply_update(path: Path, nonce: str):
     """Runs in the verified *new* EXE; never overwrites a running parent image."""
+    path = check_path(path)
     row = load_plan(path, nonce)
     staged, target, backup = (check_path(Path(row[k])) for k in ("staged", "target", "backup"))
     if Path(sys.executable).resolve() != staged.resolve() or file_hash(staged) != row["sha256"]:
@@ -229,7 +230,7 @@ def apply_update(path: Path, nonce: str):
             shutil.copyfile(staged, target)
             if file_hash(target) != row["sha256"]:
                 raise ManagerError("UPDATE_VERIFY_FAILED", "替换后的文件校验失败")
-            child = subprocess.Popen([str(target), "--finish-update", str(path), "--update-nonce", nonce], **background_args())
+            child = subprocess.Popen([str(target), f"--finish-update={path}", f"--update-nonce={nonce}"], **background_args())
             deadline = time.monotonic() + 240
             while time.monotonic() < deadline and child.poll() is None and not result_path.exists():
                 time.sleep(0.25)

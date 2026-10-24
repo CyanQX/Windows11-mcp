@@ -26,7 +26,7 @@ def main():
     for case in args.cases:
         target = args.out / f"{case}.png"
         target.with_suffix(".error.json").unlink(missing_ok=True)
-        completed = subprocess.run([str(executable), "--ui-smoke", str(target.resolve()), "--ui-smoke-case", case], timeout=180)
+        completed = subprocess.run([str(executable), f"--ui-smoke={target.resolve()}", f"--ui-smoke-case={case}"], timeout=180)
         error = target.with_suffix(".error.json")
         if completed.returncode or error.exists():
             raise RuntimeError(error.read_text(encoding="utf-8") if error.exists() else f"Native UI exit {completed.returncode}")
