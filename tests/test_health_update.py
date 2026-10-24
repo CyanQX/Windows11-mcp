@@ -138,6 +138,16 @@ def test_update_plan_rejects_alternate_program_or_cache_target(tmp_path, change)
     assert current.read_bytes() == b"MZ previous"
 
 
+@pytest.mark.parametrize("nonce", [None, "--serve", "a" * 31, "a" * 32 + "\n"])
+def test_update_rejects_invalid_nonce_before_loading_or_launching(tmp_path, nonce, monkeypatch):
+    from installer import updates
+    launched = []
+    monkeypatch.setattr(updates.subprocess, "Popen", lambda *args, **kwargs: launched.append(args))
+    with pytest.raises(ManagerError, match="UPDATE_PLAN_INVALID"):
+        updates.apply_update(tmp_path / "missing" / "plan.json", nonce)
+    assert launched == [] and not (tmp_path / "missing").exists()
+
+
 def test_shared_runtime_requires_explicit_global_upgrade(tmp_path):
     service = make_service(tmp_path)
     assert service.install_targets(["codex", "claude"])[0]["ok"]

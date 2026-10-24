@@ -202,6 +202,8 @@ def start_update(path: Path, nonce: str):
 
 def apply_update(path: Path, nonce: str):
     """Runs in the verified *new* EXE; never overwrites a running parent image."""
+    if not isinstance(nonce, str) or not re.fullmatch(r"[a-f0-9]{32}", nonce):
+        raise ManagerError("UPDATE_PLAN_INVALID", "更新校验参数无效")
     path = check_path(path)
     plan_argument = str(path)
     if not re.fullmatch(r"[A-Za-z]:[\\/][^\x00-\x1f]+", plan_argument):
