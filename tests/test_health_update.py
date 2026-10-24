@@ -117,6 +117,7 @@ def test_update_helper_failed_launch_rolls_back_without_killing(tmp_path, monkey
     assert current.read_bytes() == b"MZ previous"
     assert json.loads(path.read_text())["state"] == "rolled_back"
     assert len(launched) == 2
+    assert launched[0] == [str(current), f"--finish-update={path}", f"--update-nonce={nonce}"]
 
 
 @pytest.mark.parametrize("change", ["staged", "target"])

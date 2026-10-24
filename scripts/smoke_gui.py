@@ -23,7 +23,8 @@ def main():
         parser.error("Native acceptance requires the built Windows-MCP.exe")
     args.out = check_path(args.out)
     args.out.mkdir(parents=True, exist_ok=True)
-    for case in args.cases:
+    for requested in args.cases:
+        case = next(allowed for allowed in SMOKE_CASES if allowed == requested)
         target = args.out / f"{case}.png"
         target.with_suffix(".error.json").unlink(missing_ok=True)
         completed = subprocess.run([str(executable), f"--ui-smoke={target.resolve()}", f"--ui-smoke-case={case}"], timeout=180)
