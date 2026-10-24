@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Windows-MCP 1.4.3</h1>
+  <h1>Windows-MCP 1.4.4</h1>
   <p>给编程 AI 接入真实 Windows 桌面操作能力</p>
 </div>
 
@@ -8,13 +8,13 @@
 
 ## 工具用途
 
-文档更新：**2026-10-24**。功能说明与截图跟随 [main 最新源码](https://github.com/CyanQX/Windows11-mcp/tree/main) 同步更新，改动记录见 [CHANGELOG](CHANGELOG.md)。当前公开稳定安装包为 [v1.4.3](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.4.3)；固定布局、全自动授权锁定及五份完整政策已合入 main，尚待后续正式版本打包发布。
+文档更新：**2026-10-24**。功能说明与截图跟随 [main 最新源码](https://github.com/CyanQX/Windows11-mcp/tree/main) 同步更新，改动记录见 [CHANGELOG](CHANGELOG.md)。当前公开稳定安装包为 [v1.4.4](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.4.4)；本版安装包包含固定布局、全自动授权锁定及六个“关于”页面。
 
 Windows-MCP 是面向 Claude Code、Codex、DeepSeek Harness、Gemini CLI、Zcode、Trae 的 Windows 自动化服务。连接后，AI 可以读取窗口和控件，操作真实应用、浏览器与文件，并核对实际结果。
 
 配套的 **Windows 安装与维护管理器**提供浅白背景和直角主面板：自动检测编程端，一次安装 Skill 和 MCP，随后可验证连接、修复、备份、恢复与安全卸载。编程端下拉列表居中显示、可内部滚动，已安装项目以圆点标识且不可重复选择；再次点击入口即可收起。Skill 提供操作说明，MCP 服务提供真正的 31 个工具。Codex 的安装目标为 **Codex 桌面端**，不安装或调用 Codex CLI。
 
-![main 最新源码的安装与维护固定布局](assets/manager-v1.4.3.png)
+![main 最新源码的安装与维护固定布局](assets/manager-v1.4.4.png)
 
 main 固定布局界面实拍，图中检测状态为隔离验收示例。
 
@@ -42,12 +42,12 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 选择一种下载，当前为 v1.4.3。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python；每个安装包的具体功能与更新说明见其对应 Release。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 选择一种下载，当前为 v1.4.4。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python；每个安装包的具体功能与更新说明见其对应 Release。
 
 | 下载 | 使用方法 | 管理数据位置 |
 |---|---|---|
-| [Windows-MCP-Setup-v1.4.3-x64.exe](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.3/Windows-MCP-Setup-v1.4.3-x64.exe) | 首次运行安装向导选择位置，后续升级直接显示进度页 | 当前用户的 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [Windows-MCP-Portable-v1.4.3-x64.zip](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.3/Windows-MCP-Portable-v1.4.3-x64.zip) | 完整解压后双击 `Windows-MCP.exe`，直接打开管理页面 | 解压目录旁的 `data`，包含设置、日志、备份、收据、运行时和审批数据 |
+| [Windows-MCP-Setup-v1.4.4-x64.exe](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.4/Windows-MCP-Setup-v1.4.4-x64.exe) | 首次运行安装向导选择位置，后续升级直接显示进度页 | 当前用户的 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [Windows-MCP-Portable-v1.4.4-x64.zip](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.4/Windows-MCP-Portable-v1.4.4-x64.zip) | 完整解压后双击 `Windows-MCP.exe`，直接打开管理页面 | 解压目录旁的 `data`，包含设置、日志、备份、收据、运行时和审批数据 |
 
 安装版提供路径选择、开始菜单入口和系统卸载程序，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Windows-MCP`，无需管理员权限。可从 Windows“设置 → 应用 → 已安装的应用”卸载管理器；**Skill 与 MCP 接入在管理器页面中单独卸载**，卸载管理器会保留这些接入和个人数据。
 
@@ -58,9 +58,9 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 1. 在左侧选择已检测到、尚未接入的编程端，可多选。**Codex 目标为桌面端**，不安装或调用 Codex CLI。
 2. 点击“安装 Skill + MCP”，核对路径与文件预览后确认。Skill 和客户端配置始终安装到下表的官方用户目录，便携模式也一样。
 3. 安装完成会真实验证服务版本、全部 31 个工具及 Session READY。重启对应客户端或新建会话后使用。
-4. 检查、验证连接、修复使用右侧按钮；卸载从独立窗口进入。固定工作区左上角是透明无边框的“设置、关于”，设置包含外观、操作审批、高级设置、备份恢复、安装目录、更新和诊断。安装状态只展示名称、状态和“详情”，详情内部滚动不带动外层页面；安装目录详情按内容高度展开。
+4. 检查、验证连接、修复使用右侧按钮；卸载从独立窗口进入。固定工作区左上角是点击前后均透明、无边框的“设置、关于”，设置包含外观、操作审批、高级设置、备份恢复、安装目录、更新和诊断。安装状态只展示名称、状态和“详情”，详情内部滚动不带动外层页面；安装目录详情按内容高度展开。
 5. 需要指定程序位置时，进入“设置 → 高级设置”。页面自动检测程序路径，也可通过“添加文件夹”选择真实安装目录，再点击右侧“检测”；保存后应用。全自动的提前开启、锁定及撤销方式见上方“可视化审批与全自动”。
-6. “关于”提供完整的[使用政策](installer/resources/legal/usage.html)、[隐私政策](installer/resources/legal/privacy.html)、[用户协议](installer/resources/legal/agreement.html)、[第三方声明](installer/resources/legal/third-party.html)和[许可使用](installer/resources/legal/license.html)，可离线阅读并打开随包许可原文；维护及隐私联系邮箱为 jingyanx2@gmail.com。政策说明实际数据流与中国大陆适用规则，不缩减 MIT 或第三方开源许可权利。
+6. “关于”按顺序提供[关于软件](installer/resources/legal/about.html)、[使用政策](installer/resources/legal/usage.html)、[隐私政策](installer/resources/legal/privacy.html)、[许可证](installer/resources/legal/license.html)、[第三方声明](installer/resources/legal/third-party.html)、[AI使用免责声明](installer/resources/legal/ai-disclaimer.html)，可离线阅读并打开随包许可原文。用户使用条款并入使用政策；AI 说明涵盖生成内容标识、人工核验及法定责任，隐私政策说明实际数据处理与权利渠道。维护及隐私联系邮箱为 jingyanx2@gmail.com。
 7. 发现新版后进入“设置 → 检查更新”，点击“更新安装”。安装版保留原安装位置，下载校验后直接进入更新进度页；便携版校验 ZIP 后替换程序并保留 data。完成后打开新版管理器并更新、验证受管 Skill 与 MCP。自动检查只提示，不会自行下载安装。
 
 修改前创建私有备份，失败执行散列校验回滚；保留其他 MCP、JSONC 注释与个人配置。多个客户端共享服务，仍有引用时保留运行时。界面显示最近一次真实验证结果及时间，MCP 由客户端按需启动。普通桌面与已安装 Edge 无需额外下载；其他 Playwright 通道需提供相应浏览器。
@@ -85,7 +85,7 @@ Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验
 已有 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/) 时，可继续安装固定版本：
 
 ```powershell
-uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.4.3"
+uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.4.4"
 ```
 
 将 `%USERPROFILE%\.local\bin\windows-mcp.exe` 作为客户端 MCP 命令，参数为 `["serve"]`。使用 Skill 可从本仓库 `main` 的 `skills/windows-mcp` 复制到上表相应目录。工具参数与可选设置见 [Skill 参考](skills/windows-mcp/references/advanced.md)。

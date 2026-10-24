@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import sys
 import webbrowser
+from html import escape
 from datetime import datetime
 from pathlib import Path
 
@@ -452,17 +453,18 @@ class Updates(Detail):
 
 
 POLICIES = (
+    ("关于软件", "about.html"),
     ("使用政策", "usage.html"),
     ("隐私政策", "privacy.html"),
-    ("用户协议", "agreement.html"),
+    ("许可证", "license.html"),
     ("第三方声明", "third-party.html"),
-    ("许可使用", "license.html"),
+    ("AI使用免责声明", "ai-disclaimer.html"),
 )
 
 
 class About(Detail):
     def __init__(self, owner):
-        super().__init__(owner, "关于 Windows MCP", (900, 740))
+        super().__init__(owner, "关于 Windows MCP", (980, 760))
         self.body.addWidget(label(owner.version, role="secondary"))
         self.tabs = QTabWidget()
         self.body.addWidget(self.tabs, 1)
@@ -472,7 +474,8 @@ class About(Detail):
             box.setAccessibleName(title)
             box.setOpenExternalLinks(False)
             box.setOpenLinks(False)
-            box.setHtml((owner.base / "installer/resources/legal" / filename).read_text(encoding="utf-8"))
+            content = (owner.base / "installer/resources/legal" / filename).read_text(encoding="utf-8")
+            box.setHtml(content.replace("{{VERSION}}", escape(owner.version)))
             box.anchorClicked.connect(self.open_reference)
             self.documents[title] = box
             self.tabs.addTab(box, title)

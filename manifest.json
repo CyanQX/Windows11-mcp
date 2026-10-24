@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.4",
   "name": "Windows-MCP",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Semantic Windows automation with independent verification, scoped permissions and managed Playwright",
   "long_description": "Semantic-first Observe/Execute/Verify, bounded multi-subscriber Watch, isolated Playwright browser contexts, native scoped text files and window-bound visual fallback. Legacy tools remain registered and pass through the same PolicyGate. R2 requires an exact, session-bound, expiring, one-use local operator approval by default; the local operator may explicitly enable a signed, revocable full-authorization grant for R2 only, while R3 stays disabled. Tested on Windows 11; application coverage, mixed-DPI multi-monitor and Windows 10 qualification limits are documented in README.",
   "author": {

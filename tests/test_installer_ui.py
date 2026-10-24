@@ -334,14 +334,15 @@ def test_top_navigation_is_transparent_and_stays_above_fixed_panels(window):
     about.close()
 
 
-def test_fixed_panels_ignore_title_and_boundary_drags_and_old_layout(window):
+@pytest.mark.parametrize("delta", [QPoint(-180, 0), QPoint(180, 0), QPoint(0, -180), QPoint(0, 180)])
+def test_fixed_panels_ignore_title_and_boundary_drags_and_old_layout(window, delta):
     from PySide6.QtWidgets import QDockWidget, QSplitter
     space = window.workspace
     assert not space.findChildren(QDockWidget) and not space.findChildren(QSplitter)
     initial = {key: panel.geometry() for key, panel in space.panels.items()}
     for panel in space.panels.values():
         for target, start in ((panel.heading, panel.heading.rect().center()), (space, QPoint(panel.x() + panel.width() + 5, panel.y() + 80))):
-            end = start + QPoint(-180, 60)
+            end = start + delta
             QTest.mousePress(target, Qt.MouseButton.LeftButton, pos=start)
             QApplication.sendEvent(target, QMouseEvent(QEvent.Type.MouseMove, end, target.mapToGlobal(end), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
             QTest.mouseRelease(target, Qt.MouseButton.LeftButton, pos=end)
@@ -356,6 +357,35 @@ def test_fixed_panels_ignore_title_and_boundary_drags_and_old_layout(window):
     assert left.right() < right.left() and actions.left() == right.left()
     assert right.bottom() < actions.top() and actions.height() == 150
     window.resize(original_size)
+
+
+@pytest.mark.parametrize("mode", ["light", "warm", "dark"])
+@pytest.mark.parametrize("strength", [0, 65])
+def test_navigation_paints_no_frame_or_dark_background_in_pointer_states(window, mode, strength):
+    from installer.ui.controls import NavigationButton
+    original = copy.deepcopy(window.settings.value)
+    window.settings.value["theme"] = mode
+    window.settings.value["appearance"]["glass_strength"] = strength
+    window.apply_appearance()
+    clicks = []
+    control = NavigationButton("设置", lambda: clicks.append(True), window.theme.icon("settings"))
+    control.resize(control.sizeHint())
+    control.show()
+    QTest.qWait(30)
+    control.clearFocus()
+    before = control.grab().toImage()
+    try:
+        QTest.mouseMove(control, control.rect().center())
+        QTest.mousePress(control, Qt.MouseButton.LeftButton)
+        assert control.isDown() and control.grab().toImage() == before
+        QTest.mouseRelease(control, Qt.MouseButton.LeftButton)
+        assert clicks == [True] and control.grab().toImage() == before
+        QTest.keyClick(control, Qt.Key.Key_Space)
+        assert clicks == [True, True]
+    finally:
+        control.close()
+        window.settings.value = original
+        window.apply_appearance()
 
 
 @pytest.mark.parametrize("key", ["theme", "log_background", "strength"])
@@ -415,16 +445,20 @@ def test_preferences_detects_existing_programs_without_saving_and_reports_absenc
     dialog.close()
 
 
-def test_about_has_five_complete_local_policies_and_opens_bundled_licenses(window):
+def test_about_has_six_requested_pages_and_opens_bundled_licenses(window):
     from installer.ui.settings_dialog import About, POLICIES
     dialog = About(window)
     assert [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())] == [name for name, _ in POLICIES]
+    assert list(dialog.documents) == ["关于软件", "使用政策", "隐私政策", "许可证", "第三方声明", "AI使用免责声明"]
     for title, _ in POLICIES:
         text = dialog.documents[title].toPlainText()
         assert "jingyanx2@gmail.com" in text and "2026 年 10 月 24 日" in text
-        assert len(text) > 1000 and "CyanQX / Windows-MCP" in text
+        assert len(text) > (400 if title == "关于软件" else 1000) and "CyanQX / Windows-MCP" in text
+        assert "{{VERSION}}" not in text
     privacy = dialog.documents["隐私政策"].toPlainText()
     assert all(phrase in privacy for phrase in ("默认关闭", "境外", "撤回", "删除", "DPAPI", "30 天", "50 MB", "AI 客户端"))
+    ai = dialog.documents["AI使用免责声明"].toPlainText()
+    assert all(phrase in ai for phrase in ("显式", "隐式", "不免除", "人身损害", "重大过失", "过错", "人工智能生成合成内容标识办法"))
     for url, required in (("license:mit", "Permission is hereby granted"), ("license:qt", "GNU LESSER GENERAL PUBLIC LICENSE"), ("license:thirdparty", "Declared license")):
         dialog.open_reference(QUrl(url))
         notice = window.dialogs[-1]

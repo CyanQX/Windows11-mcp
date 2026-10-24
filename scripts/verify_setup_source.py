@@ -59,7 +59,18 @@ def verify(executable: Path):
             checked.append(name)
     if mismatch:
         raise AssertionError("Frozen bytecode differs from current source: " + ", ".join(mismatch))
-    return {"executable": executable.name, "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "owned_modules_checked": len(checked), "frozen_bytecode_matches_source": True}
+    entries = {name.replace("\\", "/"): name for name in reader.toc}
+    legal = list((ROOT / "installer/resources/legal").glob("*.html"))
+    required = [ROOT / "manifest.json", ROOT / "LICENSE.md", ROOT / "installer/resources/Qt-LICENSES.txt", ROOT / "installer/resources/third-party-licenses.txt", *legal]
+    expected_legal = {path.relative_to(ROOT).as_posix() for path in legal}
+    bundled_legal = {name for name in entries if name.startswith("installer/resources/legal/") and name.endswith(".html")}
+    if bundled_legal != expected_legal:
+        raise AssertionError("Bundled policy page list differs from current source")
+    for path in required:
+        name = path.relative_to(ROOT).as_posix()
+        if name not in entries or reader.extract(entries[name]) != path.read_bytes():
+            raise AssertionError("Bundled resource differs from current source: " + name)
+    return {"executable": executable.name, "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "owned_modules_checked": len(checked), "frozen_bytecode_matches_source": True, "policy_pages_checked": len(legal), "bundled_resources_match_source": True}
 
 
 def main():

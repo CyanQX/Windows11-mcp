@@ -1,10 +1,44 @@
 """Crisp selection controls with native checkbox semantics and quiet focus feedback."""
 from PySide6.QtCore import Qt, QRectF, QSize, QPoint, QEvent, QTimer
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QListView, QSizePolicy, QFrame, QVBoxLayout, QStyledItemDelegate, QStyle, QLabel
+from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPaintEvent, QPalette
+from PySide6.QtWidgets import QAbstractButton, QApplication, QCheckBox, QComboBox, QListView, QSizePolicy, QFrame, QVBoxLayout, QStyledItemDelegate, QStyle, QLabel
+from collections.abc import Callable
 
 from installer.ui.theme import theme
 from installer.ui.tactile_material import paint_glass, tokens_for
+
+
+class NavigationButton(QAbstractButton):
+    """Text and icon only, with identical backgrounds in every pointer state."""
+    def __init__(self, text: str, callback: Callable, icon: QIcon) -> None:
+        super().__init__()
+        self.setText(text)
+        self.setIcon(icon)
+        self.setIconSize(QSize(16, 16))
+        self.setProperty("transparent", True)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.clicked.connect(callback)
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.fontMetrics().horizontalAdvance(self.text()) + 48, 42)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        current = theme()
+        color = QColor(current.colors["text" if self.isEnabled() else "secondary"]) if current else self.palette().color(QPalette.ColorRole.ButtonText)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(color)
+        painter.setFont(self.font())
+        icon = self.icon().pixmap(self.iconSize(), self.devicePixelRatioF())
+        painter.drawPixmap(QPoint(12, (self.height() - 16) // 2), icon)
+        rect = self.rect().adjusted(36, 0, -12, 0)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.text())
+        if self.hasFocus():
+            y = (self.height() + self.fontMetrics().height()) // 2 + 2
+            painter.drawLine(rect.left(), y, rect.right(), y)
 
 
 class ChoiceDelegate(QStyledItemDelegate):

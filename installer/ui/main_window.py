@@ -7,7 +7,7 @@ import threading
 import traceback
 
 from PySide6.QtCore import QTimer, QVariantAnimation, QEasingCurve, Signal
-from PySide6.QtWidgets import QMainWindow, QWidget, QMessageBox, QApplication, QPushButton
+from PySide6.QtWidgets import QAbstractButton, QMainWindow, QWidget, QMessageBox, QApplication
 
 from installer.diagnostics import EventLog
 from installer.health import HealthChecker
@@ -15,6 +15,7 @@ from installer.models import SelectionModel, IntegrationStatus, Presence
 from installer.operations import InstallerService
 from installer.progress import TaskProgress, segment
 from installer.ui.log_view import LogView
+from installer.ui.controls import NavigationButton
 from installer.ui.multiselect import MultiSelect
 from installer.ui.theme import Theme, button, column, label, row, backdrop
 from installer.ui.workspace import Workspace
@@ -51,10 +52,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         layout = column(root, 0, 0)
         from installer.ui.settings_dialog import About, SettingsHub
-        self.settings_button = button("设置", lambda: SettingsHub(self), icon="settings", compact=True)
-        self.about_button = button("关于", lambda: About(self), icon="info", compact=True)
-        for control in (self.settings_button, self.about_button):
-            control.setProperty("transparent", True)
+        self.settings_button = NavigationButton("设置", lambda: SettingsHub(self), self.theme.icon("settings"))
+        self.about_button = NavigationButton("关于", lambda: About(self), self.theme.icon("info"))
+        self.settings_button.setProperty("iconName", "settings")
+        self.about_button.setProperty("iconName", "info")
         self.top_bar = row(self.settings_button, self.about_button, None)
         self.top_bar.layout().setContentsMargins(12, 6, 12, 2)
         layout.addWidget(self.top_bar)
@@ -143,7 +144,7 @@ class MainWindow(QMainWindow):
         for widget in QApplication.allWidgets():
             if isinstance(widget, TactileGlassButton):
                 widget.refresh_appearance()
-            if isinstance(widget, QPushButton) and widget.property("iconName"):
+            if isinstance(widget, QAbstractButton) and widget.property("iconName"):
                 widget.setIcon(self.theme.icon(widget.property("iconName")))
             widget.update()
         if self.theme.appearance["reduce_motion"] and self.progress_animation.state() == QVariantAnimation.State.Running:

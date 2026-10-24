@@ -15,7 +15,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("executable", type=Path)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--cases", nargs="+", choices=SMOKE_CASES, default=["ready", "status", "appearance", "advanced", "progress-hidden", "selection-clear", "update-available", "approval", "settings-update", "paths", "selection-bottom", "status-details", "approval-default-automatic", "choice-popup", "choice-strength", "fixed-layout", "about", "privacy", "approval-locked"])
+    parser.add_argument("--cases", nargs="+", choices=SMOKE_CASES, default=["ready", "status", "appearance", "advanced", "progress-hidden", "selection-clear", "update-available", "approval", "settings-update", "paths", "selection-bottom", "status-details", "approval-default-automatic", "choice-popup", "choice-strength", "fixed-layout", "about", "privacy", "ai-disclaimer", "navigation", "navigation-plain", "approval-locked"])
     args = parser.parse_args()
     from installer.storage import check_path
     executable = check_path(args.executable)

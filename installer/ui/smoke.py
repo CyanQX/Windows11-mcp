@@ -23,10 +23,13 @@ from windows_mcp.infrastructure.approvals import ApprovalStore
 
 
 class IsolatedDiscovery:
-    def __init__(self):
+    def __init__(self, executable=None):
         self.overrides = {}
+        self.executable = executable
 
     def detect(self, profile):
+        if self.executable:
+            return (Presence.DETECTED, str(self.executable)) if profile.id == "claude" else (Presence.NOT_FOUND, None)
         return Presence.DETECTED, "isolated UI acceptance client"
 
 
@@ -45,7 +48,12 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
     with tempfile.TemporaryDirectory(prefix="windows-mcp-ui-acceptance-") as directory:
         root = Path(directory)
         settings = SettingsService(root / "home", env={"LOCALAPPDATA": str(root / "home/AppData/Local")})
-        settings.discovery = IsolatedDiscovery
+        example = root / "example-program" / "claude.exe"
+        example.parent.mkdir()
+        example.write_bytes(b"isolated fixture; never executed")
+        settings.discovery = lambda: IsolatedDiscovery(example)
+        if case == "navigation-plain":
+            settings.value["appearance"]["glass_strength"] = 0
         if case in {"dark", "warm"}:
             settings.value["theme"] = case
             settings.value["appearance"]["log_background"] = case
@@ -206,7 +214,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                 QTimer.singleShot(180, lambda: take(window.selector.popup))
             elif case == "update-available":
                 from installer.ui.settings_dialog import Updates
-                window.update_release = {"available": True, "current": window.version, "latest": "1.4.3", "kind": "installer", "notes": "隔离界面示例：用户点击更新安装后才会下载。更新只显示进度页，首次安装保留安装向导。"}
+                window.update_release = {"available": True, "current": window.version, "latest": "99.0.0", "kind": "installer", "notes": "隔离界面示例：用户点击更新安装后才会下载。更新只显示进度页，首次安装保留安装向导。"}
                 dialog = Updates(window)
                 require(dialog.download_button.isEnabled(), 'Native UI acceptance failed: dialog.download_button.isEnabled()')
                 verified_steps.append("automatic_hint_shown_without_downloading_until_user_click")
@@ -223,24 +231,44 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                 QTimer.singleShot(150, popup)
             elif case == "fixed-layout":
                 from PySide6.QtTest import QTest
+                from PySide6.QtGui import QMouseEvent
+                from PySide6.QtCore import QEvent
                 panels = window.workspace.panels
                 initial = {key: panel.geometry() for key, panel in panels.items()}
-                for panel in panels.values():
-                    start = panel.heading.rect().center()
-                    QTest.mousePress(panel.heading, Qt.MouseButton.LeftButton, pos=start)
-                    QTest.mouseMove(panel.heading, start + QPoint(100, 0))
-                    QTest.mouseRelease(panel.heading, Qt.MouseButton.LeftButton, pos=start + QPoint(100, 0))
-                require(all(panel.geometry() == initial[key] and panel.isVisible() for key, panel in panels.items()), "Fixed panels moved after title drag")
+                space = window.workspace
+                targets = [(panel.heading, panel.heading.rect().center()) for panel in panels.values()]
+                targets.extend([(space, QPoint(panels["targets"].geometry().right() + 6, 180)), (space, QPoint(panels["maintenance"].geometry().center().x(), panels["actions"].y() - 6))])
+                for delta in (QPoint(-160, 0), QPoint(160, 0), QPoint(0, -160), QPoint(0, 160)):
+                    for target_widget, start in targets:
+                        end = start + delta
+                        QTest.mousePress(target_widget, Qt.MouseButton.LeftButton, pos=start)
+                        app.sendEvent(target_widget, QMouseEvent(QEvent.Type.MouseMove, end, target_widget.mapToGlobal(end), Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+                        QTest.mouseRelease(target_widget, Qt.MouseButton.LeftButton, pos=end)
+                    require(all(panel.geometry() == initial[key] and panel.isVisible() for key, panel in panels.items()), "Fixed panels moved after directional drag")
                 require(panels["targets"].y() == panels["maintenance"].y() and panels["actions"].x() == panels["maintenance"].x(), "Fixed layout placement changed")
-                verified_steps.append("title_drags_leave_all_three_panels_fixed")
+                verified_steps.append("all_four_direction_drags_on_titles_and_borders_leave_panels_fixed")
                 take()
-            elif case in {"about", "privacy"}:
+            elif case in {"navigation", "navigation-plain"}:
+                from PySide6.QtTest import QTest
+                for control in (window.settings_button, window.about_button):
+                    window.logs.setFocus()
+                    baseline = control.grab().toImage()
+                    QTest.mousePress(control, Qt.MouseButton.LeftButton)
+                    require(control.grab().toImage() == baseline, "Navigation darkened while pressed")
+                    QTest.mouseRelease(control, Qt.MouseButton.LeftButton)
+                    for dialog in list(window.dialogs):
+                        dialog.close()
+                verified_steps.append("navigation_has_no_frame_or_dark_pressed_state")
+                take()
+            elif case in {"about", "privacy", "ai-disclaimer"}:
                 from installer.ui.settings_dialog import About
                 dialog = About(window)
                 if case == "privacy":
-                    dialog.tabs.setCurrentIndex(1)
-                require(dialog.tabs.count() == 5 and "jingyanx2@gmail.com" in dialog.documents["隐私政策"].toPlainText(), "Policy documents missing")
-                verified_steps.append("five_complete_local_policy_documents_available")
+                    dialog.tabs.setCurrentIndex(2)
+                elif case == "ai-disclaimer":
+                    dialog.tabs.setCurrentIndex(5)
+                require(dialog.tabs.count() == 6 and "jingyanx2@gmail.com" in dialog.documents["隐私政策"].toPlainText(), "Policy documents missing")
+                verified_steps.append("six_about_pages_in_requested_order_available")
                 QTimer.singleShot(200, lambda: take(dialog))
             elif case == "approval-locked":
                 from PySide6.QtTest import QTest

@@ -83,7 +83,6 @@ QSlider::groove:horizontal {{ height: 6px; background: {c['border']}; border-rad
 QSlider::handle:horizontal {{ width: 18px; margin: -6px 0; background: {c['accent']}; border-radius: 9px; }}
 QToolTip {{ color: {c['text']}; background: {c['glass']}; border: 1px solid {c['border']}; padding: 8px; }}
 {tactile_rules}
-TactileGlassButton[transparent='true'], TactileGlassButton[transparent='true']:hover, TactileGlassButton[transparent='true']:pressed, TactileGlassButton[transparent='true']:focus {{ background: transparent; border: none; padding: 5px 9px; }}
 QPushButton[detailToggle='true'] {{ min-height: 44px; padding-top: 0px; padding-bottom: 0px; }}
 """)
         for widget in app.topLevelWidgets():
