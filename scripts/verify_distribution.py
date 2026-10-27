@@ -16,6 +16,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def documented_tools(readme: str) -> set[str]:
+    section = re.search(r"^## 工具一览\n(.*?)(?=^## |\Z)", readme, re.M | re.S)
+    if section is None:
+        raise AssertionError("README tool catalog is missing")
+    return set(re.findall(r"^\| `([A-Za-z]+)` \|", section.group(1), flags=re.M))
+
+
 def verify(dist: Path, tag: str | None = None) -> dict:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     version = project["version"]
@@ -28,7 +35,7 @@ def verify(dist: Path, tag: str | None = None) -> dict:
     if tag is not None:
         assert tag == f"v{version}", "Git tag disagrees with package version"
     tools = [tool["name"] for tool in manifest["tools"]]
-    documented = set(re.findall(r"^\| `([A-Za-z]+)` \|", readme, flags=re.M))
+    documented = documented_tools(readme)
     assert len(tools) == len(set(tools)) and set(tools) == documented, "Tool catalog disagrees"
 
     wheel_paths = sorted(dist.glob("*.whl"))
