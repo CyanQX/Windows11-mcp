@@ -14,7 +14,7 @@
 
 Windows-MCP 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude Code、Codex 桌面端、DeepSeek Harness、Gemini CLI、Zcode 或 Trae 后，AI 可以读取真实窗口和控件、操作应用和网页，并通过状态或文件结果核对任务。模型与 AI 客户端由你选择，本项目不提供模型账号或云端算力。
 
-**本页对应 1.5.0 源码与功能，文档更新于 2026-10-27。** 本版整合前三批引擎、文本效率、窗口视觉与部署配套升级；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
+**当前稳定版：[v1.5.0](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.5.0)，文档更新于 2026-10-27。** 本版整合前三批引擎、文本效率、窗口视觉与部署配套升级；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
 
 | 组成 | 负责什么 |
 |---|---|
@@ -111,12 +111,12 @@ OCR 实际识别尚未在当前验收机通过：该机无包标识、无 Tesser
 
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 `SHA256SUMS.txt`。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.5.0；请在发布页核对所下载资产的版本。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.5.0/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.5.0；请在发布页核对所下载资产的版本。
 
 | 格式 | 文件与使用方法 | 数据位置 |
 |---|---|---|
-| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/latest) | `Windows-MCP-Setup-v1.5.0-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/latest) | `Windows-MCP-Portable-v1.5.0-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
+| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.5.0/Windows-MCP-Setup-v1.5.0-x64.exe) | `Windows-MCP-Setup-v1.5.0-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.5.0/Windows-MCP-Portable-v1.5.0-x64.zip) | `Windows-MCP-Portable-v1.5.0-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
 
 安装版默认路径为 `%LOCALAPPDATA%\Programs\Windows-MCP`，按用户安装，无需管理员权限；系统卸载入口位于 Windows“设置 → 应用”。**卸载管理器会保留已接入的 Skill/MCP 和个人数据，对应接入须在管理器中单独卸载。**
 
