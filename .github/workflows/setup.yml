@@ -32,35 +32,35 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install locked build dependencies
-        run: uv sync --frozen --extra dev --extra browser --extra installer --group build
+        run: uv sync --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build
       - name: Check installer source and configuration rollback
         run: |
-          uv run --frozen --extra dev --extra browser --extra installer --group build ruff check src tests scripts installer
-          uv run --frozen --extra dev --extra browser --extra installer --group build pytest tests/test_installer.py tests/test_docs.py tests/test_install_state.py tests/test_uninstall_safe.py tests/test_recovery.py tests/test_health_update.py tests/test_manager_settings.py tests/test_installer_ui.py tests/test_portable.py
+          uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build ruff check src tests scripts installer
+          uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build pytest tests/test_installer.py tests/test_docs.py tests/test_install_state.py tests/test_uninstall_safe.py tests/test_recovery.py tests/test_health_update.py tests/test_manager_settings.py tests/test_installer_ui.py tests/test_portable.py
       - name: Build standalone GUI and MCP service
-        run: uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/build_setup.py
+        run: uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build python scripts/build_setup.py --with-capture --with-ocr
       - name: Verify actual EXE installation and stdio connection
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist/setup -Force | Out-Null
           Copy-Item -LiteralPath build/payload/setup-source-verification.json -Destination dist/setup/setup-source-verification.json
-          uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/smoke_setup.py build/payload/Windows-MCP.exe --output dist/setup/setup-validation.json
+          uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build python scripts/smoke_setup.py build/payload/Windows-MCP.exe --require-native-components --output dist/setup/setup-validation.json
       - name: Build installation wizard and portable ZIP
         shell: pwsh
         run: |
-          uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/build_windows_installer.py build/payload/Windows-MCP.exe --out dist/setup
+          uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build python scripts/build_windows_installer.py build/payload/Windows-MCP.exe --out dist/setup
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/build_portable.py build/payload/Windows-MCP.exe --out dist/setup
+          uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build python scripts/build_portable.py build/payload/Windows-MCP.exe --out dist/setup
       - name: Verify chosen installation directory, system uninstall and extracted portable EXE
         shell: pwsh
         run: |
           $wizardPackage = Get-ChildItem -LiteralPath dist/setup -Filter 'Windows-MCP-Setup-v*-x64.exe' | Select-Object -First 1
           $portablePackage = Get-ChildItem -LiteralPath dist/setup -Filter 'Windows-MCP-Portable-v*-x64.zip' | Select-Object -First 1
-          uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/smoke_windows_installer.py $wizardPackage.FullName --payload build/payload/Windows-MCP.exe --output dist/setup/installer-validation.json
+          uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build python scripts/smoke_windows_installer.py $wizardPackage.FullName --payload build/payload/Windows-MCP.exe --output dist/setup/installer-validation.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/smoke_portable.py $portablePackage.FullName --output dist/setup/portable-validation.json
+          uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build python scripts/smoke_portable.py $portablePackage.FullName --output dist/setup/portable-validation.json
       - name: Verify real Qt pages in isolated temporary homes
-        run: uv run --frozen --extra dev --extra browser --extra installer --group build python scripts/smoke_gui.py build/payload/Windows-MCP.exe --out build/visual
+        run: uv run --frozen --extra dev --extra browser --extra installer --extra capture --extra ocr --group build python scripts/smoke_gui.py build/payload/Windows-MCP.exe --out build/visual
       - name: Save native visual acceptance
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

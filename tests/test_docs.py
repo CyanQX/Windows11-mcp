@@ -78,9 +78,10 @@ def test_readme_is_the_only_user_document():
         str(p.relative_to(ROOT)).replace("\\", "/")
         for p in ROOT.rglob("*.md")
         if p != ROOT / "design-qa.md"  # Local visual review is a working artifact.
-        if not any(part.startswith(".venv") or part in {"node_modules", ".pytest_cache"} for part in p.parts)
+        # Optional developer-local skills may be added/removed independently of product docs.
+        if not any(part.startswith(".venv") or part in {"node_modules", ".pytest_cache", ".claude"} for part in p.parts)
     )
-    assert markdown == [".claude/skills/windows-mcp-tool-tester/SKILL.md", "CHANGELOG.md", "CLAUDE.md", "LICENSE.md", "README.md", "skills/windows-mcp/SKILL.md", "skills/windows-mcp/references/advanced.md"]
+    assert markdown == ["CHANGELOG.md", "CLAUDE.md", "LICENSE.md", "README.md", "skills/windows-mcp/SKILL.md", "skills/windows-mcp/references/advanced.md"]
 
 
 def test_manifest_lists_every_tool_and_matches_the_package_version():

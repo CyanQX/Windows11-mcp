@@ -12,10 +12,12 @@ class ScreenshotSpace:
     process_id: int
     rect: tuple[int, int, int, int]
     image_size: tuple[int, int]
+    window_rect: tuple[int, int, int, int] | None = None
+    process_started: float | None = None
 
     def point(self, x: float, y: float, *, live_handle: int, live_pid: int,
               live_rect: tuple[int, int, int, int]) -> tuple[int, int]:
-        if (live_handle, live_pid, live_rect) != (self.window_handle, self.process_id, self.rect):
+        if (live_handle, live_pid, live_rect) != (self.window_handle, self.process_id, self.window_rect or self.rect):
             raise ValueError("TARGET_STALE: window identity/geometry changed since screenshot")
         width, height = self.image_size
         if width <= 0 or height <= 0 or not (math.isfinite(x) and math.isfinite(y)):

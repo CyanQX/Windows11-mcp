@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tomllib
+import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "payload")
     parser.add_argument("--work", type=Path, default=ROOT / "build" / "setup")
+    parser.add_argument("--with-capture", action="store_true", help="Bundle the optional HWND WGC component")
+    parser.add_argument("--with-ocr", action="store_true", help="Bundle optional OCR bindings; an engine/package identity is still required")
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Windows EXE must be built on Windows")
@@ -34,6 +37,15 @@ def main():
     options = [str(ROOT / "installer" / "app.py"), "--onefile", "--windowed", "--clean", "--noconfirm", "--name", "Windows-MCP", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
     for module in ("windows_mcp", "fastmcp", "playwright", "comtypes"):
         options += ["--collect-all", module]
+    for enabled, modules in ((args.with_capture, ("windows_capture",)),
+                              (args.with_ocr, ("pytesseract", "winrt"))):
+        for module in modules:
+            if enabled:
+                if importlib.util.find_spec(module) is None:
+                    parser.error(f"Install optional dependency {module} before including it")
+                options += ["--collect-all", module]
+            else:
+                options += ["--exclude-module", module]
     for module in ("mcp.client", "mcp.server", "mcp.shared"):
         options += ["--collect-submodules", module]
     options += ["--collect-data", "mcp", "--exclude-module", "mcp.cli"]

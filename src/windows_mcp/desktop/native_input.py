@@ -118,15 +118,35 @@ def _send(inputs: Sequence[INPUT]) -> None:
     from windows_mcp.engine.sessions import _bound
 
     session = _bound.get()
-    if session and session.cancelled.is_set():
-        # Always allow cleanup releases so cancellation cannot leave a drag/modifier held.
-        releases = all(
+    # Cleanup releases must remain possible after cancellation, revocation or focus loss.
+    releases = all(
             (item.type == INPUT_KEYBOARD and item.u.ki.dwFlags & KEYEVENTF_KEYUP)
             or (item.type == INPUT_MOUSE and item.u.mi.dwFlags in {MOUSEEVENTF_LEFTUP, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_MIDDLEUP})
             for item in inputs
         )
+    if session and session.cancelled.is_set():
         if not releases:
             raise InputBlockedError("CANCELLED: input stopped by the owning session")
+    if not releases:
+        from windows_mcp.infrastructure.authorization import check_dispatch, check_window_dispatch, _dispatch
+
+        if _dispatch.get() is not None:
+            from windows_mcp.desktop import elements
+
+            if any(item.type == INPUT_KEYBOARD for item in inputs):
+                check_window_dispatch(elements.foreground_root())
+            elif any(item.type == INPUT_MOUSE and item.u.mi.dwFlags & (MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_MIDDLEDOWN | MOUSEEVENTF_WHEEL | MOUSEEVENTF_HWHEEL) for item in inputs):
+                # Mouse batches can move before pressing. Check their actual destination.
+                moves = [item for item in inputs if item.type == INPUT_MOUSE and item.u.mi.dwFlags & MOUSEEVENTF_ABSOLUTE]
+                if moves:
+                    screen, last = virtual_screen(), moves[-1].u.mi
+                    point = (screen.left + round(last.dx * max(screen.width - 1, 1) / 65535),
+                             screen.top + round(last.dy * max(screen.height - 1, 1) / 65535))
+                else:
+                    point = cursor_position()
+                check_window_dispatch(elements.root_at(*point))
+            else:
+                check_dispatch()
     array = (INPUT * len(inputs))(*inputs)
     inserted = _user32.SendInput(len(inputs), array, ctypes.sizeof(INPUT))
     if inserted != len(inputs):
@@ -234,10 +254,20 @@ def click(x: int, y: int, button: str = "left", count: int = 1, glide: float = 0
         raise ValueError("clicks must be between 0 and 3")
     start = cursor_position()
     final = move_to(x, y, duration=glide if math.dist(start, (x, y)) > 4 else 0.0)
+    if final != (x, y):
+        raise InputBlockedError(
+            f"INPUT_TARGET_UNREACHABLE: cursor could not reach ({x},{y}); "
+            "no mouse button was pressed. Check the input desktop and cursor restrictions."
+        )
     if count == 0:
         return final
     gap = min(0.06, _user32.GetDoubleClickTime() / 5000.0)
     for index in range(count):
+        if cursor_position() != (x, y):
+            raise InputBlockedError(
+                "INPUT_TARGET_UNREACHABLE: cursor moved away from the target; "
+                "the next click was not sent. Observe again before retrying."
+            )
         _send([_mouse(down), _mouse(up)])
         if index + 1 < count:
             time.sleep(gap)
@@ -435,6 +465,9 @@ def press_keys(spec: str, repeat: int = 1, interval: float = 0.03) -> list[Chord
     if repeat < 1 or repeat > 100:
         raise ValueError("repeat must be between 1 and 100")
     chords = parse_sequence(spec)
+    from windows_mcp.infrastructure.authorization import check_shortcut_dispatch
+
+    check_shortcut_dispatch(spec)
     for _ in range(repeat):
         for chord in chords:
             _send(chord_events(chord))  # one atomic batch per chord

@@ -172,7 +172,7 @@ def main():
     if len(sys.argv) > 2 and sys.argv[1] == "approve" and getattr(sys, "frozen", False):
         gui(review_request=sys.argv[2])
         return
-    if len(sys.argv) > 1 and (sys.argv[1] == "--serve" or sys.argv[1] in {"serve", "approve", "auth"}):
+    if len(sys.argv) > 1 and (sys.argv[1] == "--serve" or sys.argv[1] in {"serve", "approve", "auth", "trust", "network", "doctor", "connectors", "manifest", "native-helper"}):
         restore_stdio()
         from windows_mcp.__main__ import main as server_main
         arguments = ["serve", *sys.argv[2:]] if sys.argv[1] == "--serve" else sys.argv[1:]
@@ -239,6 +239,6 @@ if __name__ == "__main__":
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_text(json.dumps({"error": type(exc).__name__, "message": str(exc)}, ensure_ascii=True), encoding="utf-8")
                     raise SystemExit(1) from exc
-        if getattr(sys, "frozen", False) and not any(arg.split("=", 1)[0] in {"--serve", "serve", "auth", "--self-test", "--portable-check", "--apply-update", "--ui-smoke"} for arg in sys.argv[1:]):
+        if getattr(sys, "frozen", False) and not any(arg.split("=", 1)[0] in {"--serve", "serve", "auth", "doctor", "connectors", "manifest", "native-helper", "trust", "network", "--self-test", "--portable-check", "--apply-update", "--ui-smoke"} for arg in sys.argv[1:]):
             ctypes.windll.user32.MessageBoxW(None, f"管理器未能启动：{exc}\n原配置与文件已保留。", "Windows MCP", 16)
         raise

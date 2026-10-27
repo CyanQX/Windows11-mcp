@@ -311,9 +311,9 @@ def test_trust_center_reflects_grant_and_revoke(window, tmp_path):
         dialog.grant()
         assert "勾选" in dialog.notice.text()
 
-        dialog.store.grant("forever")
+        dialog.store.grant("forever", session_id="fixture-session", applications=["notepad.exe"])
         dialog.refresh()
-        assert "已完全授权" in dialog.state.text() and dialog.revoke_button.isEnabled()
+        assert "范围授权" in dialog.state.text() and dialog.revoke_button.isEnabled()
         dialog.store.revoke()
         dialog.refresh()
         assert "每次操作都需要批准" in dialog.state.text()
@@ -494,7 +494,7 @@ def test_settings_approval_entry_opens_defaults_before_any_request(window, monke
     popup.controls["操作审批"].click()
     dialog = window.operator_window
     assert dialog is not None and dialog.isVisible()
-    assert dialog.defaults_row.isVisible() and dialog.auto_approve.isEnabled()
+    assert dialog.defaults_row.isVisible() and not dialog.auto_approve.isEnabled()
     assert not dialog.auto_approve.isChecked()
     assert window.approval_store.pending() == [] and not dialog.trust.allows()
     dialog.close()
@@ -518,7 +518,7 @@ def test_plain_settings_keep_left_alignment_and_update_dot(window):
         window.apply_appearance()
 
 
-def test_default_automatic_can_be_saved_before_requests_and_switched_off(window, monkeypatch):
+def test_default_automatic_requires_a_scoped_request_and_can_be_revoked(window, monkeypatch):
     from installer.ui.operator_dialog import OperatorCenter
     from PySide6.QtWidgets import QMessageBox
     from windows_mcp.infrastructure.policy import PolicyBlocked, PolicyGate
@@ -528,15 +528,24 @@ def test_default_automatic_can_be_saved_before_requests_and_switched_off(window,
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
     store = window.approval_store
     dialog = OperatorCenter(window, store)
-    assert dialog.auto_approve.isEnabled() and dialog.save_default_button.isEnabled()
+    assert not dialog.auto_approve.isEnabled() and dialog.save_default_button.isEnabled()
     dialog.auto_approve.setChecked(True)
     assert not dialog.trust.allows()
     dialog.save_default_button.click()
+    assert not dialog.trust.allows() and dialog.default_notice.isVisible()
+    scope = {"application": "notepad.exe"}
+    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click", authorization_scope=scope)
+    dialog.request_id = request["request_id"]
+    dialog.refresh()
+    assert dialog.auto_approve.isEnabled()
+    dialog.save_default_button.click()
     gate = PolicyGate(approvals=store)
     assert gate.trust.status()["operator"] == "approval-settings"
-    assert store.pending() == [] and not dialog.isVisible()
-    assert gate.authorize("future-session", "Click", {"loc": [100, 200]}) == 2
-    assert gate.authorize("future-session", "Type", {"text": "next"}) == 2
+    assert not store.read(request["request_id"])["approved"] and not dialog.isVisible()
+    assert gate.authorize("fixture-session", "Click", {"loc": [100, 200]}, scope=scope) == 2
+    assert gate.authorize("fixture-session", "Type", {"text": "next"}, scope=scope) == 2
+    with pytest.raises(PolicyBlocked):
+        gate.authorize("future-session", "Click", {"loc": [100, 200]}, scope=scope)
     reopened = OperatorCenter(window, store)
     assert reopened.auto_approve.isChecked()
     assert not reopened.auto_approve.isEnabled() and not reopened.save_default_button.isEnabled()
@@ -561,7 +570,7 @@ def test_cancelling_default_approval_does_not_grant_or_approve_pending(window, m
     monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
     monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
     store = window.approval_store
-    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click")
+    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click", authorization_scope={"application": "notepad.exe"})
     dialog = OperatorCenter(window, store)
     dialog.auto_approve.setChecked(True)
     dialog.save_default_button.click()
@@ -584,7 +593,7 @@ def operator_dialog(window, tmp_path, monkeypatch):
     monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
     monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.operator_review_active", lambda: False)
     store = ApprovalStore(tmp_path / "approval-checkbox")
-    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click")
+    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click", authorization_scope={"application": "notepad.exe"})
     dialog = OperatorCenter(window, store, request["request_id"])
     gate = PolicyGate(approvals=store)
     yield dialog, gate, request
@@ -606,7 +615,7 @@ def test_operator_unchecked_approval_is_single_use(operator_dialog, monkeypatch)
         gate.authorize("fixture-session", "Click", {"loc": [100, 200]})
 
 
-def test_operator_automatic_approval_continues_across_calls_and_restarts(operator_dialog, monkeypatch):
+def test_operator_automatic_approval_is_reusable_only_for_its_client_and_application(operator_dialog, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     from windows_mcp.infrastructure.policy import PolicyBlocked, PolicyGate
 
@@ -622,12 +631,16 @@ def test_operator_automatic_approval_continues_across_calls_and_restarts(operato
 
     monkeypatch.setattr(QMessageBox, "question", confirm)
     dialog.approve_button.click()
-    assert len(prompts) == 1 and "永久有效" in prompts[0]
-    assert gate.trust.status()["mode"] == "forever"
-    assert gate.authorize("fixture-session", "Click", {"loc": [100, 200]}) == 2
-    assert gate.authorize("next-session", "Type", {"text": "next action"}) == 2
+    assert len(prompts) == 1 and "最长 8 小时" in prompts[0]
+    assert gate.trust.status()["mode"] == "session"
+    scope = {"application": "notepad.exe"}
+    assert gate.authorize("fixture-session", "Click", {"loc": [100, 200]}, scope=scope) == 2
+    with pytest.raises(PolicyBlocked):
+        gate.authorize("next-session", "Type", {"text": "next action"}, scope=scope)
     restarted = PolicyGate(approvals=gate.approvals)
-    assert restarted.authorize("reconnected", "Shortcut", {"shortcut": "down"}) == 2
+    assert restarted.authorize("fixture-session", "Shortcut", {"shortcut": "down"}, scope=scope) == 2
+    with pytest.raises(PolicyBlocked):
+        restarted.authorize("reconnected", "Shortcut", {"shortcut": "down"}, scope=scope)
     with pytest.raises(PolicyBlocked, match="R3"):
         restarted.authorize("reconnected", "PowerShell", {"command": "Get-Process"})
     restarted.trust.revoke()
@@ -664,7 +677,7 @@ def test_operator_cannot_uncheck_active_trust_or_revoke_while_approving(operator
     from PySide6.QtWidgets import QMessageBox
 
     dialog, gate, _ = operator_dialog
-    gate.trust.grant("forever")
+    gate.trust.grant("forever", session_id="fixture-session", applications=["notepad.exe"])
     dialog.refresh()
     assert dialog.auto_approve.isChecked() and not dialog.auto_approve.isEnabled()
     QTest.mouseClick(dialog.auto_approve, Qt.MouseButton.LeftButton)

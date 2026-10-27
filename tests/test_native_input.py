@@ -114,6 +114,21 @@ class TestMouse:
         with pytest.raises(ValueError):
             ni.click(1, 1, count=4)
 
+    def test_click_never_presses_when_cursor_cannot_reach_target(self, monkeypatch, sent):
+        monkeypatch.setattr(ni, "cursor_position", lambda: (10, 10))
+        monkeypatch.setattr(ni, "move_to", lambda *args, **kwargs: (10, 10))
+        with pytest.raises(ni.InputBlockedError, match="INPUT_TARGET_UNREACHABLE"):
+            ni.click(50, 50)
+        assert sent == []
+
+    def test_double_click_stops_when_cursor_moves_after_first_click(self, monkeypatch, sent):
+        positions = iter([(0, 0), (50, 50), (60, 60)])
+        monkeypatch.setattr(ni, "cursor_position", lambda: next(positions))
+        monkeypatch.setattr(ni, "move_to", lambda *args, **kwargs: (50, 50))
+        with pytest.raises(ni.InputBlockedError, match="next click was not sent"):
+            ni.click(50, 50, count=2)
+        assert len(sent) == 1
+
     def test_wheel_sends_one_detent_per_notch_with_the_right_sign(self, sent):
         ni.wheel(-2)
         ni.wheel(1, horizontal=True)

@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 
 from windows_mcp.desktop import elements
-from windows_mcp.engine.contracts import Verification
+from windows_mcp.engine.contracts import Verification, normalize_expected
 from windows_mcp.engine.target_resolver import resolve
 
 
-def verify(desktop, runtime, session, expected: dict | None) -> Verification:
+def verify(desktop, runtime, session, expected: dict | None, *, resolved_element=None) -> Verification:
+    expected = normalize_expected(expected)
     if expected is None:
         return Verification()
     kind = expected.get("kind")
@@ -35,11 +36,12 @@ def verify(desktop, runtime, session, expected: dict | None) -> Verification:
         wanted = expected.get("state")
         if not target or not isinstance(wanted, dict) or not wanted:
             raise ValueError("element_state requires target and a nonempty state object")
-        element = resolve(desktop, session, target)
+        element = resolved_element or resolve(desktop, session, target, require_enabled=False)
         actual = {**element.state, "enabled": element.enabled, "visible": not element.offscreen,
                   "focused": element.focused}
         if element.password and "value" in wanted:
             return Verification(evidence_type=kind, detail="Sensitive field values are not read back")
-        passed = all(key in actual and actual[key] == value for key, value in wanted.items())
+        passed = all(key in actual and (list(actual[key]) if key == "range" and isinstance(actual[key], (tuple, list)) else actual[key]) == value
+                     for key, value in wanted.items())
         return Verification(passed=passed, evidence_type=kind, detail="Requested control state matched" if passed else "Requested control state did not match")
     raise ValueError("Unknown postcondition; use file_exists, file_content, file_sha256 or element_state/window_exists")

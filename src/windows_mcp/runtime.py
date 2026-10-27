@@ -76,4 +76,5 @@ def call_on_desktop(func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     """Synchronous variant of :func:`run_on_desktop` (safe to call from the desktop thread)."""
     if on_desktop_thread():
         return func(*args, **kwargs)
-    return desktop_executor().submit(func, *args, **kwargs).result()
+    context = contextvars.copy_context()
+    return desktop_executor().submit(context.run, functools.partial(func, *args, **kwargs)).result()

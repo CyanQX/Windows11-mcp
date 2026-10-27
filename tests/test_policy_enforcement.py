@@ -98,7 +98,8 @@ async def test_trusted_tools_run_repeatedly_without_requesting_human_approval(se
         pytest.fail("Active automatic authorization must not open human review")
 
     monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.notify_operator", unexpected_review)
-    runtime.policy.trust.grant("forever", operator="approval-ui")
+    runtime.policy.trust.grant("forever", operator="approval-ui", session_id=runtime.session("local").session_id,
+                               applications=["native:filesystem"])
     assert (await mcp.tools["Session"]())["trust_mode"] == "forever"
     result = await mcp.tools["RequestApproval"](tool="NativeAPI", arguments=arguments, description="automatic fixture")
     assert result["status"] == "TRUSTED" and result["approval_required"] is False

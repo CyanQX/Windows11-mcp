@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from windows_mcp.engine.contracts import Observation
+from windows_mcp.engine.pending import PendingActions
 from windows_mcp.infrastructure.audit import AuditLog
 from windows_mcp.infrastructure.config import CONFIG_DIR
 from windows_mcp.infrastructure.policy import PolicyGate
@@ -23,6 +24,7 @@ class SessionState:
     session_id: str = field(default_factory=lambda: f"sess_{uuid.uuid4().hex}")
     revision: int = 0
     cancelled: threading.Event = field(default_factory=threading.Event)
+    generation: int = 0
     observations: OrderedDict[str, Observation] = field(default_factory=OrderedDict)
     targets: dict[str, dict[str, Any]] = field(default_factory=dict)
     visuals: dict[str, Any] = field(default_factory=dict)
@@ -32,9 +34,14 @@ class SessionState:
     active_calls: int = 0
     lock: threading.RLock = field(default_factory=threading.RLock)
 
-    def check(self) -> None:
-        if self.cancelled.is_set():
+    def check(self, generation: int | None = None) -> None:
+        if self.cancelled.is_set() or (generation is not None and generation != self.generation):
             raise RuntimeError("CANCELLED: session cancelled; use Session(operation='resume')")
+
+    def cancel(self) -> None:
+        with self.lock:
+            self.generation += 1
+            self.cancelled.set()
 
     def store(self, scope: str, observation: Observation, targets: dict[str, dict]) -> None:
         previous = self.observations.get(scope)
@@ -61,6 +68,8 @@ class EngineRuntime:
         self._lock = threading.Lock()
         self._endpoint_owners = weakref.WeakKeyDictionary()
         self.normalizers: dict[str, Any] = {}
+        self.pending = PendingActions()
+        self.scope_resolver = None
         self.browser = None
         self.watchdog = None
 
@@ -138,7 +147,8 @@ class EngineRuntime:
         from windows_mcp.runtime import run_on_desktop
 
         expired = [(owner, state) for owner, state in self.sessions.items()
-                   if state.active_calls == 0 and time.monotonic() - state.touched > 900]
+                   if state.active_calls == 0 and not self.pending.owns(state.session_id)
+                   and time.monotonic() - state.touched > 900]
         for owner, state in expired:
             state.cancelled.set()
             if self.browser:

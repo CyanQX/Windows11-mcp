@@ -203,6 +203,9 @@ def with_analytics(
                     state = _bound.get()
                     if state:
                         state.check()
+                    from windows_mcp.infrastructure.authorization import check_dispatch
+
+                    check_dispatch()
                     return func(*args, **kwargs)
 
                 if inspect.iscoroutinefunction(func):

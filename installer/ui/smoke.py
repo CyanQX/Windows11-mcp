@@ -273,7 +273,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
             elif case == "approval-locked":
                 from PySide6.QtTest import QTest
                 from windows_mcp.infrastructure.trust import TrustStore
-                TrustStore(store.directory).grant("forever", operator="isolated-ui-acceptance")
+                TrustStore(store.directory).grant("forever", operator="isolated-ui-acceptance", session_id="isolated-acceptance-session", applications=["native:filesystem"])
                 window.open_operator()
                 dialog = window.operator_window
                 require(dialog.auto_approve.isChecked() and not dialog.auto_approve.isEnabled(), "Active grant checkbox is editable")
@@ -298,11 +298,11 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                 QTimer.singleShot(350, lambda: take(dialog))
             elif case in {"approval", "approval-default", "approval-default-automatic"}:
                 if case == "approval":
-                    request = store.request("isolated-acceptance-session", "Files", {"operation": "write", "path": "C:\\WindowsMCP-Example\\example.txt", "content": "isolated example"}, 2, "隔离界面验收示例；不会执行或批准操作")
+                    request = store.request("isolated-acceptance-session", "NativeAPI", {"operation": "write", "path": "C:\\WindowsMCP-Example\\example.txt", "content": "isolated example"}, 2, "隔离界面验收示例；不会执行或批准操作", authorization_scope={"application": "native:filesystem"})
                     window.open_operator(request["request_id"])
                 else:
                     window.open_operator()
-                    require(window.operator_window.auto_approve.isEnabled(), 'Native UI acceptance failed: window.operator_window.auto_approve.isEnabled()')
+                    require(not window.operator_window.auto_approve.isEnabled(), 'Unscoped automatic authorization must remain disabled')
                     require(window.operator_window.defaults_row.isVisible(), 'Native UI acceptance failed: window.operator_window.defaults_row.isVisible()')
                     require(store.pending() == [], 'Native UI acceptance failed: store.pending() == []')
                     window.operator_window.auto_approve.setChecked(case == "approval-default-automatic")

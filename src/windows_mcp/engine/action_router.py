@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 
 from windows_mcp.desktop import elements
-from windows_mcp.engine.contracts import ActionResult, Status, Verification
+from windows_mcp.engine.contracts import ActionResult, Status, Verification, TextRangeSpec, normalize_expected
 from windows_mcp.engine.target_resolver import resolve
 from windows_mcp.engine.verifier import verify
+from windows_mcp.engine.pending import ActionInProgress
 
 _CAPABILITY = {"click": "invoke", "invoke": "invoke", "toggle": "toggle", "select": "select",
                "expand": "expand", "collapse": "expand", "set_value": "value", "set_range": "range",
@@ -15,7 +16,12 @@ _CAPABILITY = {"click": "invoke", "invoke": "invoke", "toggle": "toggle", "selec
 
 
 def execute(desktop, runtime, session, *, target: str, action: str, value: str | None = None,
-            mode: str = "auto", expected: dict | None = None) -> dict:
+            mode: str = "auto", expected: dict | None = None, text=None) -> dict:
+    expected = normalize_expected(expected)
+    if text is not None:
+        text = TextRangeSpec.model_validate(text).model_dump(mode="json")
+        if action not in {"select_text", "replace_text", "delete_text"}:
+            raise ValueError("text range options apply only to select_text/replace_text/delete_text")
     if mode not in {"auto", "semantic", "physical", "visual"}:
         raise ValueError("mode must be auto, semantic, physical or visual")
     result = ActionResult(status=Status.FAILED, target=target)
@@ -42,7 +48,7 @@ def execute(desktop, runtime, session, *, target: str, action: str, value: str |
             via = "uia"
         elif mode == "physical":
             via = "input"
-        elif action == "focus" or capability in element.capabilities:
+        elif action in {"focus", "select_text"} or capability in element.capabilities:
             via = "uia"
         else:
             via = "input"
@@ -53,7 +59,8 @@ def execute(desktop, runtime, session, *, target: str, action: str, value: str |
         session.check()
         result.precondition_passed = True
         result.input_dispatched = True
-        outcome = elements.act(desktop, element, action, value, via=via)
+        options = {"text": text} if text is not None else {}
+        outcome = elements.act(desktop, element, action, value, via=via, **options)
         result.method = outcome.method
         if expected:
             evidence = verify(desktop, runtime, session, expected)
@@ -63,6 +70,11 @@ def execute(desktop, runtime, session, *, target: str, action: str, value: str |
         result.verification = evidence
         result.status = Status.VERIFIED if evidence.passed is True else Status.DISPATCHED_UNVERIFIED
         result.new_revision = session.revision
+    except ActionInProgress as exc:
+        result.status = Status.DISPATCHED_UNVERIFIED
+        result.pending_action_id = exc.action_id
+        result.errors = [str(exc)]
+        result.retryable = False
     except elements.StaleTarget as exc:
         result.status, result.retryable = Status.TARGET_STALE, True
         result.errors = [str(exc)]

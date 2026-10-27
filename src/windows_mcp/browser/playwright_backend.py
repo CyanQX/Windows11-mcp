@@ -11,10 +11,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urljoin
 
-from windows_mcp.engine.contracts import ActionResult, Status, Verification
+from windows_mcp.engine.contracts import ActionResult, Status, Verification, normalize_expected
 from windows_mcp.infrastructure.config import CONFIG_DIR
 from windows_mcp.infrastructure.security import validate_url
+from windows_mcp.infrastructure.network import origin
 
 _CONTROLS = "button,input,select,textarea,a[href],[role],[data-testid],h1,h2,h3,h4"
 _METADATA = """el => {
@@ -29,9 +31,26 @@ _METADATA = """el => {
                (tag === 'input' || tag === 'textarea' ? '' : el.textContent || '').trim() || el.getAttribute('title') || '';
   const rect = el.getBoundingClientRect();
   return {role, name:name.slice(0,300), test_id:el.getAttribute('data-testid'),
-          password:el.type === 'password', enabled:!el.disabled, visible:!!(rect.width && rect.height),
+          password:el.type === 'password', enabled:!el.disabled && el.getAttribute('aria-disabled') !== 'true',
+          editable:!el.readOnly && (tag === 'textarea' || tag === 'input' || el.isContentEditable),
+          visible:!!(rect.width && rect.height) && getComputedStyle(el).visibility !== 'hidden' && !el.closest('[aria-hidden=true],[hidden]'),
           bounds:{left:Math.round(rect.left),top:Math.round(rect.top),right:Math.round(rect.right),bottom:Math.round(rect.bottom)}};
 }"""
+
+_BATCH_METADATA = """(elements, limit) => {
+  const metadata = (""" + _METADATA + """);
+  const rows = [];
+  let scanned = 0;
+  for (const element of elements.slice(0, 2000)) {
+    scanned++;
+    const item = metadata(element);
+    if (item.visible && item.role) rows.push(item);
+    if (rows.length >= limit) break;
+  }
+  return {rows, scanned, truncated: scanned < elements.length,
+          password_present: elements.some(el => el.type === 'password')};
+}"""
+
 
 
 @dataclass
@@ -43,11 +62,13 @@ class ManagedBrowser:
     targets: dict = field(default_factory=dict)
     diagnostics: list = field(default_factory=list)
     mutation_deadline: float = 0.0
+    redirects: dict = field(default_factory=dict)
 
 
 class PlaywrightBackend:
-    def __init__(self, *, allow_private: bool = False, profile_root: Path | None = None) -> None:
+    def __init__(self, *, allow_private: bool = False, profile_root: Path | None = None, network_policy=None) -> None:
         self.allow_private = allow_private
+        self.network_policy = network_policy
         self.profile_root = profile_root or CONFIG_DIR / "browser-profiles"
         self._playwright = None
         self._manager = None
@@ -55,7 +76,14 @@ class PlaywrightBackend:
         self._locks: dict[str, asyncio.Lock] = {}
         self._background_tasks: set[asyncio.Task] = set()
 
-    async def _url(self, url: str) -> None:
+    async def _url(self, url: str, session_id: str) -> None:
+        if self.network_policy is None:
+            from windows_mcp.engine.sessions import get_runtime
+
+            policy = get_runtime().policy
+        else:
+            policy = self.network_policy
+        policy.check_network(session_id, url)
         await asyncio.wait_for(asyncio.to_thread(validate_url, url, allow_private=self.allow_private), timeout=5)
 
     def _add_page(self, browser: ManagedBrowser, page) -> str:
@@ -109,15 +137,47 @@ class PlaywrightBackend:
             browser = ManagedBrowser(context, profile)
 
             async def route(request_route):
+                response = None
+                checked_url = request_route.request.url
                 try:
-                    await self._url(request_route.request.url)
+                    await self._url(request_route.request.url, session)
                     if request_route.request.method not in {"GET", "HEAD", "OPTIONS"} and time.monotonic() > browser.mutation_deadline:
                         raise ValueError("Background mutation is not authorized")
-                except ValueError:
-                    browser.diagnostics[:] = ["A request outside the allowed HTTP address boundary was blocked"]
+                    # Playwright routes only the first request of an automatic redirect chain.
+                    # Fetch exactly one response so redirects cannot leave the approved boundary
+                    # before a later page.url check. Never issue the original request twice.
+                    response = await request_route.fetch(max_redirects=0, max_retries=0, timeout=10000)
+                    if 300 <= response.status < 400 and response.headers.get("location"):
+                        destination = urljoin(request_route.request.url, response.headers["location"])
+                        checked_url = destination
+                        await self._url(destination, session)
+                        request = request_route.request
+                        if request.is_navigation_request() and request.frame == request.frame.page.main_frame and request.method in {"GET", "HEAD"}:
+                            browser.redirects[request.frame.page] = destination
+                            # Finish this navigation without a Chromium error-page race.
+                            # The navigation loop follows the validated URL as a new request.
+                            await request_route.fulfill(status=200, content_type="text/html", body="")
+                            return
+                        browser.diagnostics[:] = ["HTTP redirect was paused before following; top-level GET navigation may continue only after the destination is checked. Redirected subresources/forms are blocked."]
+                        await request_route.abort()
+                        return
+                    await request_route.fulfill(response=response)
+                except (ValueError, PermissionError, TimeoutError):
+                    try:
+                        target_origin = origin(checked_url)
+                    except ValueError:
+                        target_origin = "invalid HTTP target"
+                    browser.diagnostics[:] = [f"HTTP request blocked before dispatch to {target_origin}; check this session's network origin grants and private-address policy"]
                     await request_route.abort()
-                else:
-                    await request_route.continue_()
+                except Exception:
+                    browser.diagnostics[:] = ["An isolated HTTP request failed or timed out; it was not retried"]
+                    try:
+                        await request_route.abort()
+                    except Exception:
+                        pass  # Context may already have been closed by cancellation.
+                finally:
+                    if response is not None:
+                        await response.dispose()
 
             async def block_socket(socket):
                 await socket.close()
@@ -139,7 +199,10 @@ class PlaywrightBackend:
         browser = self._sessions.get(session)
         return {"status": Status.VERIFIED.value, "source": "playwright", "running": browser is not None,
                 "pages": [{"page_id": key, "url": page.url, "closed": page.is_closed()}
-                          for key, page in browser.pages.items()] if browser else []}
+                          for key, page in browser.pages.items()] if browser else [],
+                "pending_redirects": [{"page_id": key, "url": browser.redirects[page]}
+                    for key, page in browser.pages.items() if page in browser.redirects] if browser else [],
+                "diagnostics": list(browser.diagnostics) if browser else []}
 
     def _page(self, session: str, page_id: str | None):
         browser = self._sessions.get(session)
@@ -172,33 +235,39 @@ class PlaywrightBackend:
         browser, page_id, page = self._page(session, page_id)
         epoch = browser.epochs[page_id]
         browser.targets = {key: value for key, value in browser.targets.items() if value["page_id"] != page_id}
-        nodes, frames, truncated = [], [], False
-        remaining = limit
+        nodes, frames, truncated = [], [], len(page.frames) > 20
+        remaining, password_present, metadata_calls = limit, False, 0
         for frame_index, frame in enumerate(page.frames[:20]):
             frame_id = f"frame_{frame_index}"
             frames.append({"frame_id": frame_id, "url": frame.url})
-            controls = frame.locator(_CONTROLS)
-            count = await controls.count()
-            truncated |= count > remaining
-            for index in range(min(count, remaining)):
-                metadata = await controls.nth(index).evaluate(_METADATA, timeout=2000)
-                if not metadata["visible"] or not metadata["role"]:
-                    continue
+            batch = await frame.locator(_CONTROLS).evaluate_all(_BATCH_METADATA, remaining)
+            metadata_calls += 1
+            truncated |= batch["truncated"]
+            password_present |= batch["password_present"]
+            for metadata in batch["rows"]:
                 target = f"playwright:{session}:{page_id}:{epoch}:{uuid.uuid4().hex[:10]}"
                 spec = {"page_id": page_id, "frame": frame, "frame_id": frame_id, "epoch": epoch, **metadata}
                 browser.targets[target] = spec
+                actions = ["click"] if metadata["enabled"] else []
+                if metadata["enabled"]:
+                    if metadata["editable"]:
+                        actions.append("fill")
+                    if metadata["role"] in {"checkbox", "radio"}:
+                        actions.append("check")
+                    if metadata["role"] == "combobox":
+                        actions.append("select")
                 nodes.append({"element_id": target, "source": "playwright", "role": metadata["role"],
                               "name": metadata["name"], "enabled": metadata["enabled"], "visible": True,
                               "bounds": metadata["bounds"], "state": {"sensitive": metadata["password"]},
-                              "actions": ["click", "fill", "check", "select"], "frame_id": frame_id})
+                              "actions": actions, "frame_id": frame_id})
             remaining = limit - len(nodes)
             if remaining <= 0:
-                truncated = True
+                truncated |= frame_index + 1 < len(page.frames)
                 break
         diagnostics = list(browser.diagnostics)
         # Avoid returning password values even if a provider exposes them in an aria snapshot.
         aria = ""
-        if await page.locator('input[type="password"]').count():
+        if password_present or len(frames) < len(page.frames):
             diagnostics.append("Password field present; raw aria snapshot omitted")
         else:
             aria = await page.locator("body").aria_snapshot(timeout=3000)
@@ -206,7 +275,7 @@ class PlaywrightBackend:
                 aria, truncated = aria[:12000], True
         return {"observation_id": f"obs_{uuid.uuid4().hex}", "session_id": session, "revision": epoch,
                 "context": {"source": "playwright", "page_id": page_id, "url": page.url,
-                            "coordinate_space": "css_pixels", "frames": frames},
+                            "coordinate_space": "css_pixels", "frames": frames, "metadata_calls": metadata_calls},
                 "elements": nodes, "aria_snapshot": aria, "truncated": truncated, "diagnostics": diagnostics}
 
     async def _action(self, session: str, operation: str, *, page_id: str | None, target: str | None,
@@ -226,6 +295,9 @@ class PlaywrightBackend:
             return result.model_dump()
         if expected is not None and expected.get("kind") not in {"url", "text", "value", "checked"}:
             raise ValueError("Browser expected.kind must be url, text, value or checked")
+        from windows_mcp.infrastructure.authorization import check_dispatch
+
+        check_dispatch()
         result.precondition_passed = True
         result.input_dispatched = True
         browser.mutation_deadline = time.monotonic() + timeout_ms / 1000
@@ -271,10 +343,14 @@ class PlaywrightBackend:
                   target: str | None = None, url: str | None = None, value: str | None = None,
                   expected: dict | None = None, limit: int = 100, timeout_ms: int = 10000,
                   channel: str = "msedge", headless: bool = False) -> dict:
+        expected = normalize_expected(expected, browser=True)
         if not 100 <= timeout_ms <= 30000:
             raise ValueError("timeout_ms must be 100..30000")
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
+            from windows_mcp.infrastructure.authorization import check_dispatch
+
+            check_dispatch()  # A cancelled call must not revive after waiting for this lock.
             if operation == "start":
                 return await self._start(session_id, channel, headless)
             if operation == "status":
@@ -294,11 +370,32 @@ class PlaywrightBackend:
             if operation == "navigate":
                 if not url:
                     raise ValueError("navigate requires url")
-                await self._url(url)
-                _, page_id, page = self._page(session_id, page_id)
-                await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                await self._url(url, session_id)
+                browser, page_id, page = self._page(session_id, page_id)
+                deadline = time.monotonic() + timeout_ms / 1000
+                for _ in range(6):
+                    browser.redirects.pop(page, None)
+                    await self._url(url, session_id)
+                    try:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError("Navigation deadline exceeded")
+                        await page.goto(url, wait_until="domcontentloaded", timeout=max(1, int(remaining * 1000)))
+                    except Exception:
+                        destination = browser.redirects.pop(page, None)
+                        if destination is None:
+                            raise
+                        url = destination
+                        continue
+                    destination = browser.redirects.pop(page, None)
+                    if destination is not None:
+                        url = destination
+                        continue
+                    break
+                else:
+                    raise ValueError("Too many HTTP redirects; no further request was sent")
                 # Redirections are checked by the context-wide route as well as at navigation time.
-                await self._url(page.url)
+                await self._url(page.url, session_id)
                 return {"status": Status.VERIFIED.value, "source": "playwright", "page_id": page_id,
                         "url": page.url, "title": (await page.title())[:300],
                         "verification": {"passed": True, "evidence_type": "navigation_url", "detail": "Loaded URL was read back"}}

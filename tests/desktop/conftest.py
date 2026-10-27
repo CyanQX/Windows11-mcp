@@ -100,6 +100,32 @@ class FakeMCP:
         return decorator
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolated_desktop_authority(tmp_path_factory):
+    """Real fixture actions never reuse the user's approval, trust or audit storage."""
+    if not ENABLED:
+        yield
+        return
+    from windows_mcp.engine import sessions
+    from windows_mcp.infrastructure.policy import PolicyGate
+    from windows_mcp.infrastructure.approvals import ApprovalStore
+    from windows_mcp.infrastructure.audit import AuditLog
+    from windows_mcp import __main__ as cli
+
+    directory = tmp_path_factory.mktemp("desktop-authority")
+    workspace = directory / "workspace"
+    workspace.mkdir()
+    runtime = sessions.EngineRuntime(PolicyGate(roots=[workspace], approvals=ApprovalStore(directory / "approvals")))
+    runtime.audit = AuditLog(directory / "audit.jsonl")
+    previous, previous_mcp = sessions._runtime, cli._mcp
+    sessions._runtime, cli._mcp = runtime, None
+    try:
+        yield
+    finally:
+        asyncio.run(runtime.close())
+        sessions._runtime, cli._mcp = previous, previous_mcp
+
+
 @pytest.fixture(scope="session")
 def desktop():
     from windows_mcp.desktop.service import Desktop
@@ -127,9 +153,13 @@ def call(tools):
 
         runtime = get_runtime()
         arguments = runtime.normalize(tool_name, kwargs)
-        risk = runtime.policy.risk(tool_name, arguments)
+        from windows_mcp.runtime import call_on_desktop
+
+        with runtime.bind("local") as state:
+            scope = call_on_desktop(runtime.scope_resolver, tool_name, arguments, state)
+        risk = runtime.policy.risk(tool_name, arguments, scope)
         if risk >= 2:
-            request = runtime.policy.approvals.request(runtime.current().session_id, tool_name, arguments, risk, "Authorized fixture-only regression action")
+            request = runtime.policy.approvals.request(runtime.current().session_id, tool_name, arguments, risk, "Authorized fixture-only regression action", authorization_scope=scope)
             runtime.policy.approvals.approve(request["request_id"])
         return asyncio.run(tools[tool_name](**kwargs))
 

@@ -39,6 +39,7 @@ class SecurityConfig:
 @dataclass
 class ToolsConfig:
     exclude: list[str] = field(default_factory=list)
+    profile: str = "full"
 
 
 @dataclass
@@ -46,6 +47,7 @@ class PolicyConfig:
     workspace_roots: list[str] = field(default_factory=list)
     allow_r3: bool = False
     allow_private_browser: bool = False
+    allowed_network_origins: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -167,8 +169,14 @@ def load_config(path: Path | None) -> WindowsMCPConfig:
 
     if "exclude" in tools:
         cfg.tools.exclude = _list_of_strings(tools["exclude"], "tools.exclude")
+    if "profile" in tools:
+        from windows_mcp.infrastructure.profiles import PROFILES
 
-    unknown_policy = policy.keys() - {"workspace_roots", "allow_r3", "allow_private_browser"}
+        cfg.tools.profile = _strict_string(tools["profile"], "tools.profile")
+        if cfg.tools.profile not in PROFILES:
+            raise ValueError("tools.profile must be full, ui-core or browser")
+
+    unknown_policy = policy.keys() - {"workspace_roots", "allow_r3", "allow_private_browser", "allowed_network_origins"}
     if unknown_policy:
         raise ValueError(f"Unknown policy settings: {sorted(unknown_policy)}")
     if "workspace_roots" in policy:
@@ -179,6 +187,13 @@ def load_config(path: Path | None) -> WindowsMCPConfig:
     for key in ("allow_r3", "allow_private_browser"):
         if key in policy:
             setattr(cfg.policy, key, _strict_bool(policy[key], f"policy.{key}"))
+    if "allowed_network_origins" in policy:
+        from windows_mcp.infrastructure.network import origin
+
+        values = _list_of_strings(policy["allowed_network_origins"], "policy.allowed_network_origins")
+        if any(value != origin(value) for value in values):
+            raise ValueError("policy.allowed_network_origins must contain exact normalized HTTP origins, without paths or wildcards")
+        cfg.policy.allowed_network_origins = values
 
     cfg.source_path = path
     return cfg
@@ -224,9 +239,12 @@ def write_config(cfg: WindowsMCPConfig, path: Path) -> None:
     if sec_lines:
         lines += ["[security]"] + sec_lines + [""]
 
-    if cfg.tools.exclude:
+    if cfg.tools.exclude or cfg.tools.profile != "full":
         items = ", ".join(f'"{t}"' for t in cfg.tools.exclude)
-        lines += ["[tools]", f"exclude = [{items}]", ""]
+        lines += ["[tools]"]
+        if cfg.tools.profile != "full":
+            lines.append(f'profile = "{cfg.tools.profile}"')
+        lines += [f"exclude = [{items}]", ""]
 
     policy_lines = []
     if cfg.policy.workspace_roots:
@@ -235,6 +253,8 @@ def write_config(cfg: WindowsMCPConfig, path: Path) -> None:
         policy_lines.append("allow_r3 = true")
     if cfg.policy.allow_private_browser:
         policy_lines.append("allow_private_browser = true")
+    if cfg.policy.allowed_network_origins:
+        policy_lines.append("allowed_network_origins = " + json.dumps(cfg.policy.allowed_network_origins))
     if policy_lines:
         lines += ["[policy]"] + policy_lines + [""]
 

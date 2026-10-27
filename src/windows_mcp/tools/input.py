@@ -3,6 +3,7 @@
 import json
 import math
 import time
+import asyncio
 from collections.abc import Callable, Iterator
 from typing import Any, Literal
 
@@ -560,7 +561,7 @@ def register(
 
     @mcp.tool(
         name="Wait",
-        description="Pauses execution for specified duration in seconds. Use when waiting for: applications to launch/load, UI animations to complete, page content to render, dialogs to appear, or between rapid actions. Helps ensure UI is ready before next interaction.",
+        description="Wait 1..60 integer seconds without occupying the desktop worker. Cooperatively stops when this session is cancelled; use WaitFor or Watch for a specific state.",
         annotations=ToolAnnotations(
             title="Wait",
             readOnlyHint=True,
@@ -570,8 +571,18 @@ def register(
         ),
     )
     @with_analytics(get_analytics(), "Wait-Tool")
-    def wait_tool(duration: int, ctx: Context = None) -> str:
-        time.sleep(duration)
+    async def wait_tool(duration: int, ctx: Context = None) -> str:
+        if isinstance(duration, bool) or not isinstance(duration, int) or not 1 <= duration <= 60:
+            raise ValueError("duration must be an integer between 1 and 60 seconds")
+        from windows_mcp.engine.sessions import get_runtime
+
+        session = get_runtime().current()
+        generation = session.generation
+        deadline = time.monotonic() + duration
+        while (remaining := deadline - time.monotonic()) > 0:
+            session.check(generation)
+            await asyncio.sleep(min(0.1, remaining))
+        session.check(generation)
         return f"Waited for {duration} seconds."
 
     @mcp.tool(
@@ -591,7 +602,7 @@ def register(
         ),
     )
     @with_analytics(get_analytics(), "WaitFor-Tool")
-    def wait_for_tool(
+    async def wait_for_tool(
         condition: str,
         text: str | None = None,
         window_name: str | None = None,
@@ -609,19 +620,48 @@ def register(
         )
         desktop = get_desktop()
         use_dom_bool = _as_bool(use_dom, "use_dom")
+        from windows_mcp.engine.sessions import get_runtime
+        from windows_mcp.runtime import run_on_desktop
+
+        session = get_runtime().current()
+        generation = session.generation
         started_at = time.monotonic()
         deadline = started_at + timeout
         attempts = 0
         last_detail = "condition was not evaluated"
 
         while True:
+            session.check(generation)
             attempts += 1
-            desktop_state = desktop.get_state(
-                use_vision=False,
-                use_dom=use_dom_bool,
-                use_ui_tree=True,
-                use_annotation=False,
-            )
+            def capture_state():
+                session.check(generation)  # Cancel/resume must not revive previously queued work.
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("WaitFor observation exceeded its deadline")
+                return desktop.get_state(
+                    use_vision=False,
+                    use_dom=use_dom_bool,
+                    use_ui_tree=True,
+                    use_annotation=False,
+                )
+
+            try:
+                query = asyncio.create_task(run_on_desktop(capture_state))
+                try:
+                    while not query.done():
+                        session.check(generation)
+                        remaining_query = deadline - time.monotonic()
+                        if remaining_query <= 0:
+                            raise TimeoutError("Observation deadline exceeded")
+                        await asyncio.wait({query}, timeout=min(0.1, remaining_query))
+                    session.check(generation)
+                    desktop_state = query.result()
+                finally:
+                    if not query.done():
+                        query.cancel()  # Cancels queued work, not a COM call already in progress.
+                        await asyncio.gather(query, return_exceptions=True)
+            except TimeoutError as exc:
+                raise TimeoutError(f"Timed out after {timeout:.2f}s waiting for '{normalized}': {last_detail}; observation deadline exceeded") from exc
+            session.check(generation)
             matched, last_detail = _matches_wait_condition(
                 desktop_state=desktop_state,
                 condition=normalized,
@@ -640,4 +680,7 @@ def register(
                 raise TimeoutError(
                     f"Timed out after {timeout:.2f}s waiting for '{normalized}': {last_detail}."
                 )
-            time.sleep(min(interval, remaining))
+            end = time.monotonic() + min(interval, remaining)
+            while (remaining_sleep := end - time.monotonic()) > 0:
+                session.check(generation)
+                await asyncio.sleep(min(0.1, remaining_sleep))

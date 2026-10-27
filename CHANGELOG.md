@@ -1,5 +1,40 @@
 # 更新日志
 
+## 1.5.0 — 2026-10-27
+
+合并前三批引擎、文本效率与窗口视觉升级，保留 31 个兼容工具及安装管理器。**升级提示：旧版全局全自动授权失效，须重新确认会话和应用范围；HTTP 出网需独立授权。** 安装包包含 WGC 与本地 OCR 绑定，OCR 引擎、语言和 Windows 包标识条件仍须满足。
+
+### 第三批：窗口视觉与原生配套
+
+- 对应清单 32：`Visual` 增加 HWND WGC、PrintWindow 与前台桌面裁剪回退，报告实际后端。WGC/PrintWindow 在有超时的辅助进程中运行，用 Windows Job Object 回收辅助进程及其子进程；UIA 查询和输入仍在桌面线程。捕获前后检查进程生存期和物理窗口范围，被遮挡窗口可观察但物理点击仍要求前台和无遮挡。
+- 对应 33、34：可选本地 Windows OCR/Tesseract 适配返回词框、语言和不可用原因；增加 ROI、最大图片宽度、SHA-256/缩略图变化比较和未变图片省略。每次仍签发当前会话的新视觉引用，ROI 与缩放正确映射回物理屏幕；变化提示不作为业务验证。Windows OCR 需要包标识及可用语言，Tesseract 需要额外引擎与语言包，本机尚不具备实际识别条件。
+- 对应 41：增加 full（31）、ui-core（12）、browser（5）工具 profile，支持可信配置与 CLI；自定义过滤只能进一步缩小精简 profile。profile 不构成权限或操作系统沙箱。
+- 对应 44、45、46：`connectors` 输出已发现的 WinGet MCP 配置片段与 File Explorer/Settings 原生发现指引；`--probe` 仅执行 WinGet 初始化和 tools/list，不搜索、安装软件或改客户端配置。本机已验证 WinGet 的 find/install 工具清单，未安装 ODR，File Explorer/Settings 仍待合适宿主验收，不宣称已接通。
+- 对应 47、59：增加独立 native-helper 与 `doctor`，报告实际包标识、OCR 语言/引擎、WGC 依赖、桌面会话、DPI、浏览器依赖和原生 connector 条件。Session 状态包含原生组件能力，取消/恢复/确认未决动作不等待这些探测。增加 capture/ocr 可选依赖与可选打包开关，未制作 MSIX；EXE 安装版与便携版由发行流水线构建并验收。
+- 对应 48：清单包含实际 SDK 生成的完整 initialize、tools/list、输入/输出模式与 annotations；`manifest --profile ... --output ...` 生成对应 profile，`serve --static-manifest ...` 拒绝 SDK/模式漂移与动态过滤。清单须随依赖和工具描述重新生成；未执行 ODR 注册、原生宿主适配或 Agent Connector containment。
+- 对应 60：安装后健康检查校验完整初始化响应、工具 JSON Schema 及 Session 输出和身份，单独报告可选 OCR 缺失。保留旧版简短清单兼容；新版完整清单启用严格检查。新增合成图像、超时回收、profile/静态清单、OCR 契约、安装协议和专用桌面窗口验收。
+
+### 第二批：操作效率与文本能力
+
+- 对应清单 19–23：接入原生 UIA TextPattern，通过 `Observe(target=..., detail="text"/"selection")` 读取文本/选区；`Execute` 增加 select_text、replace_text、delete_text、append_text。支持准确文本及一基 occurrence，或 provider 的 unit/index/count；重复匹配未明确选择时拒绝。局部修改要求可编辑属性、前台、焦点、选区和原文核对，并读回完整文本验证；不重写整篇富文档，不自动重放。密码控件和不暴露 TextPattern 的控件明确拒绝。
+- `Observe(target=...)` 可观察控件子树；`mode="refresh"` 可批量回读同窗口最多 100 个已有目标并生成范围内增量，明确标记 known_targets_only，不宣称检查了新增/移除控件。actions 改为可执行动作名，原 UIA pattern 名单独放在 capabilities，禁用/只读控件减少可写动作。
+- 对应 27、30：Watch 使用订阅信号唤醒，element_state 只回读原控件；已知属性事件仅刷新相关控件，结构变化/队列溢出/未知目标和最长 1.5 秒的兜底轮询执行有界扫描。事件本身不算成功，持续事件也不会推迟兜底扫描。
+- 对应 28、29：增加只读 UIA 基准脚本和 provider 调用统计；可选 strategy="cached" 使用两层缓存，保持顺序、数量和深度边界。实测资源管理器、Chrome、WPS、Electron 窗口；缓存减少往返但不保证耗时下降，默认仍保留 bounded。已进入 provider 的调用仍不能强行取消。
+- 对应 31：Playwright 每个 frame 一次批量取元数据，保留可见性、数量、frame 导航与唯一 locator 检查；根据实际角色返回动作，跨 frame 的密码字段也会抑制原始 aria snapshot。
+- 对应 36、37：Observe/Execute/Verify/Watch 返回字段级输出模式，保留顶层对象响应；expected 使用明确的文件/控件/窗口条件类型，浏览器单独使用 url/text/value/checked 条件。缺字段、拼错字段、空状态、错误布尔值及无效哈希在授权/派发前拒绝。
+- 增加范围匹配、文本变化/选区变化拒绝、增量与缓存等价、事件丢失、输入输出契约和真实 WPF 文本操作回归；测试夹具的 .NET 编译器仅用于验收，不增加服务运行依赖。随本版统一打包；本机已安装程序由用户通过更新流程升级。
+
+### 第一批：引擎与授权边界
+
+- `Wait` 改为 1–60 秒的可取消异步等待；`WaitFor` 将单次桌面查询与异步间隔分开，排队执行时重新检查会话取消和截止时间。
+- 跟踪 UIA 辅助线程超时后的执行状态：返回 `ACTION_IN_PROGRESS`，阻止后续桌面动作重叠；`Session` 可查询晚到完成/异常类型，原会话在独立核对后显式 acknowledge，cancel/resume 不隐式解锁或宣称撤回动作。
+- `NativeAPI` 覆盖写入改为同目录临时文件、flush/fsync、内容校验和原子替换；Windows 替换保留原文件 DACL 等元数据，并为部分失败保留恢复副本。新建仍为独占创建，失败清理临时文件。
+- 全自动授权升级为 schema 2，绑定服务器生成的客户端会话、具体应用身份、工具/可选动作和时效。管理器从签名待审请求选择范围；CLI 增加 `trust --request-id` 或显式 session/application 参数。默认 8 小时，兼容的 forever 仅取消额外时限，不跨客户端会话。**旧版无范围授权需重新由操作员确认，不会自动迁移为宽泛权限。**
+- UIA 与物理输入共享派发检查，重新核对应用、敏感目标、撤销与窗口/进程生存期。命令行等敏感目标和运行/搜索类快捷键升为 R3；释放按键和鼠标的清理事件仍允许。此加固降低同桌面自动化风险，不构成操作系统沙箱。
+- 鼠标无法到达指定点时，在按下按钮前返回 `INPUT_TARGET_UNREACHABLE`；多次点击之间若光标移走则停止后续点击，避免点到旧位置。
+- 增加独立、签名、会话绑定的 HTTP origin 授权；Scrape、浏览器导航、重定向和子资源在 DNS/请求前检查，R2 信任不能放行出网。浏览器单跳请求禁用自动重定向，顶层 GET 显式逐跳跟随，表单/子资源重定向暂时拒绝，避免 Playwright 路由只拦截首跳的缺口。操作员批准所示 origin 后有效最长 8 小时，增加 `network` 查询/撤销命令及 `policy.allowed_network_origins` 可信预设，保留原 SSRF/内网保护。
+- 新增取消/线程可用性、晚到动作、原子写入故障、范围越界、敏感目标和重定向的非交互回归；同步管理器、Skill、README 与工具清单。随本版统一发布安装版与便携版。
+
 ## 1.4.5 — 2026-10-24
 
 - 修复安装版静默更新在进入安装页前退出的问题：交互更新保留自动进度页，静默模式由安装引擎自行推进，不再重复跳页或发送下一步。

@@ -1,94 +1,220 @@
 <div align="center">
-  <h1>Windows-MCP 1.4.5</h1>
-  <p>给编程 AI 接入真实 Windows 桌面操作能力</p>
+  <h1>Windows-MCP 1.5.0</h1>
+  <p>让已连接的 AI 观察、操作并核对真实 Windows 应用</p>
 </div>
 
 [![Tests](https://github.com/CyanQX/Windows11-mcp/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/CyanQX/Windows11-mcp/actions/workflows/test.yml)
 [![Windows EXE setup](https://github.com/CyanQX/Windows11-mcp/actions/workflows/setup.yml/badge.svg?branch=main)](https://github.com/CyanQX/Windows11-mcp/actions/workflows/setup.yml)
+[![Release](https://img.shields.io/github/v/release/CyanQX/Windows11-mcp)](https://github.com/CyanQX/Windows11-mcp/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
+
+[用途](#工具用途) · [功能与边界](#功能简介) · [下载安装](#安装指南) · [工具清单](#工具一览) · [更新记录](CHANGELOG.md) · [参数参考](skills/windows-mcp/references/advanced.md)
 
 ## 工具用途
 
-文档更新：**2026-10-24**。功能说明与截图跟随 [main 最新源码](https://github.com/CyanQX/Windows11-mcp/tree/main) 同步更新，改动记录见 [CHANGELOG](CHANGELOG.md)。当前公开稳定安装包为 [v1.4.5](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.4.5)；本版包含固定布局、全自动授权锁定及六个“关于”页面，并修复静默更新在安装前退出的问题；发布验收使用管理器实际传入的更新参数。
+Windows-MCP 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude Code、Codex 桌面端、DeepSeek Harness、Gemini CLI、Zcode 或 Trae 后，AI 可以读取真实窗口和控件、操作应用和网页，并通过状态或文件结果核对任务。模型与 AI 客户端由你选择，本项目不提供模型账号或云端算力。
 
-Windows-MCP 是面向 Claude Code、Codex、DeepSeek Harness、Gemini CLI、Zcode、Trae 的 Windows 自动化服务。连接后，AI 可以读取窗口和控件，操作真实应用、浏览器与文件，并核对实际结果。
+**本页对应 1.5.0 源码与功能，文档更新于 2026-10-27。** 本版整合前三批引擎、文本效率、窗口视觉与部署配套升级；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
 
-配套的 **Windows 安装与维护管理器**提供浅白背景和直角主面板：自动检测编程端，一次安装 Skill 和 MCP，随后可验证连接、修复、备份、恢复与安全卸载。编程端下拉列表居中显示、可内部滚动，已安装项目以圆点标识且不可重复选择；再次点击入口即可收起。Skill 提供操作说明，MCP 服务提供真正的 31 个工具。Codex 的安装目标为 **Codex 桌面端**，不安装或调用 Codex CLI。
+| 组成 | 负责什么 |
+|---|---|
+| MCP 服务 | 提供 31 个工具，执行 UI Automation、真实鼠标键盘、受管浏览器、授权范围内文件操作与验证 |
+| Skill | 告诉客户端如何选择工具、使用观察引用、处理审批和核对结果；Skill 本身不提供桌面执行能力 |
+| 安装与维护管理器 | 检测客户端，接入 Skill + MCP，验证连接、修复、备份恢复、撤销安装与安全卸载 |
 
-![main 最新源码的安装与维护固定布局](assets/manager-v1.4.4.png)
+适合窗口控件操作、表单填写、应用内文本编辑、重复桌面流程和结果检查。网页聊天或云端模型需要能够连接本机 MCP 的客户端，打开本仓库网页不会自动获得桌面控制能力。
 
-main 固定布局界面实拍，图中检测状态为隔离验收示例。
+![Windows-MCP 1.5.0 安装与维护管理器实拍](assets/manager-v1.5.0.png)
 
-本项目基于 [CursorTouch/Windows-MCP](https://github.com/CursorTouch/Windows-MCP) 二次开发，以 [MIT 许可证](LICENSE.md)发布。
+以上为本版源码在隔离验收环境中的真实界面截图；客户端检测状态为测试夹具数据。
+
+本项目基于 [CursorTouch/Windows-MCP](https://github.com/CursorTouch/Windows-MCP) 二次开发，遵循 [MIT 许可证](LICENSE.md)，保留上游及第三方组件的许可声明。
 
 ## 功能简介
 
-- **读取与操作 Windows**：识别窗口、控件和状态，点击、输入、快捷键、滚动、拖放及窗口管理。
-- **语义执行与结果核对**：`Observe → Execute → Verify`，先定位目标，再操作并读回状态；支持真实鼠标键盘输入。
-- **浏览器自动化**：独立 Playwright 浏览器会话，读取页面、填表、操作 iframe 和弹窗。
-- **原生文件与状态监听**：授权目录内的文件操作、多个窗口的事件监听、有界等待和取消。
-- **视觉兜底与权限控制**：自绘界面可按窗口截图定位；受保护操作默认逐次本机审批，也可由操作员在“设置 → 操作审批”中显式开启可撤销的全自动授权。普通权限不能绕过 UAC、锁屏或管理员窗口限制。
-- **一键接入客户端**：支持 Codex 桌面端、Claude Code、官方 DeepSeek Harness、Gemini CLI、Zcode 和 Trae；Harness 支持检测系统注册的自定义安装位置。已安装项禁用重复安装，卸载目标在独立窗口选择；保留其他 MCP、个人配置与仍被使用的共享服务。
-- **维护与诊断**：真实连接验证、事务备份与回滚、智能修复、脱敏错误报告和自定义安装目录；安装状态与连接结果以清晰的卡片展示。
-- **固定布局界面**：左侧为安装目标，右上为安装与维护，右下为安装操作；面板不能拖拽、换位、浮动或滑入边缘。保留浅白、暖色护眼、深色、跟随系统主题及独立日志背景；视觉强度提供常规与玻璃拟态，点击“完成”后应用。
-- **外观与程序路径设置**：全局主题、日志背景及视觉强度均支持点击展开、再次点击关闭。连接与日志的数字只通过加减按钮调整，不能选中文字；高级设置自动检测已安装程序，也可添加真实文件夹后点击“检测”，未安装时显示提示，保存前不改动配置。
-- **选择与撤销**：可一键全选或清除尚未安装的目标；安装期间可撤销整批操作，完成后也能预览并撤回最近一次安装，保留个人修改和其他接入。
-- **真实任务进度**：手动检测、安装、卸载、验证、修复和更新在日志上方显示 0–100% 单向进度；按真实完成阶段与下载字节计算。成功约 8 秒后淡出并保留占位，失败信息保留，日志布局保持稳定。
-- **可视化审批与全自动**：可在任务开始前进入左上角“设置 → 操作审批”，勾选“全自动”并“保存默认审批”，无需等待首个待审请求。也可以在任务触发的审批窗口中勾选并批准。未启用时逐次审批，启用后鼠标、键盘和网页等 R2 操作持续自动执行，重连后仍生效；勾选框保持选中并锁定，通过审批窗口下方“操作授权… → 撤销授权”恢复逐次审批，该入口也提供 8 小时授权。R3 能力仍需单独开启和逐次审批。
-- **检查与安装更新**：启动后自动检查官方稳定版，发现新版时仅在设置中“检查更新”按钮内部右侧显示红点，菜单宽度与文字位置保持不变；点击“更新安装”后下载并核对 SHA-256。安装版直接显示更新进度页，更新后打开管理器并验证受管接入；首次安装保留向导。便携版校验 ZIP，由独立助手替换、重启并验证，失败保留回滚副本。更新记录见 [CHANGELOG](CHANGELOG.md)。
+### 1.5.0 的三批升级
 
-Windows 11 已实测；Windows 10、混合 DPI 多显示器和特殊应用的验证范围见 Skill 的[按需参考](skills/windows-mcp/references/advanced.md)。
+| 升级方向 | 现在可以做什么 | 使用时的边界 |
+|---|---|---|
+| 等待与超时 | Wait 异步等待 1–60 秒，支持取消；WaitFor 在查询间释放桌面线程；跟踪超时后仍执行的 UIA 动作 | 超时不代表动作撤回；未决动作完成后须独立核对，再由原会话 acknowledge |
+| 文件与授权 | 原子覆盖文本文件；全自动绑定会话、应用、工具及期限；物理输入和 UIA 统一派发检查 | 旧版全局全自动授权须重新确认；R3 单独启用并逐次审批；出网独立授权 |
+| 文本范围 | 读取 TextPattern 文本/选区，按准确文本及 occurrence 或 unit/index/count 选择、替换、删除、追加 | 依控件能力；密码、只读、不支持 TextPattern 的控件明确拒绝；局部编辑先核对选区和原文，再读回 |
+| 观察与性能 | 控件子树观察、已有目标批量刷新、事件触发 Watch、每个 frame 批量浏览器元数据 | 已有目标刷新不检查新增/移除控件；事件仅唤醒回读；UIA 缓存策略需按应用测量 |
+| 窗口视觉 | HWND WGC、PrintWindow 与前台桌面裁剪；ROI、缩小图片、变化比较和未变图片省略 | 后台可观察不等于后台可点击；最小化、受保护画面和特殊 provider 不保证可用 |
+| OCR 与组件 | Windows OCR/Tesseract 适配、词框、语言与依赖诊断；WinGet MCP 配套发现 | OCR 仍需包标识或本地引擎及语言；微软 File Explorer/Settings 未完成原生连接验收 |
+| 部署与诊断 | full/ui-core/browser profile，doctor、connectors、完整静态清单；安装后校验模式及 Session 结果 | 静态清单按 SDK/profile 生成；不代表已注册 ODR、具备 MSIX 或 Agent Workspace |
+
+本版保留全部兼容工具。64 项升级候选并未全部实施；尚未交付完整任务队列治理、全引擎 DPI/坐标统一、OmniParser、ODR 宿主适配、Agent Workspace 等工作，不将候选能力算作现成功能。
+
+### 观察、操作、核对
+
+1. **观察**：优先使用 Observe、Find 或指定窗口的 Snapshot，选择当前会话返回的目标 ID。
+2. **操作**：Execute 优先选择支持的 UIA 模式；需要真实输入时检查前台、窗口身份和遮挡。Browser 操作独立 Playwright 会话，NativeAPI 操作明确授权的文本文件。
+3. **核对**：提供 expected，或调用 Verify 读取独立后置条件。`VERIFIED` 表示条件已得到证据支持；`DISPATCHED_UNVERIFIED` 只说明动作已派发。
+
+```text
+Observe(window="目标窗口的唯一标题")
+Execute(target="本次观察返回的目标 ID", action="set_value", value="准备填写的文本")
+Verify(expected={"kind":"element_state", "target":"目标 ID", "state":{"value":"准备填写的文本"}})
+```
+
+以上是 MCP 工具调用示意，不是 PowerShell 命令。实际参数以客户端发现的工具模式为准；动作须具有匹配授权。发送、提交、删除等动作若已派发但未证实，应先检查结果，避免重复执行。
+
+### 工具 profile
+
+| Profile | 工具数 | 适合的任务 |
+|---|---|---|
+| `full`（默认） | 31 | 完整桌面与兼容工具，适合现有接入 |
+| `ui-core` | 12 | Observe、Execute、Verify、Watch、Session、RequestApproval、Visual、DisplayInventory、App、Wait、WaitFor、Find |
+| `browser` | 5 | Browser、Observe、Session、RequestApproval、Wait；适合受管网页会话 |
+
+profile 只决定公布哪些工具，不授予额外权限。精简 profile 的 `--tools` / `--exclude-tools` 只能进一步缩小范围。管理器默认安装 full；自定义接入示例见安装指南。
+
+### 文本、图片与浏览器
+
+- **文本**：`Observe(target=..., detail="text"/"selection")` 读取控件内容；`Execute` 支持 select_text、replace_text、delete_text、append_text。多处匹配须明确一基 occurrence，不静默改写整篇富文档。
+- **局部观察**：`Observe(target=...)` 观察子树；`mode="refresh"` 批量回读同一窗口最多 100 个已有目标。Watch 在事件后回读相关控件，最长 1.5 秒兜底。
+- **视觉**：Visual 的 region 是未缩放捕获图的像素区域，返回图的点击坐标再由服务映射回物理桌面。窗口移动、调整大小、进程生存期变化、引用过期或点击被遮挡时拒绝输入。
+- **图片变化**：previous_target、only_if_changed 可省略未变图片，仍返回新视觉引用。变化仅是重观察提示，不算业务验证。
+- **浏览器**：独立 Playwright profile，支持页面、iframe、表单与弹窗。可使用已安装 Edge；其他通道需要相应浏览器。服务不提供用户原始 Cookie、任意 JavaScript 或 CDP 连接。
+
+### 操作授权与升级迁移
+
+**从 1.4.x 升级后，旧的全局全自动授权不会继续放行。** 先发起具体待审请求，再由本机操作员核对客户端会话、应用、工具、参数和期限。勾选“全自动”并批准，为所示范围开启默认最长 8 小时的自动 R2 授权；重连生成新会话后须重新授权。通过“操作授权… → 撤销授权”撤销，AI 不能操作自己的审批窗口。
+
+| 范围 | 行为 |
+|---|---|
+| 窗口与控件读取 | 按服务策略执行；读取结果可能包含截图和应用文本，应只连接信任的客户端 |
+| R2 修改 | 精确一次性审批，或匹配会话/应用/工具的全自动授权 |
+| R3 高风险工具及敏感目标 | 默认关闭；本地启用后仍逐次审批，不能借原始输入或 UIA 绕开 |
+| HTTP(S) 出网 | 按准确 origin（协议、主机、端口）独立授权，全自动鼠标键盘授权不包含网络权限 |
+| 文件 | 受可信配置的 workspace_roots 限制，服务密钥和受保护配置不在工具访问范围内 |
+
+浏览器导航、重定向和子资源均检查 origin；顶层 GET 可逐跳检查后继续，表单和子资源的 HTTP 重定向当前会被阻止。审批窗口打开期间暂停 MCP 桌面输入。已进入 UIA provider 的动作无法由 Python 强制取消；`ACTION_IN_PROGRESS` 后用 Session 查询完成，独立核对后再 acknowledge，cancel/resume 不隐式清除未决动作。
+
+这些措施降低本机自动化风险，不构成操作系统沙箱；普通权限无法绕过 UAC、安全桌面、锁屏或管理员窗口边界。默认关闭 PostHog 遥测。完整处理规则与离线政策见管理器“关于”和 [按需参考](skills/windows-mcp/references/advanced.md)。
+
+### 微软组件与可选条件
+
+| 组件 | 本版提供 | 仍需满足 |
+|---|---|---|
+| Windows.Graphics.Capture | HWND 捕获后端；正式 Windows x64 构建包含绑定，失败可回退 PrintWindow | 目标窗口支持捕获；不保证最小化或受保护内容 |
+| Windows OCR | WinRT 绑定、词框适配及条件探测 | 真实 package identity 和系统 OCR 语言；普通 EXE 不因携带绑定就获得包标识 |
+| Tesseract | 本地引擎适配 | 操作员准备引擎、PATH 与语言包；不自动下载安装 |
+| WinGet MCP | 发现本机 server、输出配置片段；`--probe` 仅初始化和列工具 | 独立安装的微软 server 与其权限；已验证握手，未执行安装任务 |
+| File Explorer / Settings | 原生宿主/ODR 发现指引和未就绪诊断 | 实际可用的系统组件、宿主及各自权限；当前未完成连接验收 |
+| ODR / Agent Workspace | 固定 profile 静态清单准备 | 本版未提供 ODR 宿主适配、MSIX 标识或隔离会话运行模式 |
+
+OCR 实际识别尚未在当前验收机通过：该机无包标识、无 Tesseract 引擎。不要将组件探测或握手成功理解为具体应用任务已经完成。
 
 ## 安装指南
 
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 选择一种下载，当前为 v1.4.5。两种格式均内置管理页面、Skill、MCP 服务和 Python 依赖，无需另装 Python；每个安装包的具体功能与更新说明见其对应 Release。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 `SHA256SUMS.txt`。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.5.0；请在发布页核对所下载资产的版本。
 
-| 下载 | 使用方法 | 管理数据位置 |
+| 格式 | 文件与使用方法 | 数据位置 |
 |---|---|---|
-| [Windows-MCP-Setup-v1.4.5-x64.exe](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.5/Windows-MCP-Setup-v1.4.5-x64.exe) | 首次运行安装向导选择位置，后续升级直接显示进度页 | 当前用户的 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [Windows-MCP-Portable-v1.4.5-x64.zip](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.4.5/Windows-MCP-Portable-v1.4.5-x64.zip) | 完整解压后双击 `Windows-MCP.exe`，直接打开管理页面 | 解压目录旁的 `data`，包含设置、日志、备份、收据、运行时和审批数据 |
+| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/latest) | `Windows-MCP-Setup-v1.5.0-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/latest) | `Windows-MCP-Portable-v1.5.0-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
 
-安装版提供路径选择、开始菜单入口和系统卸载程序，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Windows-MCP`，无需管理员权限。可从 Windows“设置 → 应用 → 已安装的应用”卸载管理器；**Skill 与 MCP 接入在管理器页面中单独卸载**，卸载管理器会保留这些接入和个人数据。
+安装版默认路径为 `%LOCALAPPDATA%\Programs\Windows-MCP`，按用户安装，无需管理员权限；系统卸载入口位于 Windows“设置 → 应用”。**卸载管理器会保留已接入的 Skill/MCP 和个人数据，对应接入须在管理器中单独卸载。**
 
-便携版无需安装管理器；请保留 `WindowsMCP.portable.json` 和整个文件夹，不要在 ZIP 内直接运行。完成客户端接入后需保持文件夹位置，移动或删除前先卸载对应接入。维护时仍使用用户目录中的共享维护锁，避免安装版与便携版同时修改客户端配置；加密审批数据仅供原 Windows 用户使用。
+便携版请保留 WindowsMCP.portable.json 和整个目录，不在 ZIP 内运行。接入后保持目录位置，移动或删除前先卸载接入；加密审批数据仅供原 Windows 用户使用。
 
-打开管理页面后的步骤：
+### 首次接入
 
-1. 在左侧选择已检测到、尚未接入的编程端，可多选。**Codex 目标为桌面端**，不安装或调用 Codex CLI。
-2. 点击“安装 Skill + MCP”，核对路径与文件预览后确认。Skill 和客户端配置始终安装到下表的官方用户目录，便携模式也一样。
-3. 安装完成会真实验证服务版本、全部 31 个工具及 Session READY。重启对应客户端或新建会话后使用。
-4. 检查、验证连接、修复使用右侧按钮；卸载从独立窗口进入。固定工作区左上角是点击前后均透明、无边框的“设置、关于”，设置包含外观、操作审批、高级设置、备份恢复、安装目录、更新和诊断。安装状态只展示名称、状态和“详情”，详情内部滚动不带动外层页面；安装目录详情按内容高度展开。
-5. 需要指定程序位置时，进入“设置 → 高级设置”。页面自动检测程序路径，也可通过“添加文件夹”选择真实安装目录，再点击右侧“检测”；保存后应用。全自动的提前开启、锁定及撤销方式见上方“可视化审批与全自动”。
-6. “关于”按顺序提供[关于软件](installer/resources/legal/about.html)、[使用政策](installer/resources/legal/usage.html)、[隐私政策](installer/resources/legal/privacy.html)、[许可证](installer/resources/legal/license.html)、[第三方声明](installer/resources/legal/third-party.html)、[AI使用免责声明](installer/resources/legal/ai-disclaimer.html)，可离线阅读并打开随包许可原文。用户使用条款并入使用政策；AI 说明涵盖生成内容标识、人工核验及法定责任，隐私政策说明实际数据处理与权利渠道。维护及隐私联系邮箱为 jingyanx2@gmail.com。
-7. 发现新版后进入“设置 → 检查更新”，点击“更新安装”。安装版保留原安装位置，下载校验后直接进入更新进度页；便携版校验 ZIP 后替换程序并保留 data。完成后打开新版管理器并更新、验证受管 Skill 与 MCP。自动检查只提示，不会自行下载安装。
+1. 打开管理器，在左侧选择检测到、尚未接入的客户端，可多选。已安装项带圆点并禁用重复安装。
+2. 点击“安装 Skill + MCP”，核对真实路径与操作预览，再执行安装。
+3. 等待版本、31 个工具、完整模式和 Session READY 验证通过。重启目标客户端或新建会话。
+4. 在目标客户端确认工具已出现，先读取一个明确窗口，再执行具有授权的操作。
+5. 若需要指定客户端程序目录，进入“设置 → 高级设置”，添加真实文件夹并点击“检测”，保存后应用。
 
-修改前创建私有备份，失败执行散列校验回滚；保留其他 MCP、JSONC 注释与个人配置。多个客户端共享服务，仍有引用时保留运行时。界面显示最近一次真实验证结果及时间，MCP 由客户端按需启动。普通桌面与已安装 Edge 无需额外下载；其他 Playwright 通道需提供相应浏览器。
+Codex 的目标是 **Codex 桌面端**，管理器不安装或调用 Codex CLI。文件写入前创建事务备份，失败按校验结果回滚，保留其他 MCP、JSONC 注释与个人配置；仍有客户端引用时保留共享服务。
 
-| 编程工具 | 默认 Skill 目录 | MCP 配置 |
+| 客户端 | 默认 Skill 目录 | MCP 配置 |
 |---|---|---|
 | Claude Code | `~/.claude/skills/windows-mcp` | `~/.claude.json` |
 | Codex 桌面端 | `~/.agents/skills/windows-mcp` | `~/.codex/config.toml` |
 | DeepSeek Harness | `~/.dsh/skills/windows-mcp` | `~/.dsh/cordis.patch.yml` |
 | Gemini CLI | `~/.gemini/skills/windows-mcp` | `~/.gemini/settings.json` |
-| Zcode | `~/.zcode/skills/windows-mcp` | `~/.zcode/cli/config.json` 的 `mcp.servers` |
-| Trae | `~/.trae-cn/skills/windows-mcp`，国际版为 `.trae/skills/windows-mcp` | 默认 `%APPDATA%\Trae CN\User\mcp.json`；优先沿用已存在的国内版、国际版或 SOLO 配置 |
+| Zcode | `~/.zcode/skills/windows-mcp` | `~/.zcode/cli/config.json` 的 mcp.servers |
+| Trae | `~/.trae-cn/skills/windows-mcp`，国际版为 `.trae/skills/windows-mcp` | 默认 `%APPDATA%\Trae CN\User\mcp.json`，优先沿用现有国内/国际/SOLO 配置 |
 
-`~` 表示当前用户主目录。界面显示实际目录，支持 `CODEX_HOME`、`DSH_HOME` 等环境变量。DeepSeek 桌面版和 CLI 使用同一个 Harness Home。目录和格式规则参照 [Claude Code](https://code.claude.com/docs/en/skills)、[Codex](https://learn.chatgpt.com/docs/build-skills)、[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/skills.md)、[Gemini CLI](https://geminicli.com/docs/cli/using-agent-skills/)、[Zcode MCP](https://zcode.z.ai/cn/docs/mcp-services)、[Zcode Skill](https://zcode.z.ai/cn/docs/skill)、[Trae MCP](https://docs.trae.cn/ide_add-mcp-servers) 和 [Trae Skill](https://docs.trae.cn/ide_skills)。OpenCode 不再提供新安装选项，旧安装记录仍保留维护与卸载能力。
+`~` 表示当前用户主目录。支持 CODEX_HOME、DSH_HOME 等实际目录设置；DeepSeek 桌面版和 CLI 共用 Harness Home。OpenCode 保留旧接入的维护与卸载，不提供新安装入口。配置格式与参数细节见 [按需参考](skills/windows-mcp/references/advanced.md)。
 
-接入的是当前用户的本地编程工具；网页聊天与云端会话需有能连接本机的客户端。Codex 桌面端使用用户级 `config.toml`，同一用户其他 Codex 客户端也会读取它。受保护操作自动打开“本机操作审批”，由你核对会话、参数和期限后决定：不勾选“全自动”则批准一次，勾选并批准则开启持续授权。AI 重试当前调用后，在授权有效期间直接继续后续 R2 操作；审批窗口打开期间暂停 MCP 桌面输入。
+### 更新、修复、备份和卸载
 
-源码位于 [main 分支](https://github.com/CyanQX/Windows11-mcp/tree/main)，版本变化见 [CHANGELOG](CHANGELOG.md)。发布 `v<版本>` 标签后，GitHub Actions 自动运行测试、构建安装包和便携 ZIP、验证安装及卸载，再上传到 Releases；校验值见对应 Release 的 `SHA256SUMS.txt`。
+- **更新**：设置中“检查更新”发现版本后显示红点，用户点击“更新安装”才下载，先校验 SHA-256。安装版保留原位置；便携版保留 data，由独立助手替换、重启并验证，失败保留回滚副本。
+- **升级接入**：更新管理器后检查受管接入是否也完成升级和验证；已运行的 MCP 进程需由客户端重连后使用新版本。
+- **验证与修复**：右侧提供连接验证和修复；健康检查明确区分版本、工具清单、模式、Session 结果及可选组件状态。OCR 缺失只作单独提示。
+- **备份与撤销**：支持预览备份恢复、撤销安装批次；后续个人修改或共享引用存在时报告冲突，不强行覆盖。
+- **卸载**：从独立卸载窗口选择具体客户端接入，保留其他配置与仍被引用的运行时。
 
-### Python 服务安装（可选）
+管理器保留固定三面板布局、浅白/暖色护眼/深色/跟随系统主题、独立日志背景、常规/玻璃拟态视觉强度、真实任务进度及六个离线“关于”页面。界面图是实拍，版本与接入是否更新以程序内真实验证结果为准。
 
-已有 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/) 时，可继续安装固定版本：
+### 源码安装与开发
+
+需要 Windows、Python 3.12+、Git 和 [uv](https://docs.astral.sh/uv/)。在项目目录执行：
 
 ```powershell
-uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/CyanQX/Windows11-mcp.git@v1.4.5"
+git clone https://github.com/CyanQX/Windows11-mcp.git
+cd Windows11-mcp
+uv sync --frozen --extra browser --extra capture --extra ocr
+uv run --frozen --extra browser --extra capture --extra ocr windows-mcp doctor
+uv run --frozen --extra browser --extra capture --extra ocr windows-mcp serve
 ```
 
-将 `%USERPROFILE%\.local\bin\windows-mcp.exe` 作为客户端 MCP 命令，参数为 `["serve"]`。使用 Skill 可从本仓库 `main` 的 `skills/windows-mcp` 复制到上表相应目录。工具参数与可选设置见 [Skill 参考](skills/windows-mcp/references/advanced.md)。
+`serve` 默认使用 stdio，终端等待客户端连接属于正常行为。开发管理器再添加 `--extra installer`，运行测试再添加 `--extra dev`；构建另需 `--group build`。为保持环境稳定，同一环境后续 `uv run` 使用相同 extras。WGC 可选依赖当前限 Windows x64，OCR 不会自动安装外部引擎和语言。
+
+将上面同步完成的项目 `.venv\Scripts\windows-mcp.exe` 作为自定义客户端的 command，参数为 `["serve"]`；精简接入改为 `["serve","--profile","ui-core"]`。Skill 可从仓库 skills/windows-mcp 复制到客户端 Skill 目录。通过管理器安装的用户无需自行编辑配置。
+
+测试使用 `uv run --frozen --extra dev --extra installer --extra browser --extra capture --extra ocr pytest`；默认不发送真实桌面输入。只有显式启用 `WINDOWS_MCP_DESKTOP_TESTS=1` 才执行专用夹具中的真实输入，具体安全边界见 [开发说明](CLAUDE.md)。CI 检查 Python 3.12/3.13 与两代 FastMCP/MCP；本地前三批在 Python 3.14.7 验证，不能据此承诺所有系统/应用组合。
+
+### 诊断、微软配套和固定清单
+
+以下命令用于已安装的控制台服务；打包版也可用 Windows-MCP.exe 对应子命令，并用 `--output` 写出诊断文件。
+
+```powershell
+windows-mcp doctor --output doctor.json
+windows-mcp connectors --probe --output connectors.json
+windows-mcp manifest --profile ui-core --output ui-core.manifest.json
+windows-mcp serve --profile ui-core --static-manifest ui-core.manifest.json
+```
+
+`connectors --probe` 只核对 WinGet 初始化和 tools/list，不搜索或安装软件、不改客户端配置。各微软 server 的权限独立。静态清单须使用实际 SDK/profile 重新生成；启动检查不接受动态过滤，生成清单也不替代 ODR 注册。
+
+可信配置可指定文件范围；只授权任务实际需要的目录：
+
+```toml
+[tools]
+profile = "full"
+
+[policy]
+workspace_roots = ['E:\my-authorized-task']
+allow_r3 = false
+# 可选：本地操作员预设准确的 HTTP(S) origin。
+allowed_network_origins = ['https://github.com']
+```
+
+默认文件范围为 `~/.windows-mcp/workspace`；便携模式为 data/config/workspace。远程 HTTP 传输需要鉴权、TLS 和 IP 白名单等条件，配置路径及完整环境变量见 [按需参考](skills/windows-mcp/references/advanced.md)。
+
+### 常见问题与验证范围
+
+| 现象 | 检查和处理 |
+|---|---|
+| 安装后客户端没有工具 | 重启客户端/新会话；管理器验证接入版本与 READY；确认客户端实际读取的用户配置 |
+| 升级后需要重新授权 | 1.5.0 的会话/应用范围授权迁移是预期行为；核对当前待审请求后重新批准 |
+| 返回 TARGET_STALE / FOCUS_MISMATCH | 重新观察准确窗口；确认前台、窗口位置、进程及控件仍对应目标，避免重放旧坐标 |
+| 返回 ACTION_IN_PROGRESS | 先查询 Session.pending_action，等待完成并独立核对，再由原会话 acknowledge |
+| 网页子资源或跳转被拒绝 | 核对实际 origin 与独立网络授权；表单/子资源 HTTP 重定向目前受限，不自动重放 POST |
+| OCR 不可用 | doctor 查看真实包标识、绑定、引擎和语言；缺条件时继续使用截图或语义工具 |
+| 找不到微软原生 connector | 以本机 ODR/原生宿主实际发现结果为准，不能仅依据 Windows 构建号判断可用 |
+| 特殊应用看不到控件 | 可尝试窗口 Visual；不能保证游戏、自绘界面、远程桌面、管理员应用和保护内容 |
+
+Windows 11 是当前本地验收平台。Win32 与 WPF 专用夹具、浏览器协议和两代 SDK 已有回归；Windows 10、物理混合 DPI 多屏、所有输入法及第三方客户端/Office 组合没有完整验收承诺。性能基准按应用测量，缓存减少往返不一定降低总耗时。
+
+反馈问题时附程序版本、工具、状态码和复现步骤，先去除凭证、输入正文、业务文件和个人信息。GitHub 发布页提供校验值及构建验证记录；完整日志可能含本机路径，请核对后再共享。政策与联系信息见管理器“关于”，联系邮箱为 jingyanx2@gmail.com。
 
 ## 工具一览
 
@@ -105,8 +231,8 @@ uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/Cya
 | `Scroll` | 真实滚轮（含横向），并报告滚动位置前后变化 | 写入 |
 | `Move` | 移动鼠标（平滑移动，悬停菜单能响应）或拖放 | 写入 |
 | `Shortcut` | 快捷键和组合序列（如 `ctrl+k ctrl+s`），可指定窗口、重复次数 | 写入 |
-| `Wait` | 等待若干秒 | 只读 |
-| `WaitFor` | 轮询直到出现某文字、某窗口、某元素或焦点 | 只读 |
+| `Wait` | 异步等待 1–60 秒，支持取消并释放桌面线程 | 只读 |
+| `WaitFor` | 轮询直到出现某文字、某窗口、某元素或焦点，等待间隔不占桌面线程 | 只读 |
 | `App` | 启动程序（等待并返回新窗口）、切换、调整大小、最小化/最大化/还原/关闭窗口 | 写入 |
 | `MultiSelect` | 按住 Ctrl 连续多选（文件、复选项） | 写入 |
 | `MultiEdit` | 一次填写多个输入框 | 写入 |
@@ -118,12 +244,12 @@ uv tool install --force --with "playwright>=1.51,<2" "git+https://github.com/Cya
 | `Notification` | 发送 Windows 通知 | 写入 |
 | `DisplayInventory` | 显示器布局、工作区、DPI 和缩放比例 | 只读 |
 | `Scrape` | 抓取网页内容，或读取当前浏览器标签页的 DOM 文本 | 只读 |
-| `Observe` | 有界语义观察、会话/修订/来源、增量状态 | 只读 |
-| `Execute` | 语义优先执行，明确物理输入和业务验证结果 | 写入 |
-| `Verify` | 独立核对文件、窗口和控件状态 | 只读 |
-| `Watch` | 多订阅、窗口过滤、有界事件等待和状态回读 | 只读 |
+| `Observe` | 窗口/子树语义观察、已有目标批量刷新与增量、文本/选区读取 | 只读 |
+| `Execute` | 语义优先执行、文本范围选择和局部编辑，读回验证 | 写入 |
+| `Verify` | 用有类型约束的条件独立核对文件、窗口和控件状态 | 只读 |
+| `Watch` | 事件触发局部回读、1.5 秒兜底、有界取消与队列溢出报告 | 只读 |
 | `Browser` | 独立 Playwright Profile、页面/iframe、导航和语义操作 | 写入 |
 | `NativeAPI` | 白名单文件提供者；范围检查、独占创建、写后核对 | 写入 |
 | `Session` | 会话状态、取消和显式恢复 | 写入 |
 | `RequestApproval` | 生成待审请求；不能自行批准 | 写入 |
-| `Visual` | 目标窗口截图、负坐标/缩放映射、窗口身份和位置校验 | 只读 |
+| `Visual` | HWND 捕获与回退、ROI/缩放、图片变化提示、可选 OCR、窗口身份与坐标校验 | 只读 |

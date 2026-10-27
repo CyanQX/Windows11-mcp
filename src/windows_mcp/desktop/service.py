@@ -493,6 +493,9 @@ class Desktop:
                 size = (width, height)
             x, y = loc
             width, height = size
+            from windows_mcp.infrastructure.authorization import check_window_dispatch
+
+            check_window_dispatch(target_window.handle)
             window_control.MoveWindow(x, y, width, height)
             return (f"{target_window.name} resized to {width}x{height} at {x},{y}.", 0)
 
@@ -671,6 +674,9 @@ class Desktop:
         if info is None:
             return f"No window matches {name or handle!r}. Open windows: {elements.describe_windows()}"
         hwnd = info.handle
+        from windows_mcp.infrastructure.authorization import check_window_dispatch
+
+        check_window_dispatch(hwnd)
         match mode:
             case "minimize":
                 win32gui.ShowWindow(hwnd, win32con.SW_MINIMIZE)
@@ -705,6 +711,9 @@ class Desktop:
         return f'{mode.title()}d "{info.title}" ({state}).'
 
     def bring_window_to_top(self, target_handle: int):
+        from windows_mcp.infrastructure.authorization import check_window_dispatch
+
+        check_window_dispatch(target_handle)
         if not win32gui.IsWindow(target_handle):
             raise ValueError("Invalid window handle")
 
@@ -989,6 +998,11 @@ class Desktop:
         current_url = url
         try:
             for _ in range(5):
+                from windows_mcp.engine.sessions import get_runtime
+
+                runtime = get_runtime()
+                runtime.current().check()
+                runtime.policy.check_network(runtime.current().session_id, current_url)
                 validate_url(current_url)
                 response = requests.get(current_url, timeout=10, allow_redirects=False)
                 if not response.is_redirect:

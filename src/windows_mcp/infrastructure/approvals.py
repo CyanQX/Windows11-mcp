@@ -118,7 +118,8 @@ class ApprovalStore:
             raise PermissionError("Approval expired or invalid")
         return payload
 
-    def request(self, session_id: str, tool: str, arguments: dict, risk: int, description: str) -> dict:
+    def request(self, session_id: str, tool: str, arguments: dict, risk: int, description: str,
+                *, authorization_scope: dict | None = None, network_origins: list[str] | None = None) -> dict:
         with self._exclusive():
             self.prune()
             payload = {
@@ -132,6 +133,8 @@ class ApprovalStore:
                 "description": description[:1000],
                 "expires_at": time.time() + self.ttl,
                 "approved": False,
+                "authorization_scope": authorization_scope,
+                "network_origins": network_origins or [],
             }
             if os.name == "nt":
                 import win32crypt
@@ -145,6 +148,10 @@ class ApprovalStore:
             payload = self.read(request_id)
             if payload.get("rejected"):
                 raise PermissionError("Approval was rejected")
+            if payload.get("network_origins"):
+                from windows_mcp.infrastructure.network import NetworkGrants
+
+                NetworkGrants(self.directory).grant(payload["session_id"], payload["network_origins"])
             payload["approved"] = True
             self._save(payload)
             return payload
@@ -176,7 +183,8 @@ class ApprovalStore:
             raise PermissionError("Operator details do not match the exact action")
         return arguments
 
-    def consume(self, session_id: str, tool: str, arguments: dict, request_id: str | None = None) -> bool:
+    def consume(self, session_id: str, tool: str, arguments: dict, request_id: str | None = None,
+                *, authorization_scope: dict | None = None) -> bool:
         digest = action_hash(tool, arguments)
         with self._exclusive():
             try:
@@ -191,6 +199,7 @@ class ApprovalStore:
                         or payload["session_id"] != session_id
                         or payload["tool"] != tool
                         or payload["action_hash"] != digest
+                        or (authorization_scope is not None and payload.get("authorization_scope") != authorization_scope)
                     ):
                         continue
                     # rename fails if the source was already consumed by another process.

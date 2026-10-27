@@ -11,6 +11,8 @@ from windows_mcp.infrastructure.approvals import ApprovalStore
 from windows_mcp.infrastructure.config import CONFIG_DIR
 from windows_mcp.infrastructure.runtime_paths import portable_data_directory
 from windows_mcp.infrastructure.trust import TrustStore
+from windows_mcp.infrastructure.network import NetworkGrants, origin
+from windows_mcp.infrastructure.authorization import DESKTOP_TOOLS, action_name, scope_applications
 
 
 class PolicyBlocked(PermissionError):
@@ -23,12 +25,14 @@ class PolicyBlocked(PermissionError):
 class PolicyGate:
     def __init__(self, *, roots: list[Path] | None = None, allow_r3: bool = False,
                  allow_private_browser: bool = False, approvals: ApprovalStore | None = None,
-                 trust: TrustStore | None = None) -> None:
+                 trust: TrustStore | None = None, allowed_network_origins: list[str] | None = None) -> None:
         self.roots = [path.resolve() for path in (roots or [CONFIG_DIR / "workspace"])]
         self.allow_r3 = allow_r3
         self.allow_private_browser = allow_private_browser
         self.approvals = approvals or ApprovalStore(CONFIG_DIR / "approvals")
         self.trust = trust if trust is not None else TrustStore(self.approvals.directory)
+        self.network = NetworkGrants(self.approvals.directory)
+        self.allowed_network_origins = {origin(value) for value in (allowed_network_origins or [])}
         self.protected = [CONFIG_DIR.resolve(), Path("~/.codex").expanduser().resolve(),
                           Path("~/.ssh").expanduser().resolve(), self.approvals.directory]
         portable = portable_data_directory()
@@ -73,7 +77,33 @@ class PolicyGate:
             raise PolicyBlocked("Reserved device names and ambiguous Win32 path components are not allowed")
         return path
 
-    def risk(self, tool: str, args: dict[str, Any]) -> int:
+    def network_origins(self, tool: str, args: dict) -> list[str]:
+        use_dom = args.get("use_dom") is True or (isinstance(args.get("use_dom"), str) and args["use_dom"].lower() == "true")
+        if (tool == "Scrape" and not use_dom) or (
+            tool == "Browser" and args.get("operation") in {"navigate", "new_page"} and args.get("url")
+        ):
+            return [origin(args["url"])]
+        return []
+
+    def check_network(self, session_id: str, url: str) -> None:
+        target = origin(url)  # Check permission before DNS to avoid leaking data via hostnames.
+        if target not in self.allowed_network_origins and not self.network.allows(session_id, url):
+            raise PolicyBlocked(f"Network origin {target} is not authorized for this session; request local operator approval")
+
+    def trusted(self, session_id: str, tool: str, args: dict, scope: dict) -> bool:
+        applications = scope_applications(scope)
+        return (bool(applications) and self.trust is not None
+                and all(self.trust.allows(session_id, app, tool, action_name(tool, args)) for app in applications))
+
+    def risk(self, tool: str, args: dict[str, Any], scope: dict | None = None) -> int:
+        if tool in DESKTOP_TOOLS:
+            if scope and scope.get("sensitive"):
+                return 3
+            if tool == "Shortcut":
+                from windows_mcp.infrastructure.authorization import sensitive_shortcut
+
+                if sensitive_shortcut(args.get("shortcut", "")):
+                    return 3
         if tool in {"Observe", "Watch", "Verify", "Session", "RequestApproval", "Find", "Snapshot",
                     "Screenshot", "Visual", "DisplayInventory", "Wait", "WaitFor", "Scrape"}:
             return 0
@@ -128,15 +158,18 @@ class PolicyGate:
             return 2
         raise PolicyBlocked(f"No policy is defined for tool {tool}")
 
-    def authorize(self, session_id: str, tool: str, args: dict, approval_id: str | None = None) -> int:
-        risk = self.risk(tool, args)
+    def authorize(self, session_id: str, tool: str, args: dict, approval_id: str | None = None,
+                  *, scope: dict | None = None) -> int:
+        risk = self.risk(tool, args, scope)
+        for target in self.network_origins(tool, args):
+            self.check_network(session_id, target)
         if tool in {"Click", "Type", "Shortcut", "MultiSelect", "MultiEdit", "Act", "Execute", "Move", "Scroll", "App", "PowerShell"}:
             from windows_mcp.infrastructure.operator_ui import operator_review_active
             if operator_review_active():
                 raise PolicyBlocked("The local human approval window is open; MCP input is paused until the operator decides and closes it")
         if risk == 3 and not self.allow_r3:
             raise PolicyBlocked("R3 tools are disabled; an operator must enable policy.allow_r3 locally")
-        trusted = risk == 2 and self.trust is not None and self.trust.allows()
-        if risk >= 2 and not trusted and not self.approvals.consume(session_id, tool, args, approval_id):
+        trusted = risk == 2 and self.trusted(session_id, tool, args, scope or {})
+        if risk >= 2 and not trusted and not self.approvals.consume(session_id, tool, args, approval_id, authorization_scope=scope):
             raise PolicyBlocked(f"R{risk} requires a one-use local operator approval. Call RequestApproval with this exact tool and arguments")
         return risk

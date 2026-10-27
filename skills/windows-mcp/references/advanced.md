@@ -29,27 +29,124 @@
 workspace_roots = ['E:\my-authorized-task']
 allow_r3 = false
 allow_private_browser = false
+# 可选可信预设：仅准确 origin，不支持通配符、路径、查询串。
+allowed_network_origins = ['https://github.com']
 ```
 
 R0 观察与查询可直接调用。R1 包括授权目录内新建普通文本文件、窗口切换和滚动。覆盖已有文件、控件修改、原始点击/键盘、网页表单等按 R2 保守处理：服务器无法仅凭控件名称推断业务风险。R3 脚本、注册表修改、进程终止、任意程序启动、移动/删除文件默认关闭。即使本地启用 R3，也仍需一次性审批。
 
 审批步骤：
 
-可提前授权：在管理器左上角“设置 → 操作审批”打开默认审批设置，无需任何待审请求。勾选“全自动”并点击“保存默认审批”、由本机用户确认后，即可开始连续自动化。生效后勾选框保持选中并锁定，只能通过审批窗口下方“操作授权… → 撤销授权”恢复逐次审批。保存成功会关闭审批窗口，释放桌面输入暂停。仅打开或勾选、不保存或取消确认，不会授予权限。
+1.5.0 起：全自动必须绑定服务器生成的客户端会话和实际应用。先发起具体 R2 请求，再在“设置 → 操作审批”或“操作授权…”选择签名请求的范围。默认最长 8 小时，生效后通过“操作授权… → 撤销授权”撤销。没有待审请求时可以查看设置，但不能提前生成全局放行。保存成功关闭审批窗口，释放桌面输入暂停。旧 schema 1 全局授权不再生效，须由本机操作员重新确认；不会自动扩大或迁移权限。
 
 1. AI 调用 `RequestApproval(tool="Execute", arguments={"target":"观察返回的 ID", "action":"set_value", "value":"hello"}, description="具体内容与目标")`。
-2. **本地操作员**在自动打开的审批窗口核对工具、具体参数、原会话和期限。默认不勾选“全自动”，点击“批准一次”只放行本次调用；勾选“全自动”并点击“批准并开启全自动”，确认后保存永久的 R2 持续授权，直到在“本机操作审批 → 操作授权… → 撤销授权”中撤销。仅勾选、关闭窗口、取消确认、拒绝或请求过期均不会启用全自动。R3 请求不提供此选项，仍须单独开启并逐次审批。控制台服务仍可在可信终端执行 `windows-mcp approve <request_id>`。窗口完整参数通过当前用户 DPAPI 加密保存且与签名、操作散列绑定，不向 MCP 返回原文。没有完整参数的旧版请求需重新申请。
-3. AI 重复原调用；逐次审批在五分钟内有效，只能消耗一次，换会话、换参数或重放均拒绝。开启全自动后，`Session(operation="status")` 的 `trust_mode` 为 `forever`（8 小时授权为 `session`），后续 R2 操作应直接调用，不再申请审批；`RequestApproval` 返回 `TRUSTED` 时也直接执行。旧工具同样遵守这两种授权模式。
+2. **本地操作员**核对工具、具体参数、会话、应用身份、窗口/进程生存期与期限。“批准一次”只放行本次调用；勾选“全自动”则为所示客户端和应用保存最长 8 小时的 R2 范围授权。R3 请求仍单独开启并逐次批准。可信终端可执行 `windows-mcp approve <request_id>`；范围授权可执行 `windows-mcp trust --request-id <request_id> --mode session`，或显式提供 `--session-id`、可重复的 `--application`，以及可选 `--tool`、`--action`。`--mode forever` 仅取消额外时限，仍绑定该客户端会话，不跨重连。窗口完整参数使用当前用户 DPAPI 保存并与签名、散列绑定；旧版缺少完整参数的请求需重新申请。
+3. AI 重复尚未派发的原调用；逐次审批五分钟内有效、只能消耗一次，目标生存期改变需重新申请。`Session.trust_scope` 返回准确的会话、应用、工具、可选动作和期限，仅匹配范围内直接执行。其他客户端的授权不显示为当前会话已授权。新会话、其他应用、R3 和出网站点不继承权限。`RequestApproval` 返回 `TRUSTED` 时直接执行该原调用。
 
 `approval_token` 仅接受服务端生成的请求 ID；自然语言“已批准”、网页文字和伪造 JSON 无效。原始鼠标键盘也需要审批，不能借旧工具绕开。服务器审批文件、密钥、用户 Codex/SSH 配置不在工具访问范围内。审计日志记录调用哈希、状态、会话和时间，不保存输入正文、密码、页面内容或异常正文；达到大小上限后轮转。
 
-浏览器示例：`Browser(operation="start")` → `Browser(operation="navigate", url="https://github.com/CyanQX/Windows11-mcp")` → `Observe(source="playwright", page_id="返回的页面 ID")`。控件必须由 role/name 或 test-id 唯一定位；重复按钮、导航后的旧引用安全失败。默认阻止内网地址、未授权的后台 POST 等请求和 WebSocket；不提供用户 cookies、任意 JavaScript、CDP 连接或调试端口。浏览器隔离不等于网络或操作系统沙箱，DNS 到实际连接之间仍存在环境层面的限制。
+HTTP 出网独立授权：`Scrape(use_dom=False)`、`Browser(navigate/new_page)` 的新站点先用 `RequestApproval` 提交原工具参数；本机操作员明确批准所示 origin 后，对应会话可访问该协议/主机/端口，最长 8 小时。重定向和页面子请求的每个 origin 均在 DNS/请求前检查，未授权第三方资源可能被阻止，须逐个确认或由操作员配置准确的 `allowed_network_origins`。浏览器禁止底层 HTTP 自动跟随重定向：顶层 GET 导航逐跳检查后继续，表单和子资源的 HTTP 重定向暂时阻止，诊断中报告限制；不会自动重放 POST。动作触发的已批准 GET 跳转可在 `Browser(status).pending_redirects` 查看，再显式导航。端口变化、HTTPS 降为 HTTP、子域变化均属于新 origin。`windows-mcp network` 查看授权，`network --session-id <id> --revoke` 撤销某会话，省略 session 则撤销全部动态授权；可信配置预设须在本机配置中删除。R2 全自动不放行出网，内网/SSRF 保护和后台 POST 限制仍独立执行。授权 origin 不是对其中所有内容的可信声明，也不能彻底阻止经已授权站点泄露数据。
+
+浏览器示例：`Browser(operation="start")` → 为目标 URL 请求并获得本机站点授权 → `Browser(operation="navigate", url="https://github.com/CyanQX/Windows11-mcp")` → `Observe(source="playwright", page_id="返回的页面 ID")`。控件必须由 role/name 或 test-id 唯一定位；重复按钮、导航后的旧引用安全失败。不提供用户 cookies、任意 JavaScript、CDP 连接或调试端口。浏览器隔离不等于网络或操作系统沙箱，DNS 到实际连接之间仍存在环境层面的限制。
+
+等待与超时：`Wait(duration=1..60)` 为整数秒异步等待，`WaitFor` 在两次查询之间释放桌面线程并检查取消/截止时间；已经进入 provider 的查询不能由 Python 强制中断。UIA 动作辅助线程超时则返回 `ACTION_IN_PROGRESS`；`Execute` 返回 `DISPATCHED_UNVERIFIED` 和 `pending_action_id`，其他桌面动作暂停，查询、验证和取消仍可用。先用 `Session(status)` 等待共享 `pending_action.state=COMPLETED`，独立核对实际效果，再由原客户端调用 `Session(operation="acknowledge", action_id="...")`。`cancel/resume` 不终止或清除未决动作；晚到异常只返回类型，不返回正文。原客户端断开后需操作员人工核对并重启服务恢复，重启也不保证撤回已到达应用的请求。
+
+敏感目标：物理输入与 UIA 共享派发校验，命令行、注册表等敏感程序和运行/搜索类快捷键升为 R3；派发时重新检查应用身份、窗口生存期、取消和撤销。该检测降低常见绕行风险，但同一用户桌面不是安全沙箱，进程/快捷键集合不保证覆盖所有启动路径。`NativeAPI(overwrite=True)` 使用临时文件校验和原子替换，读回后报告验证结果；独占新建行为保留。
+
+鼠标未到达指定点或多次点击之间移离目标时返回 `INPUT_TARGET_UNREACHABLE`，停止下一次按下；前一次点击可能已经完成，须重新观察，不能直接重放整组操作。检查输入桌面、指针限制或用户同时移动鼠标等情况。
 
 视觉兜底使用 `Visual(window="句柄或唯一标题", fallback_reason="canvas")`，在返回图片内选择坐标后，审批并执行 `Execute(mode="visual", target="visual:...", action="click", value="[180,90]", expected={...})`。窗口/PID/大小/位置或前台变化、目标点被其他窗口遮挡、截图超过 60 秒，都会拒绝输入。核心安装不包含 OmniParser、VLM 或 FlaUI；这类模型/适配评估为可选后续工作。
+
+### 第三批：窗口捕获、区域与本地 OCR（1.5.0）
+
+`Visual` 的 `backend="auto"` 依次尝试 WGC、PrintWindow、前台桌面裁剪，或显式指定 `wgc` / `printwindow` / `desktop`。返回 `capture_backend` 和诊断；WGC 可观察被其他普通窗口遮挡的目标，PrintWindow 是否完整绘制取决于应用，桌面裁剪可能包含遮挡物。最小化、受保护画面、UAC/锁屏和不支持捕获的窗口不保证可用。物理点击仍检查前台、窗口身份、几何范围及目标点遮挡，不能因后台截图成功而在后台点击。
+
+```text
+Visual(window="目标句柄", fallback_reason="canvas", backend="auto",
+       region=[20,10,820,410], max_width=800)
+Visual(window="同一目标", fallback_reason="canvas", region=[20,10,820,410],
+       max_width=800, previous_target="上次返回的 visual:...", only_if_changed=True)
+```
+
+`region=[left,top,right,bottom]` 使用未缩放捕获图的像素，必须位于该图内部；WGC 与 PrintWindow 的边框范围可能不同，应根据实际后端选择区域。`max_width` 默认为 1600，范围 64–4096，只缩小、不放大。返回 `desktop_bounds` 为所选区域的物理桌面范围，`image_size` 为实际输出尺寸；后续视觉操作的坐标以输出图片为准，由服务映射回屏幕。捕获前后使用物理 DPI 上下文核对范围，不改变主进程的全局 DPI 模式。
+
+`previous_target` 只能使用当前会话、同一窗口的已有视觉引用。默认 `change_threshold=0` 按输出图 SHA-256 检查准确变化；大于 0 时结合 64×64 缩略图平均差异比例，范围为 0–1。不同 ROI/尺寸视为变化。`only_if_changed=True` 且未变时只返回元数据，仍签发新引用；最多保留最近八次比较记录。图片变化或不变都不能代替 `Verify` 业务核对。
+
+源码可选安装：`uv sync --extra capture --extra ocr`。WGC 的 `windows-capture` 当前提供 Windows x64 轮子，额外引入 OpenCV；PrintWindow 使用已有 Windows 依赖。`ocr=True` 启用本地识别，可选 `ocr_backend="auto"/"windows_ocr"/"tesseract"` 和 `ocr_language`。Windows OCR 使用 Windows 语言标签，如 `en-US`；Tesseract 使用其本地语言 ID，如 `eng` 或 `chi_sim`，实际支持项以诊断为准。auto 优先满足条件的 Windows OCR，否则尝试 Tesseract。
+
+Windows OCR 的支持路径需要真实包标识、WinRT 绑定与系统 OCR 语言；仅安装 Python 绑定不会创建包标识。Tesseract 需要操作员另行准备可执行引擎、PATH 和语言包，本项目不自动下载。结果包含 `available`、缺失原因、词框和 `coordinate_space="image_pixels"`，缺组件不影响普通截图。本机已验证捕获与回退，尚未完成真实 OCR 识别验收：普通源码进程无包标识，亦无 Tesseract 引擎。辅助进程通过有超时的管道通信和 kill-on-close Job Object 管理，不在 UIA 线程执行原生捕获/OCR；超时终止该工作进程不代表可以终止已经进入其他 UIA provider 的动作。
+
+### 第三批：profiles、微软配套与诊断（1.5.0）
+
+```powershell
+windows-mcp serve --profile ui-core
+windows-mcp doctor --output doctor.json
+windows-mcp connectors --probe --output connectors.json
+```
+
+`full` 默认保留全部 31 个工具；`ui-core` 为 Observe、Execute、Verify、Watch、Session、RequestApproval、Visual、DisplayInventory、App、Wait、WaitFor、Find（12 个）；`browser` 为 Browser、Observe、Session、RequestApproval、Wait（5 个）。`--tools` 和 `--exclude-tools` 只能进一步缩小精简 profile，不扩大它；过滤后不能是空集。也可在可信配置中设置 `[tools] profile="ui-core"`。profile 是工具发现预设，所有保留工具仍经过原权限检查，不构成操作系统沙箱。
+
+`doctor` 只读报告会话、输入桌面可读性、实际 DPI 模式、截图依赖、浏览器依赖、WGC、包标识、OCR 引擎/语言和 connector 条件。依赖存在不等于应用任务成功；`Session(status).native_components` 也返回原生探测结果，控制会话的 cancel/resume/acknowledge 跳过探测以保持响应。诊断输出可能包含本机路径，应核对后再共享。
+
+| 微软组件 | 搭配方式 | 本批边界 |
+|---|---|---|
+| WinGet MCP | 让原生 server 承担已授权的软件查找/安装，Windows-MCP 处理后续安装界面与状态核对 | `connectors` 仅输出发现的 EXE 配置片段；`--probe` 仅初始化及 tools/list。本机实际发现 `find-winget-packages`、`install-winget-package`，未调用安装 |
+| File Explorer connector | 原生宿主中优先使用用户明确授权的文件工具，GUI 操作交给 Windows-MCP | 用实际 ODR/宿主发现工具和权限，不猜 server ID，不继承本服务文件权限；本机未接通验收 |
+| Settings connector | 原生宿主中使用实际公布的设置能力，需要界面时由 Windows-MCP 补充 | 依系统/预览功能和宿主而定，本机未接通验收；本服务不据 Windows build 宣称可用 |
+
+`connectors` 不修改任何客户端配置、不安装微软 server。输出配置片段由操作员按目标客户端格式合并，微软 server 的权限不继承 Windows-MCP 授权。若安装了 ODR，可按输出运行 `odr mcp list` 发现实际条目；本机没有 ODR。参考微软 [WinGet MCP 设置](https://learn.microsoft.com/en-us/windows/package-manager/winget/mcp-server-setup)、[File Explorer connector](https://learn.microsoft.com/en-us/windows/ai/mcp/file-connector)、[ODR 工具](https://learn.microsoft.com/en-us/windows/ai/mcp/odr-tool)。
+
+### 第三批：静态清单与安装健康检查（1.5.0）
+
+```powershell
+windows-mcp manifest --profile ui-core --output ui-core.manifest.json
+windows-mcp serve --profile ui-core --static-manifest ui-core.manifest.json
+```
+
+清单包含当前 SDK 的完整 `initialize`、`tools/list`，包括 inputSchema、outputSchema、annotations，并记录 profile 和 SDK 版本。清单生成与健康检查在 FastMCP 4 上显式使用初始化握手，满足静态 `initialize` 要求。使用 `--static-manifest` 时仅支持 stdio 和对应固定 profile，不同时使用动态工具过滤；不一致时拒绝启动并要求重新生成。清单内容会随 SDK 版本、工具模式、描述或服务 instructions 改变，不能将 FastMCP 3 生成的清单假定为 FastMCP 4 通用。仓库的 full 清单由锁定 SDK 生成，构建应使用对应依赖并重新生成。按微软 [MCPB 静态响应要求](https://learn.microsoft.com/en-us/windows/ai/mcp/servers/mcp-mcpb) 准备数据，不代表已注册 ODR、完成原生 host 适配、MSIX 或 Agent Connector containment。
+
+安装健康检查对包含静态响应的清单核对真实初始化、工具模式与输出，校验 Session READY 和服务器生成的会话 ID；可选 OCR 缺失记录为单独警告。旧的简短清单继续使用原名称/版本检查。自定义精简部署须同时向检查器传入对应 profile 启动参数。`scripts/build_setup.py` 可选 `--with-capture` / `--with-ocr`，构建环境须先安装对应依赖，正式 1.5.0 构建启用两项开关；OCR 引擎/语言与包标识仍是独立条件。正式发行物须通过 EXE 握手、模式和安装/卸载验收；本项目未提供 MSIX 包标识。
 
 远程部署时可以用 `--tools` / `--exclude-tools` 或配置文件裁剪工具，比如只保留 `Screenshot,Find,Act,Click,Type`。
 
 ## 重点工具用法
+
+### 第二批：文本、刷新、监听与输出契约（1.5.0）
+
+先 `Observe(window="唯一窗口")` 获得当前会话的目标 ID。`elements[].actions` 是可交给 Execute 的动作名，UIA pattern 名改放 `capabilities`；禁用/只读控件不会列出相应修改动作。为避免逐节点增加跨进程查询，完整遍历只列出保守动作；对 capabilities 含 text 的控件再使用 target 或 refresh，才探测 text_selection_supported/text_read_only 并列出文本动作。模式可用性仍由实际 provider 决定，尤其普通 Win32 EDIT 可能只暴露 ValuePattern，没有 TextPattern。
+
+```python
+Observe(target="返回的控件 ID")  # 控件及其子树；与整窗口有独立修订范围
+Observe(mode="refresh", targets=["同一窗口的 ID1", "ID2"])
+Observe(target="返回的控件 ID", detail="text", max_chars=4000)
+Observe(target="返回的控件 ID", detail="selection")
+Observe(target="返回的控件 ID", detail="text", text={"unit": "word", "index": 3})
+```
+
+`refresh` 最多接受同窗口 100 个目标，或者用可用的 `since_revision` 指定上一批目标；context.coverage=known_targets_only、structural_changes_checked=false。这类读取不遍历树，也不判断未知控件的新增/删除；结构变化需要完整或子树观察。`since_revision` 仅在相同观察范围/读取选项下生成有效增量。revision 改变且 refresh_targets=true 时，使用新返回 ID；若只返回了变化项，可在同范围不带 since_revision 刷新整批 ID。文本默认预算 4000、可设 1..10000 个 UTF-16 代码单元，并返回 text_truncated；不会返回半个代理对，密码字段拒绝文本范围读取。
+
+```python
+# 以下每条修改均遵循本机审批或已有范围授权，RequestApproval 使用完全相同参数。
+Execute(target="ID", action="select_text", text={"text": "目标词", "occurrence": 2})
+Execute(target="ID", action="replace_text", text={"text": "目标词", "occurrence": 2}, value="新词")
+Execute(target="ID", action="delete_text", text={"unit": "word", "index": 3, "count": 1})
+Execute(target="ID", action="append_text", value="末尾新增")
+```
+
+`text` 与 `unit` 二选一；occurrence、index 为一基序号，缺省 occurrence 遇到多处匹配会拒绝。unit 为 character/word/line/paragraph/document，边界由 provider 定义，不保证按 Python 字符或空格分词；document 只接受 index=1/count=1。查找不主动改变选区，select_text 在 Select 后回读端点。替换/删除可使用明确范围或唯一非空现有选区，追加只使用文档末尾；局部修改要求支持选区、明确可编辑、前台、确切焦点、选区端点与原文仍一致。编辑后读回整篇文本比较；文档超过 100000 字符则拒绝局部修改，单次 replacement 最多 10000 字符，拒绝 Tab，换行要求确认多行控件。`mode="semantic"` 不能执行需要键盘的局部修改；不会退回整篇 SetValue、猜测匹配或自动重放。TextPattern 本身不提供修改文本的方法。
+
+Watch 的 element_state 条件只回读原控件，不重复 Observe；无条件 Watch 用已知属性/焦点事件刷新相关控件，遇到结构事件、未知目标、溢出或 1.5 秒兜底再有界扫描。事件只是唤醒提示，必须回读状态才返回 VERIFIED；取消、超时均清理订阅。底层查询一旦进入 provider，仍不能强行中断。
+
+Observe/Execute/Verify/Watch 提供字段级 outputSchema，返回仍是顶层对象。expected 使用 kind 区分：file_exists 必须 path；file_content 必须 path/content、可选 encoding；file_sha256 必须 path/64 位小写十六进制 sha256；window_exists 必须非空 window；element_state 必须 target 和至少一个受支持的非空 state 字段（value/enabled/visible/focused/read_only/selected/toggle/expanded/range）。未知字段、错误布尔值和缺字段在授权/输入前失败。Browser 单独接受 url/text/value（字符串 value）或 checked（布尔 value），不接受桌面验证条件。
+
+UIA 默认 strategy="bounded"；可显式选择 strategy="cached" 两层缓存。缓存必须保留原始树筛选条件并跟踪每层是否确实缓存子节点；较少 provider 往返不保证较短耗时。可用只读脚本测当前窗口，输出仅存进程名、句柄、节点数/摘要、耗时和截断等统计，不保存窗口正文：
+
+```powershell
+uv run python scripts/benchmark_uia.py --inventory
+uv run python scripts/benchmark_uia.py --window 12345 --samples 3 --output reports/uia-benchmark.json
+```
+
+Playwright 的观察改为每个 frame 一次批量取元数据，context.metadata_calls 记录该次数（不代表所有浏览器 RPC）；限制最多 20 个 frame、每 frame 扫描 2000 个候选、整体最多 300 个返回元素。role、可编辑状态和可见性决定动作列表；导航后旧引用仍失效，重复 locator 不执行。任意已扫描 frame 含密码字段或有未扫描 frame 时，省略原始 aria_snapshot。
 
 ### Find + Act：操作真实控件
 
@@ -145,6 +242,7 @@ ssl_keyfile  = "key.pem"
 ip_allowlist = ["192.168.1.0/24"]
 
 [tools]
+profile = "full"                  # 1.5.0：full / ui-core / browser
 exclude = ["PowerShell", "Registry"]
 ```
 

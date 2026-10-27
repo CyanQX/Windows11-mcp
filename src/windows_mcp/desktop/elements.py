@@ -111,6 +111,7 @@ _PATTERN_INTERFACES = {
     PatternId.ScrollItemPattern: "IUIAutomationScrollItemPattern",
     PatternId.ScrollPattern: "IUIAutomationScrollPattern",
     PatternId.WindowPattern: "IUIAutomationWindowPattern",
+    PatternId.TextPattern: "IUIAutomationTextPattern",
 }
 
 # pattern availability property -> short capability name shown to the model
@@ -180,7 +181,7 @@ def _rect_of(raw: Any, cached: bool) -> tuple[int, int, int, int]:
 def get_pattern(raw: Any, pattern_id: int) -> Any | None:
     try:
         unknown = raw.GetCurrentPattern(pattern_id)
-    except (COMError, OSError):
+    except (COMError, OSError, AttributeError):
         return None
     if not unknown:
         return None
@@ -195,34 +196,54 @@ def call_with_timeout(func: Callable[[], Any], timeout: float = 5.0) -> tuple[bo
 
     Some providers only return from Invoke/Toggle/SetValue after the application handled the
     action -- e.g. after a modal dialog it opened is closed again. Running the call on a helper
-    thread keeps the desktop thread responsive. Returns ``(finished, result)``; re-raises errors.
+    thread keeps the desktop thread responsive. A completed call returns ``(True, result)``.
+    A timeout raises ACTION_IN_PROGRESS and blocks further desktop actions until the original
+    call finishes and its owner acknowledges it. The helper cannot safely be force-cancelled.
     """
-    done = threading.Event()
-    box: dict[str, Any] = {}
+    import contextvars
+    from windows_mcp.engine.sessions import get_runtime
+
+    runtime = get_runtime()
+    session = runtime.current()
+    session.check()
+    generation = session.generation
+    action = runtime.pending.begin(session.session_id)
+    context = contextvars.copy_context()
 
     def runner() -> None:
         initialized = False
         try:
             import comtypes
 
-            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
-            initialized = True
-        except OSError:
-            pass
-        try:
-            box["value"] = func()
+            try:
+                comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+                initialized = True
+            except OSError:
+                pass
+            with runtime.pending.executing(action):
+                session.check(generation)
+                from windows_mcp.infrastructure.authorization import check_dispatch
+
+                check_dispatch()
+                value = func()
         except BaseException as exc:  # noqa: BLE001 -- re-raised in the caller
-            box["error"] = exc
+            runtime.pending.completed(action, error=exc)
+        else:
+            runtime.pending.completed(action, value=value)
         finally:
             if initialized:
                 comtypes.CoUninitialize()
-            done.set()
 
-    threading.Thread(target=runner, name="wmcp-pattern-call", daemon=True).start()
-    finished = done.wait(timeout)
-    if finished and "error" in box:
-        raise box["error"]
-    return finished, box.get("value")
+    thread = threading.Thread(target=lambda: context.run(runner), name="wmcp-pattern-call", daemon=True)
+    try:
+        thread.start()
+    except BaseException as exc:
+        runtime.pending.completed(action, error=exc)
+        runtime.pending.finish_wait(action, True)
+        raise
+    finished = action.done.wait(timeout)
+    runtime.pending.finish_wait(action, finished)
+    return True, action.value
 
 
 # --------------------------------------------------------------------------------------------
@@ -424,11 +445,59 @@ def refresh(element: Element) -> Element | None:
         return None
     if name is None:
         return None
-    fresh = element_from_raw(
-        element.raw, cached=False, window_handle=element.window_handle, window_title=element.window_title
-    )
+    # BuildUpdatedCache reads the properties in one provider call when supported.
+    try:
+        raw = element.raw.BuildUpdatedCache(_cache_request())
+        fresh = element_from_raw(raw, cached=True, window_handle=element.window_handle,
+                                 window_title=element.window_title)
+    except (COMError, OSError, AttributeError):
+        fresh = element_from_raw(element.raw, cached=False, window_handle=element.window_handle,
+                                 window_title=element.window_title)
     fresh.ref = element.ref
     return fresh
+
+
+def supported_actions(element: Element) -> list[str]:
+    """Executable action names, separate from provider pattern capability names."""
+    if not element.enabled:
+        return []
+    actions = {"focus"}
+    if element.has_area and not element.offscreen:
+        actions.update({"click", "double_click", "right_click", "hover"})
+    for capability, names in {
+        "invoke": {"click", "invoke"}, "toggle": {"toggle"}, "select": {"select"},
+        "selection": {"select"}, "expand": {"expand", "collapse"},
+        "scroll_into_view": {"scroll_into_view"},
+    }.items():
+        if capability in element.capabilities:
+            actions.update(names)
+    if not element.state.get("read_only"):
+        if "value" in element.capabilities:
+            actions.update({"set_value", "type"})
+        if "range" in element.capabilities:
+            actions.add("set_range")
+    if "text" in element.capabilities and not element.password and element.state.get("text_selection_supported"):
+        actions.add("select_text")
+        if element.state.get("text_read_only") is False and not element.state.get("read_only"):
+            actions.update({"replace_text", "delete_text", "append_text"})
+    return sorted(actions)
+
+
+def describe_text_capabilities(element: Element) -> None:
+    """Probe text selection/editability only for explicit target reads, not every tree node."""
+    if "text" not in element.capabilities or element.password:
+        return
+    pattern = get_pattern(element.raw, PatternId.TextPattern)
+    if pattern is not None:
+        try:
+            from windows_mcp.uia.enums import TextAttributeId
+
+            element.state["text_selection_supported"] = bool(pattern.SupportedTextSelection)
+            readonly = pattern.DocumentRange.GetAttributeValue(TextAttributeId.IsReadOnlyAttribute)
+            if isinstance(readonly, (bool, int)):
+                element.state["text_read_only"] = bool(readonly)
+        except (COMError, OSError, AttributeError):
+            pass  # Availability does not promise selection/editability.
 
 
 # --------------------------------------------------------------------------------------------
@@ -696,19 +765,28 @@ def children_named(container: Element, name: str | None, limit: int = 50) -> lis
 
 
 def walk_bounded(window: TopWindow, *, limit: int, max_depth: int,
-                 include_offscreen: bool = False) -> tuple[list[Element], bool, list[str]]:
+                 include_offscreen: bool = False, root_element: Element | None = None,
+                 strategy: str = "bounded", metrics: dict | None = None) -> tuple[list[Element], bool, list[str]]:
     """Breadth-first cached traversal with an explicit depth, output and time budget."""
     from collections import deque
 
     client = _client()
-    root = client.ElementFromHandle(window.handle)
+    if strategy not in {"bounded", "cached"}:
+        raise ValueError("strategy must be bounded or cached")
+    root = root_element.raw if root_element is not None else client.ElementFromHandle(window.handle)
     cache = _cache_request()
-    queue = deque([(root, 0)])
+    condition = client.CreateTrueCondition()
+    # FindAll above uses the raw view. CacheRequest defaults to ControlView, which
+    # would silently omit raw container descendants in GetCachedChildren.
+    cache.TreeFilter = condition
+    queue = deque([(root, 0, False)])
     found, diagnostics = [], []
     scanned, truncated = 0, False
-    deadline = time.monotonic() + 5.0
+    started = time.monotonic()
+    deadline = started + 5.0
+    provider_calls, cache_hits = 0, 0
     while queue:
-        raw, depth = queue.popleft()
+        raw, depth, has_cached_children = queue.popleft()
         if depth >= max_depth:
             truncated = True
             continue
@@ -717,11 +795,27 @@ def walk_bounded(window: TopWindow, *, limit: int, max_depth: int,
             diagnostics.append("Traversal reached its time/scan budget")
             break
         try:
-            children = raw.FindAllBuildCache(TreeScope.TreeScope_Children, client.CreateTrueCondition(), cache)
+            children = None
+            child_cache_available = False
+            if strategy == "cached" and has_cached_children:
+                try:
+                    children = raw.GetCachedChildren()
+                    cache_hits += 1
+                except (COMError, OSError, AttributeError):
+                    pass  # This level was not included in the previous cache request.
+            if children is None:
+                # Optional two-level cache batching; the default retains the original bound.
+                # Avoid requesting grandchildren beyond the requested depth.
+                cache.TreeScope = (TreeScope.TreeScope_Element | TreeScope.TreeScope_Children
+                                   if strategy == "cached" and depth + 1 < max_depth
+                                   else TreeScope.TreeScope_Element)
+                child_cache_available = strategy == "cached" and depth + 1 < max_depth
+                provider_calls += 1
+                children = raw.FindAllBuildCache(TreeScope.TreeScope_Children, condition, cache)
         except (COMError, OSError) as exc:
             diagnostics.append(f"UIA provider failed: {type(exc).__name__}")
             continue
-        for index in range(children.Length):
+        for index in range(children.Length if children else 0):
             if len(found) >= limit or scanned >= 2000 or time.monotonic() >= deadline:
                 truncated = True
                 break
@@ -730,12 +824,16 @@ def walk_bounded(window: TopWindow, *, limit: int, max_depth: int,
             node = element_from_raw(child, cached=True, window_handle=window.handle, window_title=window.title)
             if include_offscreen or (not node.offscreen and node.has_area):
                 found.append(node)
-            queue.append((child, depth + 1))
+            queue.append((child, depth + 1, child_cache_available))
         if len(found) >= limit:
             truncated = bool(queue) or truncated
             break
     if truncated:
         diagnostics.append("Some descendants were omitted by limit/max_depth; refine the observation scope")
+    if metrics is not None:
+        metrics.update(strategy=strategy, provider_calls=provider_calls, cached_expansions=cache_hits,
+                       scanned=scanned, returned=len(found), truncated=truncated,
+                       elapsed_ms=round((time.monotonic() - started) * 1000, 3))
     return found, truncated, diagnostics[:10]
 
 
@@ -1187,6 +1285,10 @@ ACTIONS = (
     "set_range",
     "focus",
     "scroll_into_view",
+    "select_text",
+    "replace_text",
+    "delete_text",
+    "append_text",
 )
 VIA = ("auto", "input", "uia")
 
@@ -1566,12 +1668,23 @@ def _set_range(element: Element, value: str | None, via: str) -> ActOutcome:
     return ActOutcome("UIA RangeValue.SetValue", ok, f"value now {_fmt(current)}", notes, fresh)
 
 
-def act(desktop: Any, element: Element, action: str, value: str | None = None, via: str = "auto") -> ActOutcome:
+def act(desktop: Any, element: Element, action: str, value: str | None = None, via: str = "auto",
+        *, text=None) -> ActOutcome:
     """Perform ``action`` on the (fresh) ``element`` and verify the result where possible."""
     if action not in ACTIONS:
         raise ValueError(f"action must be one of: {', '.join(ACTIONS)}")
     if via not in VIA:
         raise ValueError(f"via must be one of: {', '.join(VIA)}")
+    from windows_mcp.infrastructure.authorization import check_window_dispatch
+
+    check_window_dispatch(element.window_handle or root_at(*element.center))
+
+    if action in {"select_text", "replace_text", "delete_text", "append_text"}:
+        from windows_mcp.desktop import text_ranges
+
+        return text_ranges.act(desktop, element, action, value, spec=text, via=via)
+    if text is not None:
+        raise ValueError("text range options apply only to text actions")
 
     if action in {"click", "double_click", "right_click", "hover"}:
         return _click_like(desktop, element, action, via)
