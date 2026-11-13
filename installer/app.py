@@ -167,6 +167,17 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "native-helper":
+        # Native capture/probe children need neither the MCP SDK nor its UIA
+        # client. Avoid those imports on each frozen helper's cold start.
+        restore_stdio()
+        parser = argparse.ArgumentParser(prog="native-helper")
+        parser.add_argument("--stream", action="store_true")
+        options = parser.parse_args(sys.argv[2:])
+        from windows_mcp.vision.native_worker import main as worker_main
+
+        worker_main(stream=options.stream)
+        return
     # Frozen windowed 'approve ID' now opens the local human review UI. It never
     # tries to read a hidden terminal confirmation or grants permission itself.
     if len(sys.argv) > 2 and sys.argv[1] == "approve" and getattr(sys, "frozen", False):

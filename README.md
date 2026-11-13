@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Windows-MCP 1.6.0</h1>
+  <h1>Windows-MCP 1.6.1</h1>
   <p>让已连接的 AI 观察、操作并核对真实 Windows 应用</p>
 </div>
 
@@ -14,7 +14,7 @@
 
 Windows-MCP 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude Code、Codex 桌面端、DeepSeek Harness、Gemini CLI、Zcode 或 Trae 后，AI 可以读取真实窗口和控件、操作应用和网页，并通过状态或文件结果核对任务。模型与 AI 客户端由你选择，本项目不提供模型账号或云端算力。
 
-**本次发布：v1.6.0，文档更新于 2026-11-14。** 整合第四至第六批统一真实输入、自然移动、动态控件跟随、人工接管、视觉落点复核和捕获进程复用。安装包在发布流水线完成后提供；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
+**本次发布：v1.6.1，文档更新于 2026-11-14。** 整合第四至第六批统一真实输入、自然移动、动态控件跟随、人工接管、视觉落点复核和捕获进程复用。1.6.1 同步修复导出路径数据流、发布校验及辅助进程启动，并增加安装包内的常驻协议验收。安装包在发布流水线完成后提供；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
 
 | 组成 | 负责什么 |
 |---|---|
@@ -168,12 +168,12 @@ OCR 实际识别尚未在当前验收机通过：该机无包标识、无 Tesser
 
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.0/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.6.0；请在发布页核对所下载资产的版本。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.1/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.6.1；请在发布页核对所下载资产的版本。
 
 | 格式 | 文件与使用方法 | 数据位置 |
 |---|---|---|
-| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.0/Windows-MCP-Setup-v1.6.0-x64.exe) | `Windows-MCP-Setup-v1.6.0-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.0/Windows-MCP-Portable-v1.6.0-x64.zip) | `Windows-MCP-Portable-v1.6.0-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
+| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.1/Windows-MCP-Setup-v1.6.1-x64.exe) | `Windows-MCP-Setup-v1.6.1-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.1/Windows-MCP-Portable-v1.6.1-x64.zip) | `Windows-MCP-Portable-v1.6.1-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
 
 安装版默认路径为 `%LOCALAPPDATA%\Programs\Windows-MCP`，按用户安装，无需管理员权限；系统卸载入口位于 Windows“设置 → 应用”。**卸载管理器会保留已接入的 Skill/MCP 和个人数据，对应接入须在管理器中单独卸载。**
 

@@ -31,6 +31,16 @@ def main():
             native = stdio.get("native_components") or {}
             assert native.get("wgc", {}).get("available"), "Frozen WGC dependency was not detected"
             assert native.get("windows_ocr", {}).get("dependencies_installed"), "Frozen WinRT OCR bindings were not detected"
+            # Exercise the exact hidden streaming command in the shipped EXE, rather
+            # than assuming that source-only protocol tests cover the bootloader.
+            messages = "".join(json.dumps({"id": i, "request": {"operation": "probe"}}) + "\n" for i in (1, 2))
+            streamed = subprocess.run([str(executable), "native-helper", "--stream"], input=messages,
+                check=True, timeout=45, capture_output=True, text=True, encoding="utf-8",
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            responses = [json.loads(line) for line in streamed.stdout.splitlines()]
+            assert [item["id"] for item in responses] == [1, 2]
+            assert all(not item.get("error") and item["result"]["wgc"]["available"] for item in responses)
+            stdio["native_stream_two_requests"] = True
     result = {"version": json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))["version"], "executable": executable.name, "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "size_bytes": executable.stat().st_size, "client_installation": integration, "stdio": stdio}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

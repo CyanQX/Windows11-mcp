@@ -964,8 +964,13 @@ def manifest_command(profile: str, output: str) -> None:
     base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2])) / "manifest.json"
     base = json.loads(base_path.read_text(encoding="utf-8")) if base_path.exists() else {"manifest_version": "0.4"}
     result = asyncio.run(export_manifest(base, profile))
-    Path(output).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    click.echo(f"Generated {profile} manifest: {output}")
+    # The local CLI explicitly chooses the destination. Manifest fields are JSON
+    # data only and must never participate in selecting a filesystem path.
+    destination = Path(output).expanduser().resolve()
+    with destination.open("w", encoding="utf-8", newline="\n") as stream:
+        json.dump(result, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+    click.echo(f"Generated {profile} manifest: {destination}")
 
 
 @main.command("native-helper", hidden=True)

@@ -21,3 +21,7 @@ def test_release_catalog_ignores_profile_and_other_tables():
 def test_release_requires_an_explicit_tool_catalog():
     with pytest.raises(AssertionError, match="catalog is missing"):
         documented_tools("| `full` | 31 |")
+
+
+def test_release_catalog_can_end_at_eof_without_trailing_newline():
+    assert documented_tools("## 工具一览\n| `Observe` | Controls |") == {"Observe"}

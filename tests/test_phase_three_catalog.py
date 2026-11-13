@@ -12,6 +12,24 @@ from windows_mcp.infrastructure.config import WindowsMCPConfig, load_config, wri
 from windows_mcp.infrastructure.profiles import PROFILES, select_tools
 
 
+def test_manifest_content_cannot_choose_the_output_path(tmp_path, monkeypatch):
+    from windows_mcp import __main__ as cli
+    from windows_mcp.infrastructure import catalog
+
+    payload = {"path": "../must-not-be-written.json", "nested": {"output": str(tmp_path.parent / "escaped.json")}}
+
+    async def export(base, profile):
+        return payload
+
+    monkeypatch.setattr(catalog, "export_manifest", export)
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli.main, ["manifest", "--output", "chosen.json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads((tmp_path / "chosen.json").read_text(encoding="utf-8")) == payload
+    assert not (tmp_path.parent / "must-not-be-written.json").exists()
+    assert not (tmp_path.parent / "escaped.json").exists()
+
+
 @pytest.mark.parametrize("profile", ["full", "ui-core", "browser"])
 async def test_catalog_contains_complete_schema_and_matches_its_profile(profile):
     manifest = await export_manifest({"manifest_version": "0.4"}, profile)

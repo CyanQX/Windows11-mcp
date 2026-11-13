@@ -17,10 +17,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def documented_tools(readme: str) -> set[str]:
-    section = re.search(r"^## 工具一览\n(.*?)(?=^## |\Z)", readme, re.M | re.S)
-    if section is None:
+    heading = re.search(r"^## 工具一览\n", readme, re.M)
+    if heading is None:
         raise AssertionError("README tool catalog is missing")
-    return set(re.findall(r"^\| `([A-Za-z]+)` \|", section.group(1), flags=re.M))
+    body = readme[heading.end():]
+    following = re.search(r"^## ", body, re.M)
+    if following is not None:
+        body = body[:following.start()]
+    return set(re.findall(r"^\| `([A-Za-z]+)` \|", body, flags=re.M))
 
 
 def verify(dist: Path, tag: str | None = None) -> dict:
