@@ -172,6 +172,29 @@ class ApprovalStore:
                 continue
         return sorted(rows, key=lambda row: row["expires_at"])
 
+    def dismiss_automatic(self) -> int:
+        """Retire stale sheets covered by a newly saved local automatic preference.
+
+        No one-use approval is minted; future calls must still pass the live policy.
+        """
+        from windows_mcp.infrastructure.trust import TrustStore
+
+        trust = TrustStore(self.directory)
+        if not trust.automatic():
+            return 0
+        count = 0
+        with self._exclusive():
+            for row in self.pending():
+                if row["tool"] not in trust.automatic_tools() and not row.get("network_origins"):
+                    continue
+                path = self._path(row["request_id"])
+                try:
+                    os.rename(path, path.with_suffix(".automatic"))
+                    count += 1
+                except FileNotFoundError:
+                    pass
+        return count
+
     def operator_arguments(self, request_id: str) -> dict | None:
         payload = self.read(request_id)
         if not payload.get("operator_details") or os.name != "nt":
@@ -212,7 +235,14 @@ class ApprovalStore:
 
     def prune(self) -> None:
         for path in self.directory.glob("*"):
-            if path.suffix in {".json", ".used", ".tmp", ".rejected"} and time.time() - path.stat().st_mtime > self.ttl * 2:
-                path.unlink(missing_ok=True)
-        if len(list(self.directory.glob("*.json"))) >= 128:
+            # This directory also holds persistent trust, network grants and the
+            # shared authority. Only exact request filenames belong to this TTL.
+            if not re.fullmatch(r"[a-f0-9]{32}(?:\.[a-f0-9]{16})?", path.stem):
+                continue
+            try:
+                if path.suffix in {".json", ".used", ".tmp", ".rejected", ".automatic"} and time.time() - path.stat().st_mtime > self.ttl * 2:
+                    path.unlink(missing_ok=True)
+            except FileNotFoundError:
+                pass  # Another process may have consumed/retired this request.
+        if sum(bool(re.fullmatch(r"[a-f0-9]{32}", path.stem)) for path in self.directory.glob("*.json")) >= 128:
             raise RuntimeError("Too many pending approvals; let existing requests expire")

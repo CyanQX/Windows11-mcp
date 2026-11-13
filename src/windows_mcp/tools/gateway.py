@@ -80,7 +80,7 @@ class ToolGateway:
                         if name != "Session":
                             state.check(generation)
                         risk = self.runtime.policy.authorize(state.session_id, name, arguments, bound.arguments.get("approval_token"), scope=scope)
-                        trusted = risk == 2 and self.runtime.policy.trusted(state.session_id, name, arguments, scope)
+                        trusted = risk >= 2 and self.runtime.policy.trusted(state.session_id, name, arguments, scope)
                         authorization = DispatchAuthorization(self.runtime.policy, state.session_id, name, arguments, scope, risk, trusted, generation)
                         with bind_dispatch(authorization if name in DESKTOP_TOOLS | {"NativeAPI", "FileSystem", "Browser", "PowerShell", "Registry", "Process", "Clipboard", "Notification"} else None), bind_motion(self.runtime.motion):
                             result = await func(**bound.arguments)

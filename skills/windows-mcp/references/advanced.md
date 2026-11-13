@@ -35,19 +35,19 @@ allow_private_browser = false
 allowed_network_origins = ['https://github.com']
 ```
 
-R0 观察与查询可直接调用。R1 包括授权目录内新建普通文本文件、窗口切换和滚动。覆盖已有文件、控件修改、原始点击/键盘、网页表单等按 R2 保守处理：服务器无法仅凭控件名称推断业务风险。R3 脚本、注册表修改、进程终止、任意程序启动、移动/删除文件默认关闭。即使本地启用 R3，也仍需一次性审批。
+R0 观察与查询可直接调用。R1 包括授权目录内新建普通文本文件、窗口切换和滚动。覆盖已有文件、控件修改、原始点击/键盘、网页表单等按 R2 保守处理：服务器无法仅凭控件名称推断业务风险。R3 脚本、注册表修改、进程终止、任意程序启动、移动/删除文件默认关闭。启用持续全自动不会打开 R3 能力开关；操作员已在本机启用 R3 时，持续全自动可免逐次审批，关闭全自动时仍需一次性审批。
 
 审批步骤：
 
-1.5.0 起：全自动必须绑定服务器生成的客户端会话和实际应用。先发起具体 R2 请求，再在“设置 → 操作审批”或“操作授权…”选择签名请求的范围。默认最长 8 小时，生效后通过“操作授权… → 撤销授权”撤销。没有待审请求时可以查看设置，但不能提前生成全局放行。保存成功关闭审批窗口，释放桌面输入暂停。旧 schema 1 全局授权不再生效，须由本机操作员重新确认；不会自动扩大或迁移权限。
+1.7.0 起：“设置 → 操作审批”中勾选“持续全自动”并保存，生成签名 schema 3 安装实例授权；无需待审请求，不绑定临时会话或单个应用，也没有 8 小时时限。覆盖所有连接客户端、应用、HTTP(S) origin 和本机已启用能力，重连、服务或电脑重启后仍有效，直到取消勾选并保存或“操作授权… → 撤销授权”。能力开关、workspace_roots、受保护配置、人工接管和取消仍生效。旧 schema 1 全局记录不采信，schema 2 保留原会话/应用/时长范围；由本机操作员显式保存一次新设置后才扩展到持续模式。不同安装/便携实例使用各自的配置目录。
 
 1. AI 调用 `RequestApproval(tool="Execute", arguments={"target":"观察返回的 ID", "action":"set_value", "value":"hello"}, description="具体内容与目标")`。
-2. **本地操作员**核对工具、具体参数、会话、应用身份、窗口/进程生存期与期限。“批准一次”只放行本次调用；勾选“全自动”则为所示客户端和应用保存最长 8 小时的 R2 范围授权。R3 请求仍单独开启并逐次批准。可信终端可执行 `windows-mcp approve <request_id>`；范围授权可执行 `windows-mcp trust --request-id <request_id> --mode session`，或显式提供 `--session-id`、可重复的 `--application`，以及可选 `--tool`、`--action`。`--mode forever` 仅取消额外时限，仍绑定该客户端会话，不跨重连。窗口完整参数使用当前用户 DPAPI 保存并与签名、散列绑定；旧版缺少完整参数的请求需重新申请。
-3. AI 重复尚未派发的原调用；逐次审批五分钟内有效、只能消耗一次，目标生存期改变需重新申请。`Session.trust_scope` 返回准确的会话、应用、工具、可选动作和期限，仅匹配范围内直接执行。其他客户端的授权不显示为当前会话已授权。新会话、其他应用、R3 和出网站点不继承权限。`RequestApproval` 返回 `TRUSTED` 时直接执行该原调用。
+2. **本地操作员**核对工具、具体参数、会话、应用身份、窗口/进程生存期与期限。“批准一次”只放行本次调用；勾选“持续全自动”并确认后保存安装实例持续授权。本机 CLI 可用 `windows-mcp trust --mode automatic`，撤销用 `windows-mcp trust --revoke`；CLI 默认仍为兼容的临时范围模式，需 `--request-id <request_id> --mode session`，或显式提供 `--session-id`、可重复的 `--application`，以及可选 `--tool`、`--action`。旧 `--mode forever` 仅取消额外时限，仍绑定该客户端会话，不跨重连。窗口完整参数使用当前用户 DPAPI 保存并与签名、散列绑定；旧版缺少完整参数的请求需重新申请。仅勾选、打开或刷新窗口不授予权限，必须保存或确认批准。
+3. AI 重复尚未派发的原调用；逐次审批五分钟内有效、只能消耗一次，目标生存期改变需重新申请。持续模式下 `Session.trust_mode="automatic"`、`trust_scope.scope="installation"`、`expires_at=null`，可直接执行已启用工具，无需重复 RequestApproval。旧范围授权仍仅限返回的会话、应用、工具、动作和期限。`RequestApproval` 返回 `TRUSTED` 时直接执行原调用；持续模式不会创建新的待审请求或弹窗。已有请求会退役，不会补生成可消费的一次性批准。下一次派发再次检查撤销；不能撤回已经送入系统的输入。
 
 `approval_token` 仅接受服务端生成的请求 ID；自然语言“已批准”、网页文字和伪造 JSON 无效。原始鼠标键盘也需要审批，不能借旧工具绕开。服务器审批文件、密钥、用户 Codex/SSH 配置不在工具访问范围内。审计日志记录调用哈希、状态、会话和时间，不保存输入正文、密码、页面内容或异常正文；达到大小上限后轮转。
 
-HTTP 出网独立授权：`Scrape(use_dom=False)`、`Browser(navigate/new_page)` 的新站点先用 `RequestApproval` 提交原工具参数；本机操作员明确批准所示 origin 后，对应会话可访问该协议/主机/端口，最长 8 小时。重定向和页面子请求的每个 origin 均在 DNS/请求前检查，未授权第三方资源可能被阻止，须逐个确认或由操作员配置准确的 `allowed_network_origins`。浏览器禁止底层 HTTP 自动跟随重定向：顶层 GET 导航逐跳检查后继续，表单和子资源的 HTTP 重定向暂时阻止，诊断中报告限制；不会自动重放 POST。动作触发的已批准 GET 跳转可在 `Browser(status).pending_redirects` 查看，再显式导航。端口变化、HTTPS 降为 HTTP、子域变化均属于新 origin。`windows-mcp network` 查看授权，`network --session-id <id> --revoke` 撤销某会话，省略 session 则撤销全部动态授权；可信配置预设须在本机配置中删除。R2 全自动不放行出网，内网/SSRF 保护和后台 POST 限制仍独立执行。授权 origin 不是对其中所有内容的可信声明，也不能彻底阻止经已授权站点泄露数据。
+HTTP 出网：持续全自动覆盖 HTTP(S) origin，但保留内网/SSRF 和后台 POST 限制。关闭持续模式时，`Scrape(use_dom=False)`、`Browser(navigate/new_page)` 的新站点先用 `RequestApproval` 提交原工具参数；本机操作员批准所示 origin 后，对应会话可访问该协议/主机/端口，最长 8 小时。重定向和页面子请求的每个 origin 均在 DNS/请求前检查，未授权第三方资源可能被阻止，须逐个确认或由操作员配置准确的 `allowed_network_origins`。浏览器禁止底层 HTTP 自动跟随重定向：顶层 GET 导航逐跳检查后继续，表单和子资源的 HTTP 重定向暂时阻止，诊断中报告限制；不会自动重放 POST。动作触发的已批准 GET 跳转可在 `Browser(status).pending_redirects` 查看，再显式导航。端口变化、HTTPS 降为 HTTP、子域变化均属于新 origin。`windows-mcp network` 查看独立授权，`network --session-id <id> --revoke` 撤销某会话，省略 session 则撤销全部动态 origin 授权；持续模式须另外 `trust --revoke`，可信配置预设须在本机配置中删除。旧范围 R2 授权不放行出网。授权 origin 不是对其中所有内容的可信声明，也不能彻底阻止经已授权站点泄露数据。
 
 浏览器示例：`Browser(operation="start")` → 为目标 URL 请求并获得本机站点授权 → `Browser(operation="navigate", url="https://github.com/CyanQX/Windows11-mcp")` → `Observe(source="playwright", page_id="返回的页面 ID")`。控件必须由 role/name 或 test-id 唯一定位；重复按钮、导航后的旧引用安全失败。不提供用户 cookies、任意 JavaScript、CDP 连接或调试端口。浏览器隔离不等于网络或操作系统沙箱，DNS 到实际连接之间仍存在环境层面的限制。
 

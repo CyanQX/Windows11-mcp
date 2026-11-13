@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Windows-MCP 1.6.1</h1>
+  <h1>Windows-MCP 1.7.0</h1>
   <p>让已连接的 AI 观察、操作并核对真实 Windows 应用</p>
 </div>
 
@@ -14,7 +14,7 @@
 
 Windows-MCP 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude Code、Codex 桌面端、DeepSeek Harness、Gemini CLI、Zcode 或 Trae 后，AI 可以读取真实窗口和控件、操作应用和网页，并通过状态或文件结果核对任务。模型与 AI 客户端由你选择，本项目不提供模型账号或云端算力。
 
-**本次发布：v1.6.1，文档更新于 2026-11-14。** 整合第四至第六批统一真实输入、自然移动、动态控件跟随、人工接管、视觉落点复核和捕获进程复用。1.6.1 同步修复导出路径数据流、发布校验及辅助进程启动，并增加安装包内的常驻协议验收。安装包在发布流水线完成后提供；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
+**本次发布：v1.7.0，文档更新于 2026-11-14。** 修复全自动仍反复审批的问题，新增保存后持续生效的安装实例授权：跨客户端重连、应用切换和重启，直到手动关闭。空审批页面不再暂停操作，已启用能力和 HTTP(S) 出网免逐次审批，能力开关与文件范围继续有效。保留第四至第六批自然鼠标、动态目标、视觉复核和捕获复用，以及 1.6.1 的 CI 与辅助进程修复。安装包在发布流水线完成后提供；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
 
 | 组成 | 负责什么 |
 |---|---|
@@ -94,7 +94,7 @@ human_takeover = true
 | 升级方向 | 现在可以做什么 | 使用时的边界 |
 |---|---|---|
 | 等待与超时 | Wait 异步等待 1–60 秒，支持取消；WaitFor 在查询间释放桌面线程；跟踪超时后仍执行的 UIA 动作 | 超时不代表动作撤回；未决动作完成后须独立核对，再由原会话 acknowledge |
-| 文件与授权 | 原子覆盖文本文件；全自动绑定会话、应用、工具及期限；物理输入和 UIA 统一派发检查 | 旧版全局全自动授权须重新确认；R3 单独启用并逐次审批；出网独立授权 |
+| 文件与授权 | 原子覆盖文本文件；物理输入和 UIA 统一派发检查；保留旧会话范围授权 | 1.7.0 的持续全自动见下方授权说明；文件范围和本机能力开关仍有效 |
 | 文本范围 | 读取 TextPattern 文本/选区，按准确文本及 occurrence 或 unit/index/count 选择、替换、删除、追加 | 依控件能力；密码、只读、不支持 TextPattern 的控件明确拒绝；局部编辑先核对选区和原文，再读回 |
 | 观察与性能 | 控件子树观察、已有目标批量刷新、事件触发 Watch、每个 frame 批量浏览器元数据 | 已有目标刷新不检查新增/移除控件；事件仅唤醒回读；UIA 缓存策略需按应用测量 |
 | 窗口视觉 | HWND WGC、PrintWindow 与前台桌面裁剪；ROI、缩小图片、变化比较和未变图片省略 | 后台可观察不等于后台可点击；最小化、受保护画面和特殊 provider 不保证可用 |
@@ -137,17 +137,19 @@ profile 只决定公布哪些工具，不授予额外权限。精简 profile 的
 
 ### 操作授权与升级迁移
 
-**从 1.4.x 升级后，旧的全局全自动授权不会继续放行。** 先发起具体待审请求，再由本机操作员核对客户端会话、应用、工具、参数和期限。勾选“全自动”并批准，为所示范围开启默认最长 8 小时的自动 R2 授权；重连生成新会话后须重新授权。通过“操作授权… → 撤销授权”撤销，AI 不能操作自己的审批窗口。
+**1.7.0 新增持续全自动：勾选并保存后一直生效，直到手动关闭。** 打开管理器“设置 → 操作审批”，勾选“持续全自动”并点击“保存默认审批”，无需先生成待审请求。覆盖本机此安装实例的所有连接客户端、应用及 HTTP(S) 出网；切换应用、客户端重连、服务或电脑重启都不要求重新点击，也没有 8 小时上限。当前已启用的高风险能力同样免逐次审批；未启用能力和文件范围继续由本机配置限制。
+
+关闭时取消勾选并保存，或使用“操作授权… → 撤销授权”；下一次派发会重新检查，不会等到重启才生效。勾选但未保存、仅打开页面或定时刷新不会改变实际授权。旧版 8 小时/会话范围授权不会自行扩大，升级后由本机操作员保存一次新设置即可；安装版与不同便携实例使用各自的配置目录，不共享授权。`Session(operation="status")` 返回 `trust_mode="automatic"`、`trust_scope.scope="installation"`、`expires_at=null` 时可核对实际生效。CLI 可在本机使用 `windows-mcp trust --mode automatic`，撤销用 `windows-mcp trust --revoke`。
 
 | 范围 | 行为 |
 |---|---|
 | 窗口与控件读取 | 按服务策略执行；读取结果可能包含截图和应用文本，应只连接信任的客户端 |
-| R2 修改 | 精确一次性审批，或匹配会话/应用/工具的全自动授权 |
-| R3 高风险工具及敏感目标 | 默认关闭；本地启用后仍逐次审批，不能借原始输入或 UIA 绕开 |
-| HTTP(S) 出网 | 按准确 origin（协议、主机、端口）独立授权，全自动鼠标键盘授权不包含网络权限 |
+| R2 修改 | 持续全自动开启后直接执行；否则精确一次性审批或匹配旧范围授权 |
+| R3 高风险工具及敏感目标 | 默认关闭；本机启用后，持续全自动可免逐次审批；关闭全自动时仍逐次审批 |
+| HTTP(S) 出网 | 持续全自动覆盖 HTTP(S) origin；关闭时按协议、主机、端口独立授权 |
 | 文件 | 受可信配置的 workspace_roots 限制，服务密钥和受保护配置不在工具访问范围内 |
 
-浏览器导航、重定向和子资源均检查 origin；顶层 GET 可逐跳检查后继续，表单和子资源的 HTTP 重定向当前会被阻止。审批窗口打开期间暂停 MCP 桌面输入。已进入 UIA provider 的动作无法由 Python 强制取消；`ACTION_IN_PROGRESS` 后用 Session 查询完成，独立核对后再 acknowledge，cancel/resume 不隐式清除未决动作。
+浏览器导航、重定向和子资源均检查网络策略；内网/SSRF 保护保留，顶层 GET 可逐跳检查后继续，表单和子资源的 HTTP 重定向当前会被阻止。真正有待决定的人工审批才暂停 MCP 桌面输入，空页面或已被持续全自动覆盖的旧请求不会暂停；审批设置本身及所属弹窗始终禁止 MCP 操作。已进入 UIA provider 的动作无法由 Python 强制取消；`ACTION_IN_PROGRESS` 后用 Session 查询完成，独立核对后再 acknowledge，cancel/resume 不隐式清除未决动作。
 
 这些措施降低本机自动化风险，不构成操作系统沙箱；普通权限无法绕过 UAC、安全桌面、锁屏或管理员窗口边界。默认关闭 PostHog 遥测。完整处理规则与离线政策见管理器“关于”和 [按需参考](skills/windows-mcp/references/advanced.md)。
 
@@ -168,12 +170,12 @@ OCR 实际识别尚未在当前验收机通过：该机无包标识、无 Tesser
 
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.1/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.6.1；请在发布页核对所下载资产的版本。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.7.0/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.7.0；请在发布页核对所下载资产的版本。
 
 | 格式 | 文件与使用方法 | 数据位置 |
 |---|---|---|
-| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.1/Windows-MCP-Setup-v1.6.1-x64.exe) | `Windows-MCP-Setup-v1.6.1-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.1/Windows-MCP-Portable-v1.6.1-x64.zip) | `Windows-MCP-Portable-v1.6.1-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
+| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.7.0/Windows-MCP-Setup-v1.7.0-x64.exe) | `Windows-MCP-Setup-v1.7.0-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.7.0/Windows-MCP-Portable-v1.7.0-x64.zip) | `Windows-MCP-Portable-v1.7.0-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
 
 安装版默认路径为 `%LOCALAPPDATA%\Programs\Windows-MCP`，按用户安装，无需管理员权限；系统卸载入口位于 Windows“设置 → 应用”。**卸载管理器会保留已接入的 Skill/MCP 和个人数据，对应接入须在管理器中单独卸载。**
 
@@ -261,7 +263,7 @@ allowed_network_origins = ['https://github.com']
 | 现象 | 检查和处理 |
 |---|---|
 | 安装后客户端没有工具 | 重启客户端/新会话；管理器验证接入版本与 READY；确认客户端实际读取的用户配置 |
-| 升级后需要重新授权 | 1.5.0 的会话/应用范围授权迁移是预期行为；核对当前待审请求后重新批准 |
+| 已勾选仍反复弹审批 | 更新到 1.7.0 后，在设置中勾选“持续全自动”并保存一次，确认 Session 的 automatic/installation 状态；旧 EXE 和旧范围授权仍有会话/时限约束 |
 | 返回 TARGET_STALE / FOCUS_MISMATCH | 重新观察准确窗口；确认前台、窗口位置、进程及控件仍对应目标，避免重放旧坐标 |
 | 返回 ACTION_IN_PROGRESS | 先查询 Session.pending_action，等待完成并独立核对，再由原会话 acknowledge |
 | 网页子资源或跳转被拒绝 | 核对实际 origin 与独立网络授权；表单/子资源 HTTP 重定向目前受限，不自动重放 POST |

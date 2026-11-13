@@ -87,10 +87,14 @@ class PolicyGate:
 
     def check_network(self, session_id: str, url: str) -> None:
         target = origin(url)  # Check permission before DNS to avoid leaking data via hostnames.
+        if self.trust is not None and self.trust.allows_network():
+            return
         if target not in self.allowed_network_origins and not self.network.allows(session_id, url):
             raise PolicyBlocked(f"Network origin {target} is not authorized for this session; request local operator approval")
 
     def trusted(self, session_id: str, tool: str, args: dict, scope: dict) -> bool:
+        if self.trust is not None and self.trust.automatic():
+            return self.trust.allows(session_id, scope.get("application"), tool, action_name(tool, args))
         applications = scope_applications(scope)
         return (bool(applications) and self.trust is not None
                 and all(self.trust.allows(session_id, app, tool, action_name(tool, args)) for app in applications))
@@ -169,7 +173,7 @@ class PolicyGate:
                 raise PolicyBlocked("The local human approval window is open; MCP input is paused until the operator decides and closes it")
         if risk == 3 and not self.allow_r3:
             raise PolicyBlocked("R3 tools are disabled; an operator must enable policy.allow_r3 locally")
-        trusted = risk == 2 and self.trusted(session_id, tool, args, scope or {})
+        trusted = risk >= 2 and self.trusted(session_id, tool, args, scope or {})
         if risk >= 2 and not trusted and not self.approvals.consume(session_id, tool, args, approval_id, authorization_scope=scope):
             raise PolicyBlocked(f"R{risk} requires a one-use local operator approval. Call RequestApproval with this exact tool and arguments")
         return risk

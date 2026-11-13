@@ -107,16 +107,20 @@ Work in a loop: OBSERVE -> ACT -> VERIFY (plan the expected result before acting
 Safety: keyboard input is only sent after the target window is confirmed in the
 foreground; if focus is lost the tool refuses instead of typing into the wrong window.
 Every tool is enforced by the server PolicyGate, including raw input and old tools.
-Check Session(operation="status"): trust_scope names the exact client session, application
-identities, tools, actions and expiry authorized for automatic R2 execution. Call matching
-action tools directly; other applications or sessions still require approval.
+Check Session(operation="status"): trust_mode="automatic" and trust_scope.scope="installation"
+mean the local operator enabled persistent automatic execution for all connected clients,
+applications and HTTP(S) origins until manually disabled. Reconnects and restarts do not
+expire it. Call permitted tools directly; do not ask for repeated approval. Configured
+capability switches, workspace/protected paths and cancellation still apply. Legacy scoped
+grants only authorize their stated session, application, tools, actions and expiry.
 Otherwise use RequestApproval for an exact tool/argument call; only the local human can
-approve it. In the review UI, checking 全自动 and approving authorizes matching R2 actions
-for that client/application for up to eight hours; leaving it unchecked approves this call.
+approve it. Checking 持续全自动 and saving/approving enables the persistent installation
+preference; leaving it unchecked approves just this call. Never automate that settings UI.
 One-use approvals expire and bind to the target window/process lifetime as well as this session.
 If RequestApproval returns TRUSTED, execute the original action directly.
-HTTP origins require separate local authorization even for read-only Scrape and browser
-navigation. Redirects and subresources are checked too. R2 trust never grants network access.
+Without persistent automatic mode, HTTP origins require separate local authorization even
+for read-only Scrape and browser navigation; redirects and subresources are checked too.
+Legacy scoped R2 trust does not grant network access. Private-network protections remain.
 ACTION_IN_PROGRESS means a UIA helper may still execute after timeout. Inspect Session.pending_action,
 wait for COMPLETED, independently verify the result, then Session(operation="acknowledge",action_id=...).
 Cancellation/resume does not terminate or acknowledge that pending action. Never replay it blindly.
@@ -1003,7 +1007,7 @@ def approve(request_id: str, yes: bool) -> None:
 
 
 @main.command()
-@click.option("--mode", type=click.Choice(["session", "forever"]), default="session", show_default=True, help="8-hour limit, or no extra time limit within this exact client session.")
+@click.option("--mode", type=click.Choice(["session", "forever", "automatic"]), default="session", show_default=True, help="Scoped temporary/session grant, or persistent installation-wide automatic execution until revoked.")
 @click.option("--session-id", help="Server-issued client session id displayed by Session or a pending request.")
 @click.option("--application", multiple=True, help="Exact application identity from a signed pending request (repeatable).")
 @click.option("--tool", "tools", multiple=True, help="Allowed R2 tool names (repeatable); defaults to the selected application's tool family.")
@@ -1023,6 +1027,18 @@ def trust(mode: str, session_id: str | None, application: tuple[str, ...], tools
                 click.confirm("Revoke the local full-authorization grant?", abort=True)
             store.revoke()
             click.echo("Revoked. Every protected action asks for approval again.")
+            return
+        if mode == "automatic":
+            if session_id or application or tools or actions or request_id:
+                raise ValueError("Automatic mode covers this installation; do not combine it with legacy scoped options")
+            click.echo("Persistent automatic mode: all connected clients/applications and HTTP(S) origins; configured capability switches and file scopes still apply.")
+            if not yes:
+                click.confirm("Enable until explicitly revoked, including locally enabled high-risk capabilities?", abort=True)
+            store.grant_automatic(operator="cli")
+            from windows_mcp.infrastructure.approvals import ApprovalStore
+
+            ApprovalStore(store.directory).dismiss_automatic()
+            click.echo("Persistent automatic authorization saved. Reconnects/restarts do not expire it. Revoke with trust --revoke.")
             return
         if request_id:
             from windows_mcp.infrastructure.approvals import ApprovalStore

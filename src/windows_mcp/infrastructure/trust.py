@@ -1,14 +1,14 @@
-"""Operator-minted trust bound to one client session, applications, tools and actions.
+"""Operator-minted persistent installation preference and legacy scoped grants.
 
-Only the local manager (or the ``windows-mcp trust`` CLI) can mint a scoped grant. The
+Only the local manager (or the ``windows-mcp trust`` CLI) can mint a grant. The
 record is HMAC-signed with the approval authority key and stored beside the
 approvals, outside the tool-accessible workspace, so no MCP tool can create,
 extend or tamper with it. Revoking the grant restores per-call approvals.
 
-Legacy unscoped grants are ignored and need local confirmation of the new scope.
-Trust never widens the R3 boundary: PowerShell, Registry writes, Process kills
-and similar R3 tools stay disabled unless the operator enables ``policy.allow_r3``
-in the local server configuration.
+Schema 3 explicitly enables installation-wide automatic execution until revoked;
+schema 2 retains its exact session/application/tool/action scope and lifetime.
+Unsigned or schema 1 global records do not enable either mode. Trust never enables
+disabled capabilities: R3 tools still require local ``policy.allow_r3`` configuration.
 """
 
 from __future__ import annotations
@@ -44,7 +44,15 @@ class TrustStore:
     def status(self) -> dict | None:
         """Return the verified, unexpired grant payload, or ``None``."""
         payload = read_signed_record(self.directory, self.path)
-        if not isinstance(payload, dict) or payload.get("schema") != 2:
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("schema") == 3:
+            if (payload.get("mode") != "automatic" or payload.get("scope") != "installation"
+                    or payload.get("expires_at") is not None or payload.get("max_risk") != 3
+                    or payload.get("network") is not True or payload.get("tools") != ["*"]):
+                return None
+            return payload
+        if payload.get("schema") != 2:
             return None
         if not isinstance(payload.get("session_id"), str) or not payload["session_id"] or not payload.get("applications") or not payload.get("tools"):
             return None
@@ -57,6 +65,42 @@ class TrustStore:
             return None
         return payload
 
+    @staticmethod
+    def automatic_tools() -> list[str]:
+        from windows_mcp.infrastructure.authorization import TRUST_TOOLS
+
+        return sorted(TRUST_TOOLS | {"PowerShell", "Registry", "Process"})
+
+    def automatic(self) -> bool:
+        payload = self.status()
+        return bool(payload and payload.get("schema") == 3)
+
+    def allows_network(self) -> bool:
+        return self.automatic()
+
+    def grant_automatic(self, *, operator: str = "local-ui") -> dict:
+        """Local operator preference; configured capability/path limits still apply.
+
+        Distinct from legacy scoped grants: no session id, application lifetime or
+        eight-hour expiry is used. Only explicit local UI/CLI activation mints it.
+        """
+        payload = {"schema": 3, "mode": "automatic", "scope": "installation",
+            "granted_at": time.time(), "expires_at": None, "operator": operator,
+            "session_id": None, "applications": ["*"], "tools": ["*"],
+            "actions": [], "max_risk": 3, "network": True}
+        self._save(payload)
+        return payload
+
+    def _save(self, payload):
+        with self._exclusive():
+            temporary = self.path.with_suffix(f".{secrets.token_hex(8)}.tmp")
+            try:
+                with temporary.open("w", encoding="utf-8") as stream:
+                    json.dump(sign_record(self.directory, payload), stream, ensure_ascii=False)
+                os.replace(temporary, self.path)
+            finally:
+                temporary.unlink(missing_ok=True)
+
     def allows(self, session_id: str | None = None, application: str | None = None,
                tool: str | None = None, action: str | None = None) -> bool:
         payload = self.status()
@@ -64,6 +108,8 @@ class TrustStore:
             return False
         if session_id is None:
             return True  # Local UI status only; authorization always supplies all scopes.
+        if payload.get("schema") == 3:
+            return bool(session_id) and tool in self.automatic_tools()
         return (payload.get("schema") == 2 and payload.get("session_id") == session_id
                 and application is not None and application.casefold() in payload.get("applications", [])
                 and tool in payload.get("tools", [])
@@ -96,11 +142,7 @@ class TrustStore:
             "applications": sorted({app.casefold() for app in applications}),
             "tools": sorted(set(tools)), "actions": sorted(set(actions or [])),
         }
-        with self._exclusive():
-            path = self.path
-            temporary = path.with_suffix(f".{secrets.token_hex(8)}.tmp")
-            temporary.write_text(json.dumps(sign_record(self.directory, payload), ensure_ascii=False), encoding="utf-8")
-            os.replace(temporary, path)
+        self._save(payload)
         return payload
 
     def grant_for_request(self, request: dict, mode: str = "session", *, operator: str = "approval-ui") -> dict:

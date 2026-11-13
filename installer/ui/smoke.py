@@ -273,13 +273,25 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
             elif case == "approval-locked":
                 from PySide6.QtTest import QTest
                 from windows_mcp.infrastructure.trust import TrustStore
-                TrustStore(store.directory).grant("forever", operator="isolated-ui-acceptance", session_id="isolated-acceptance-session", applications=["native:filesystem"])
+                TrustStore(store.directory).grant_automatic(operator="isolated-ui-acceptance")
                 window.open_operator()
                 dialog = window.operator_window
-                require(dialog.auto_approve.isChecked() and not dialog.auto_approve.isEnabled(), "Active grant checkbox is editable")
+                require(dialog.auto_approve.isChecked() and dialog.auto_approve.isEnabled(), "Persistent automatic preference is not editable")
                 QTest.mouseClick(dialog.auto_approve, Qt.MouseButton.LeftButton)
-                require(dialog.auto_approve.isChecked() and dialog.trust.allows(), "Click revoked persistent grant")
-                verified_steps.append("isolated_active_grant_requires_explicit_revoke_action")
+                dialog.refresh()
+                require(not dialog.auto_approve.isChecked() and dialog.trust.automatic(), "Unsaved preference changed authorization")
+                dialog.save_default_button.click()
+                require(not TrustStore(store.directory).automatic(), "Saving disabled preference did not revoke authorization")
+                window.open_operator()
+                dialog = window.operator_window
+                dialog.auto_approve.setChecked(True)
+                dialog.save_default_button.click()
+                require(TrustStore(store.directory).allows("reconnected-acceptance-client", "other-app.exe", "Click", "click"), "Saved automatic preference did not survive a new store/client/application")
+                window.open_operator()
+                dialog = window.operator_window
+                require(dialog.auto_approve.isChecked() and dialog.auto_approve.isEnabled(), "Reopened settings lost persistent preference")
+                verified_steps.append("persistent_automatic_is_editable_and_requires_save_to_change")
+                verified_steps.append("saved_preference_reloads_and_revokes_without_a_pending_request")
                 QTimer.singleShot(200, lambda: take(dialog))
             elif case == "paths":
                 from installer.ui.settings_dialog import paths
@@ -302,7 +314,7 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                     window.open_operator(request["request_id"])
                 else:
                     window.open_operator()
-                    require(not window.operator_window.auto_approve.isEnabled(), 'Unscoped automatic authorization must remain disabled')
+                    require(window.operator_window.auto_approve.isEnabled(), 'Persistent automatic preference is unavailable without a request')
                     require(window.operator_window.defaults_row.isVisible(), 'Native UI acceptance failed: window.operator_window.defaults_row.isVisible()')
                     require(store.pending() == [], 'Native UI acceptance failed: store.pending() == []')
                     window.operator_window.auto_approve.setChecked(case == "approval-default-automatic")

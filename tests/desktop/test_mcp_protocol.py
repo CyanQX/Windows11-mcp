@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 
 import pytest
 from fastmcp import Client
@@ -56,3 +57,42 @@ async def test_find_and_act_through_the_mcp_protocol(app, via):
             "Act", {"target": "No Such Button", "window": app.title}, raise_on_error=False
         )
         assert missing.is_error and "No control named" in _text(missing)
+
+
+async def test_persistent_automatic_clicks_survive_new_mcp_clients_and_revoke(app):
+    from tests.desktop.guard import assert_point_owned
+    from windows_mcp.engine.sessions import get_runtime
+
+    runtime = get_runtime()
+    runtime.policy.trust.grant_automatic(operator="isolated-desktop-acceptance")
+    sessions = set()
+    try:
+        for number in range(2):
+            async with Client(_build_mcp()) as client:
+                state = json.loads(_text(await client.call_tool("Session")))
+                assert state["trust_mode"] == "automatic"
+                assert state["trust_scope"]["expires_at"] is None
+                sessions.add(state["session_id"])
+                found = _text(await client.call_tool("Find", {"name": "Save", "window": app.title}))
+                ref = re.search(r"^(e\d+)\s+Button \"Save\"", found, re.M).group(1)
+                arguments = {"target": ref, "action": "click", "via": "input"}
+                approval = json.loads(_text(await client.call_tool("RequestApproval", {
+                    "tool": "Act", "arguments": arguments, "description": "Click only the owned fixture"})))
+                assert approval["status"] == "TRUSTED" and not approval["approval_required"]
+                assert runtime.policy.approvals.pending() == []
+                assert_point_owned(*app.center("save"), {app.pid})
+                since = app.mark()
+                acted = await client.call_tool("Act", arguments, raise_on_error=False)
+                assert not acted.is_error, _text(acted)
+                assert "real left click" in _text(acted)
+                received = app.wait_for(lambda event: event.get("control") == "save", since)
+                assert received and received[-1]["count"] == number + 1
+                if number == 1:
+                    runtime.policy.trust.revoke()
+                    since = app.mark()
+                    denied = await client.call_tool("Act", arguments, raise_on_error=False)
+                    assert denied.is_error and "BLOCKED_BY_POLICY" in _text(denied)
+                    assert not app.wait_for(lambda event: event.get("control") == "save", since, timeout=0.1)
+        assert len(sessions) == 2
+    finally:
+        runtime.policy.trust.revoke()

@@ -24,6 +24,10 @@ def window_scope(hwnd: int) -> dict:
     try:
         if not hwnd or not win32gui.IsWindow(hwnd):
             raise ValueError("Window no longer exists")
+        from windows_mcp.infrastructure.operator_ui import is_operator_window
+
+        if is_operator_window(hwnd):
+            raise PolicyBlocked("Local authorization controls cannot be operated through MCP")
         _, pid = win32process.GetWindowThreadProcessId(hwnd)
         process = psutil.Process(pid)
         executable = str(Path(process.exe()).resolve()).casefold()
@@ -33,6 +37,8 @@ def window_scope(hwnd: int) -> dict:
                      or (class_name == "#32770" and win32gui.GetWindowText(hwnd) in {"Run", "运行", "執行"}))
         return {"application": executable, "window": hwnd, "pid": pid,
                 "process_started": process.create_time(), "sensitive": sensitive}
+    except PolicyBlocked:
+        raise
     except (OSError, ValueError, psutil.Error) as exc:
         raise PolicyBlocked("Cannot establish the target application's identity; observe again") from exc
 

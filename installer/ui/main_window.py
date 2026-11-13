@@ -357,6 +357,12 @@ class MainWindow(QMainWindow):
     def open_operator(self, request_id=None):
         if not self.approval_store:
             return
+        if request_id:
+            from windows_mcp.infrastructure.trust import TrustStore
+
+            if TrustStore(self.approval_store.directory).automatic():
+                self.approval_store.dismiss_automatic()
+                return  # Ignore a delayed review notification already covered by the preference.
         from installer.ui.operator_dialog import OperatorCenter
         if self.operator_window and self.operator_window.isVisible():
             if request_id is None:
@@ -380,6 +386,7 @@ class MainWindow(QMainWindow):
                     self.raise_()
                     self.activateWindow()
             if self.approval_store:
+                self.approval_store.dismiss_automatic()
                 pending = {item["request_id"] for item in self.approval_store.pending() if not item["approved"]}
                 new = pending - self.known_requests
                 if new:
