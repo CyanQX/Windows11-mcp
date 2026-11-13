@@ -60,9 +60,11 @@ def capabilities() -> dict:
 
 
 def capture(hwnd: int, backend: str) -> Image.Image:
+    from windows_mcp.vision.capture_worker import worker
+
     with tempfile.TemporaryDirectory(prefix="wmcp-capture-") as directory:
         path = Path(directory) / "frame.png"
-        result = request({"operation": "capture", "hwnd": hwnd, "backend": backend, "output": str(path)})
+        result = worker.request({"operation": "capture", "hwnd": hwnd, "backend": backend, "output": str(path)})
         if not path.is_file() or path.stat().st_size > 64000000:
             raise RuntimeError("Native capture did not produce a bounded image")
         with Image.open(path) as image:

@@ -136,14 +136,14 @@ class TestMouse:
         assert flags == [(ni.MOUSEEVENTF_WHEEL, -120), (ni.MOUSEEVENTF_WHEEL, -120), (ni.MOUSEEVENTF_HWHEEL, 120)]
 
     def test_drag_always_releases_the_button(self, monkeypatch, sent):
-        monkeypatch.setattr(ni, "move_to", lambda *a, **k: (0, 0))
+        monkeypatch.setattr(ni, "cursor_position", lambda: (1, 1))
         calls = []
 
         def failing_move(*args, **kwargs):
             calls.append(args)
             if len(calls) == 2:
                 raise RuntimeError("cursor blocked")
-            return (0, 0)
+            return (1, 1)
 
         monkeypatch.setattr(ni, "move_to", failing_move)
         with pytest.raises(RuntimeError):

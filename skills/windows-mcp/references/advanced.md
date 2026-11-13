@@ -7,11 +7,13 @@
 服务器在连接时就告诉 AI 这套规程（`OBSERVE -> ACT -> VERIFY`）：
 
 1. **观察**：默认 `Observe`、`Find` 或 `Snapshot(use_vision=False, window="…")`。观察包含来源、会话、修订号、输出截断信息；截图用于语义缺失时的兜底。
-2. **操作**：新 `Execute` 的 `auto` 先选支持的 UIA Pattern，缺失时才使用物理输入；浏览器通过受管 Playwright 的唯一 locator 操作。旧 `Act` 的 `via` 签名和输入优先行为保留。每条工具入口都经过同一权限网关。
+2. **操作**：新 `Execute` 的 `auto` 默认先选支持的 UIA Pattern，缺失时才使用物理输入。1.6.0 第四批支持 `[interaction] mode="pointer"` 或 `serve --interaction-mode pointer`，令自动 click/double_click/right_click/hover 优先真实鼠标；显式 physical/semantic 模式优先，其余动作保持原策略。用 Session.interaction_mode 核对服务实际配置。浏览器通过受管 Playwright 的唯一 locator 操作。旧 `Act` 的 `via` 签名和输入优先行为保留。每条工具入口都经过同一权限网关。
 3. **核对**：新动作使用 `VERIFIED`、`DISPATCHED_UNVERIFIED`、`TARGET_STALE`、`AMBIGUOUS_TARGET`、`FOCUS_MISMATCH` 等状态。传入 `expected` 可核对文件内容或控件状态；发出输入、改变焦点或打开窗口不等于业务目标成功。未证实的发送、付款、删除不能自动重试。
 
 几个关键机制：
 
+- **自然移动与接管（1.6.0 第五批）**：`[interaction] pointer_motion="natural"` 默认启用自适应速度、光标反馈、已知控件身份的动态跟踪和有限重规划；`legacy` 保留旧时序。`hover_ms=400`（0–2000），`human_takeover=true` 在鼠标手势期间监听外部鼠标/键盘事件；只暂停当前会话，不抑制用户输入。Session.pointer_interruption 非空时先核对结果，等待用户明确继续，再 resume，不自动抢回控制。Execute.dispatch.motion / Session.last_pointer_motion 记录耗时、采样、重规划和停止原因；回读差异包含投递延迟，不能当作点击准确率。UIA/窗口事件触发刷新并有约 100 毫秒兜底，无语义裸坐标不能跟随控件；provider 阻塞不能被 Python 强制中断。
+- **统一输入与证据（1.6.0 第四批）**：公开 Move 拖拽和点击/悬停共用 SendInput；控件引用操作在移动后、按下前重新核对目标。取消或授权撤销会停止后续输入并允许清理释放，Windows 部分接受时也会清理本次仍按住的按钮/按键；清理被系统拒绝时仍报错。桌面 Execute.dispatch 包含 native_events、pointer_moves、button_downs、button_ups、keyboard_events、uia_calls、partial_native；input_dispatched 由边界记录产生，记录系统接受和 provider 调用，不代表业务成功。失败后的输入证据保留，禁止盲目重试；未决动作仍必须按原有流程等待、验证和 acknowledge。裸坐标/词框没有独立控件身份，视觉点击也不能仅凭窗口身份保证画面内容未变。
 - **引用有作用域和生存期**：新元素 ID 绑定会话和观察修订；窗口/PID 变化或修订失效后须重新观察。旧 `e#` 和 Snapshot 状态也按客户端隔离；重定位遇到多个同名候选会拒绝，避免按距离猜选。
 - **三种操作通道**（`Act` 的 `via` 参数）：
   - `auto`（默认）：真实鼠标键盘优先，失败再退回 UI Automation 模式。
@@ -56,6 +58,16 @@ HTTP 出网独立授权：`Scrape(use_dom=False)`、`Browser(navigate/new_page)`
 鼠标未到达指定点或多次点击之间移离目标时返回 `INPUT_TARGET_UNREACHABLE`，停止下一次按下；前一次点击可能已经完成，须重新观察，不能直接重放整组操作。检查输入桌面、指针限制或用户同时移动鼠标等情况。
 
 视觉兜底使用 `Visual(window="句柄或唯一标题", fallback_reason="canvas")`，在返回图片内选择坐标后，审批并执行 `Execute(mode="visual", target="visual:...", action="click", value="[180,90]", expected={...})`。窗口/PID/大小/位置或前台变化、目标点被其他窗口遮挡、截图超过 60 秒，都会拒绝输入。核心安装不包含 OmniParser、VLM 或 FlaUI；这类模型/适配评估为可选后续工作。
+
+### 第六批：捕获与输入协调（1.6.0）
+
+Visual 的 WGC/PrintWindow 请求复用一个串行辅助进程，复用解释器和导入，每次读取新帧，WGC 会话仍逐次创建；OCR/探测保持一次性隔离。请求超时默认 12 秒后结束整个 Job Object，失败不重发，下一明确请求可以重建。Session.capture_worker 返回运行状态、PID、starts、requests、timeouts、last_elapsed_ms；关闭服务会回收进程。
+
+视觉 Execute 在鼠标到达、按下前本地重新取帧，比较落点周围最多 33×33 图像像素（考虑原截图 ROI/缩放）；内容变化返回 TARGET_STALE，重新观察后再决定操作，不自动换点或重试。比较容忍小幅渲染噪声，动画/悬停效果可能使操作停止；像素相同不是控件身份。比较后再次检查前台、窗口生存期/几何与遮挡。自然移动和语义控件跟随不请求截图。每会话最多保留 8 个视觉引用及合计 1600 万像素，TTL 60 秒，容量回收可能提前失效。only_if_changed 在未变且无 OCR 时省略 PNG 编码和传输，但仍获取新帧。
+
+同一 Windows 登录会话的新版服务共用命名互斥量，覆盖每段桌面线程工作。DESKTOP_BUSY 表示该段尚未启动；先核对占用与既有动作，不自动排队重放。已超时但实际继续运行的 UIA 仍占用互斥量；实际完成或进程退出后释放。Session.desktop_coordination 返回占用状态。它不协调旧版服务或其他软件，不提供多步事务、安全沙箱或硬实时保证。
+
+只读性能测量：`uv run python scripts/benchmark_capture.py --hwnd <窗口句柄> --backend printwindow --count 6 --output capture-benchmark.json`，仅捕获指定窗口，不操作鼠标键盘；输出冷启动、后续请求中位数、进程启动/请求次数，不导出图片。Visual.capture_elapsed_ms 不包括后续 OCR。
 
 ### 第三批：窗口捕获、区域与本地 OCR（1.5.0）
 
@@ -265,6 +277,8 @@ exclude = ["PowerShell", "Registry"]
 | `WINDOWS_MCP_IP_ALLOWLIST` | 无 | 同 `--ip-allowlist` |
 | `WINDOWS_MCP_CORS_ORIGINS` | 无 | 同 `--cors-origins` |
 | `WINDOWS_MCP_TOOLS` / `WINDOWS_MCP_EXCLUDE_TOOLS` | 全部 | 同 `--tools` / `--exclude-tools` |
+| `WINDOWS_MCP_INTERACTION_MODE` | `semantic` | 1.6.0 第四批：`pointer` 令 Execute 自动点击/双击/右键/悬停使用真实鼠标；命令行 `--interaction-mode` 优先，其余动作保持原路由 |
+| `WINDOWS_MCP_POINTER_MOTION` | `natural` | 1.6.0 第五批：`natural` 为本地自适应反馈控制，`legacy` 保留固定时序；命令行 `--pointer-motion` 优先 |
 | `WINDOWS_MCP_SSL_CERTFILE` / `WINDOWS_MCP_SSL_KEYFILE` | 无 | 同 `--ssl-certfile` / `--ssl-keyfile` |
 | `WINDOWS_MCP_OAUTH_CLIENT_ID` / `WINDOWS_MCP_OAUTH_CLIENT_SECRET` | 无 | 同 `--oauth-client-id` / `--oauth-client-secret` |
 | `WINDOWS_MCP_STATELESS_HTTP` | 关 | 同 `--stateless-http` |

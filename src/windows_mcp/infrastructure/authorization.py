@@ -170,7 +170,9 @@ class DispatchAuthorization:
 
                 for item in windows:
                     if (item.get("pid") == actual["pid"] and item.get("process_started") == actual["process_started"]
-                            and item.get("window") and elements._owned_by(actual["window"], item["window"])):
+                            and item.get("window") and (
+                                elements._owned_by(actual["window"], item["window"])
+                                or elements.combo_popup_of(actual["window"], item["window"]))):
                         original = window_scope(item["window"])
                         matched = all(item.get(key) == original.get(key) for key in ("window", "pid", "process_started", "application"))
                         if matched:

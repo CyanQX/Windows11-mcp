@@ -159,3 +159,23 @@ def test_multi_application_gesture_needs_every_application_in_trust_scope(secure
     assert not runtime.policy.trusted("owner", "Move", {"drag": True}, scope)
     runtime.policy.trust.grant(session_id="owner", applications=[APP, "other.exe"])
     assert runtime.policy.trusted("owner", "Move", {"drag": True}, scope)
+
+
+def test_native_combo_popup_needs_exact_link_and_original_lifetime(secured, monkeypatch):
+    runtime, _, _ = secured
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.operator_review_active", lambda: False)
+    popup = {**SCOPE, "window": 789}
+    original = dict(SCOPE)
+    monkeypatch.setattr(auth, "window_scope", lambda hwnd: dict(original) if hwnd == 123 else dict(popup))
+    monkeypatch.setattr(elements, "_owned_by", lambda *args: False)
+    monkeypatch.setattr(elements, "combo_popup_of", lambda hwnd, owner: (hwnd, owner) == (789, 123))
+    with runtime.bind("local") as session:
+        dispatch = auth.DispatchAuthorization(runtime.policy, session.session_id, "Act", {}, SCOPE, 2, False)
+        dispatch.check_window(789)
+        original["process_started"] += 1
+        with pytest.raises(PolicyBlocked, match="lifetime"):
+            dispatch.check_window(789)
+        original.update(SCOPE)
+        popup["pid"] += 1
+        with pytest.raises(PolicyBlocked, match="lifetime"):
+            dispatch.check_window(789)

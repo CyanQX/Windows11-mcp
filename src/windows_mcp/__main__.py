@@ -76,11 +76,21 @@ Work in a loop: OBSERVE -> ACT -> VERIFY (plan the expected result before acting
    Act(target="e5" | 12 | "Save", action="click" | "set_value" | "type" | "toggle" |
    "select" | "expand" | "set_range" | "invoke" | ...). References and labels are re-located
    live and hit-tested before each action. Old or ambiguous targets must be observed again.
-   Prefer Execute on Observe targets: auto selects a supported UIA pattern before physical input.
+   Prefer Execute on Observe targets. Check Session.interaction_mode: auto uses supported UIA
+   patterns in semantic mode; pointer mode uses real input for click/double_click/right_click/hover.
+   Explicit mode="physical" or "semantic" overrides this setting. Pinned pointer targets are
+   checked again after movement, before pressing. Inspect dispatch evidence; do not retry input blindly.
+   Physical gestures use local adaptive feedback when Session.pointer_motion="natural"; pinned
+   controls can be followed through bounded updates without taking screenshots. Check motion evidence.
+   On Session.pointer_interruption, stop and inspect effects; wait for the user's explicit instruction
+   to continue before Session(operation="resume"). Never automatically reclaim the pointer.
    Legacy Act(via="auto") retains input-first compatibility; via="uia" is semantic-only.
    Use Browser for managed Playwright pages; never mix browser CSS pixels with desktop coordinates.
    Visual supports HWND capture, ROI/downscaling and optional local OCR. Use returned image
    pixels and the current visual target; inspect actual backend and availability diagnostics.
+   Visual clicks recheck a local pixel patch before pressing; TARGET_STALE requires a new
+   observation, never automatic relocation/replay. DESKTOP_BUSY means this desktop job did not
+   start because another cooperating process owns the desktop; inspect Session before retrying.
    Background observation does not authorize background input. Image changes/OCR are hints,
    not business verification. Discover the active tool profile; some tools may be omitted.
    Use Click/Type with coordinates only for canvases, games, images, remote desktops or
@@ -616,6 +626,12 @@ def main():
               help="Fixed tool preset; --tools/--exclude-tools can only narrow it.")
 @click.option("--static-manifest", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Validate fixed initialize/tools-list against a generated manifest before stdio startup.")
+@click.option("--interaction-mode", type=click.Choice(["semantic", "pointer"]), default="semantic",
+              envvar="WINDOWS_MCP_INTERACTION_MODE", show_default=True,
+              help="Automatic Execute clicks: semantic patterns first, or visible pointer input. Explicit action modes win.")
+@click.option("--pointer-motion", type=click.Choice(["natural", "legacy"]), default="natural",
+              envvar="WINDOWS_MCP_POINTER_MOTION", show_default=True,
+              help="Feedback-controlled adaptive pointer movement, or the previous fixed timing.")
 def serve(
     ctx,
     transport,
@@ -636,6 +652,8 @@ def serve(
     stateless_http,
     profile,
     static_manifest,
+    interaction_mode,
+    pointer_motion,
 ):
     global _mcp
     # Windows' default Proactor loop supports Playwright's asyncio subprocess pipes.
@@ -658,10 +676,16 @@ def serve(
     from windows_mcp.engine.sessions import configure_runtime
     from windows_mcp.infrastructure.policy import PolicyGate
 
+    interaction_mode = _choose_value(ctx, "interaction_mode", interaction_mode, cfg.interaction.mode, "semantic")
+    pointer_motion = _choose_value(ctx, "pointer_motion", pointer_motion, cfg.interaction.pointer_motion, "natural")
+    from windows_mcp.desktop.pointer_motion import MotionSettings
+
     configure_runtime(PolicyGate(roots=[Path(root) for root in cfg.policy.workspace_roots] or None,
                                  allow_r3=cfg.policy.allow_r3,
                                  allow_private_browser=cfg.policy.allow_private_browser,
-                                 allowed_network_origins=cfg.policy.allowed_network_origins))
+                                 allowed_network_origins=cfg.policy.allowed_network_origins),
+                      interaction_mode=interaction_mode,
+                      motion=MotionSettings(pointer_motion, cfg.interaction.hover_ms, cfg.interaction.human_takeover))
     _mcp = None  # A cached server must never retain a gateway from a previous policy configuration.
 
     transport = _choose_value(ctx, "transport", transport, cfg.server.transport, "stdio")
@@ -945,11 +969,12 @@ def manifest_command(profile: str, output: str) -> None:
 
 
 @main.command("native-helper", hidden=True)
-def native_helper_command() -> None:
-    """One-shot private helper protocol used by the native bridge."""
+@click.option("--stream", is_flag=True, hidden=True)
+def native_helper_command(stream: bool) -> None:
+    """Private helper protocol used by the native bridge."""
     from windows_mcp.vision.native_worker import main as worker_main
 
-    worker_main()
+    worker_main(stream=stream)
 
 
 @main.command()

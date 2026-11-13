@@ -61,12 +61,24 @@ class Verification(BaseModel):
     detail: str = "No postcondition was supplied or independently observed."
 
 
+class DispatchEvidence(BaseModel):
+    native_events: int = 0
+    pointer_moves: int = 0
+    button_downs: int = 0
+    button_ups: int = 0
+    keyboard_events: int = 0
+    uia_calls: int = 0
+    partial_native: bool = False
+    motion: dict[str, Any] | None = None
+
+
 class ActionResult(BaseModel):
     status: Status
     target: str | None = None
     method: str = "none"
     precondition_passed: bool = False
     input_dispatched: bool = False
+    dispatch: DispatchEvidence = Field(default_factory=DispatchEvidence)
     verification: Verification = Field(default_factory=Verification)
     new_revision: int | None = None
     retryable: bool = False

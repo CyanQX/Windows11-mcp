@@ -11,15 +11,50 @@ import subprocess
 import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import psutil
 import win32gui
-from PIL import Image, ImageChops, ImageStat
+from PIL import Image, ImageChops, ImageStat, ImageGrab
 
 from windows_mcp.desktop import elements, native_input
 from windows_mcp.runtime import run_on_desktop
 from windows_mcp.vision import native_bridge
 from windows_mcp.vision.grounding import ScreenshotSpace
+
+
+@dataclass(frozen=True)
+class VisualReference:
+    image: Image.Image
+    backend: str
+    full_bounds: tuple
+
+
+def _revalidate_patch(space, reference: VisualReference, coordinates):
+    """One local image check before DOWN; no model call, relocation or click replay."""
+    if reference.backend == "desktop":
+        live = ImageGrab.grab(bbox=reference.full_bounds, all_screens=True).convert("RGB")
+    else:
+        live = native_bridge.capture(space.window_handle, reference.backend)
+    left, top, right, bottom = reference.full_bounds
+    if live.size != (right - left, bottom - top):
+        raise elements.StaleTarget("TARGET_STALE: visual frame geometry changed; capture again")
+    roi = (space.rect[0] - left, space.rect[1] - top, space.rect[2] - left, space.rect[3] - top)
+    live = live.crop(roi)
+    if live.size != space.image_size:
+        live = live.resize(space.image_size, Image.Resampling.LANCZOS)
+    x, y = map(int, coordinates)
+    box = (max(0, x - 16), max(0, y - 16), min(live.width, x + 17), min(live.height, y + 17))
+    delta = ImageChops.difference(reference.image.crop(box), live.crop(box))
+    # Reject changed text/icons while tolerating small rendering noise. Animations can
+    # deliberately require a new observation; pixels never prove control identity.
+    mean = sum(ImageStat.Stat(delta).mean) / (3 * 255)
+    channels = delta.split()
+    maximum = ImageChops.lighter(ImageChops.lighter(channels[0], channels[1]), channels[2])
+    histogram = maximum.histogram()
+    changed = sum(histogram[25:]) / (delta.width * delta.height)
+    if mean > .01 or changed > .02:
+        raise elements.StaleTarget("TARGET_STALE: visual content near the point changed; capture again before clicking")
 
 
 @contextmanager
@@ -87,6 +122,7 @@ async def capture_async(desktop, session, window: str, reason: str, *, backend: 
     if only_if_changed and previous_target is None:
         raise ValueError("only_if_changed requires previous_target")
     generation = session.generation
+    capture_started = time.monotonic()
     session.check(generation)
     info, rect, frame, started = await run_on_desktop(_prepare, window)
     diagnostics = []
@@ -107,6 +143,8 @@ async def capture_async(desktop, session, window: str, reason: str, *, backend: 
                     else:
                         raise ValueError("Window frame geometry did not match physical bounds")
                 capture_rect = bounds
+            if image.width <= 0 or image.height <= 0 or image.width * image.height > 16_000_000:
+                raise ValueError("Captured image exceeds pixel bounds")
             used = candidate
             break
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
@@ -117,6 +155,7 @@ async def capture_async(desktop, session, window: str, reason: str, *, backend: 
     if image is None:
         raise RuntimeError("No window capture backend produced an image")
     await run_on_desktop(_recheck, info, rect, frame, started)
+    full_capture_rect = capture_rect
     if region is not None:
         if (len(region) != 4 or any(isinstance(v, bool) or not isinstance(v, int) for v in region)
                 or not 0 <= region[0] < region[2] <= image.width or not 0 <= region[1] < region[3] <= image.height):
@@ -141,15 +180,19 @@ async def capture_async(desktop, session, window: str, reason: str, *, backend: 
         if space.rect == capture_rect and space.image_size == image.size:
             difference = sum(ImageStat.Stat(ImageChops.difference(thumb, previous[4])).mean) / (3 * 255)
             changed = digest != previous[3] and (change_threshold == 0 or difference > change_threshold)
-    output = io.BytesIO()
-    image.save(output, format="PNG")
-    data = output.getvalue()
+    include_image = not only_if_changed or changed
+    data = None
+    if include_image or ocr:
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        data = output.getvalue()
     result = {"source": "visual", "window_id": str(info.handle), "process_id": info.pid,
         "image_size": list(image.size), "desktop_bounds": list(capture_rect), "window_bounds": list(rect),
         "fallback_reason": reason, "capture_backend": used, "background_observation": await run_on_desktop(elements.foreground_root) != info.handle,
         "expires_in_seconds": 60, "coordinate_space": "image_pixels", "diagnostics": diagnostics,
         "changed": changed, "difference_ratio": difference, "image_sha256": digest,
-        "image_included": not only_if_changed or changed}
+        "image_included": include_image, "local_click_revalidation": "33x33_image_pixel_patch",
+        "capture_elapsed_ms": round((time.monotonic() - capture_started) * 1000, 2)}
     if ocr:
         try:
             result["ocr"] = await asyncio.to_thread(native_bridge.recognize, data, backend=ocr_backend, language=ocr_language)
@@ -161,8 +204,11 @@ async def capture_async(desktop, session, window: str, reason: str, *, backend: 
     with session.lock:
         session.check(generation)
         session.visuals[target] = (ScreenshotSpace(info.handle, info.pid, capture_rect, image.size,
-            window_rect=rect, process_started=started), time.monotonic(), reason, digest, thumb)
-        while len(session.visuals) > 8:
+            window_rect=rect, process_started=started), time.monotonic(), reason, digest, thumb,
+            VisualReference(image.copy(), used, full_capture_rect))
+        def retained_pixels():
+            return sum(item[5].image.width * item[5].image.height for item in session.visuals.values() if len(item) > 5)
+        while len(session.visuals) > 8 or retained_pixels() > 16_000_000:
             session.visuals.pop(next(iter(session.visuals)))
     result["target"] = target
     return result, data if result["image_included"] else None
@@ -193,5 +239,29 @@ def click(session, target: str, coordinates: list[float]) -> str:
         if elements.root_at(x, y) != space.window_handle:
             raise elements.OccludedError("Visual point is covered by another window; no click was dispatched")
         session.check()
-        native_input.click(x, y)
+        def guard(px, py):
+            session.check()
+            current = elements.window_info(space.window_handle)
+            if (current is None or current.pid != space.process_id
+                    or elements.foreground_root() != space.window_handle):
+                raise elements.FocusLostError("Visual window lost identity/focus before pressing")
+            if (space.process_started is not None
+                    and psutil.Process(current.pid).create_time() != space.process_started):
+                raise elements.StaleTarget("Visual process lifetime changed before pressing")
+            if window_rects(current.handle)[0] != (space.window_rect or space.rect):
+                raise elements.StaleTarget("Visual window moved before pressing; capture again")
+            if elements.root_at(px, py) != space.window_handle:
+                raise elements.OccludedError("Visual point became covered before pressing")
+
+        guard(x, y)
+        if len(record) < 6:
+            raise elements.StaleTarget("TARGET_STALE: visual capture lacks a local reference; capture again")
+
+        def before_press(px, py):
+            guard(px, py)
+            _revalidate_patch(space, record[5], coordinates)
+            # Capturing can take time: validate focus, lifetime and covering again.
+            guard(px, py)
+
+        native_input.click(x, y, before_press=before_press)
     return reason

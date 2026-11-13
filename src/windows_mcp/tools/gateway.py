@@ -11,6 +11,7 @@ from windows_mcp.engine.sessions import get_runtime
 from windows_mcp.infrastructure.approvals import action_hash
 from windows_mcp.infrastructure.authorization import DESKTOP_TOOLS, DispatchAuthorization, bind_dispatch, scope_for_call
 from windows_mcp.runtime import run_on_desktop
+from windows_mcp.desktop.pointer_motion import bind_motion
 
 
 class ToolGateway:
@@ -81,7 +82,7 @@ class ToolGateway:
                         risk = self.runtime.policy.authorize(state.session_id, name, arguments, bound.arguments.get("approval_token"), scope=scope)
                         trusted = risk == 2 and self.runtime.policy.trusted(state.session_id, name, arguments, scope)
                         authorization = DispatchAuthorization(self.runtime.policy, state.session_id, name, arguments, scope, risk, trusted, generation)
-                        with bind_dispatch(authorization if name in DESKTOP_TOOLS | {"NativeAPI", "FileSystem", "Browser", "PowerShell", "Registry", "Process", "Clipboard", "Notification"} else None):
+                        with bind_dispatch(authorization if name in DESKTOP_TOOLS | {"NativeAPI", "FileSystem", "Browser", "PowerShell", "Registry", "Process", "Clipboard", "Notification"} else None), bind_motion(self.runtime.motion):
                             result = await func(**bound.arguments)
                     except Exception as exc:
                         self.runtime.audit.record(session=state.session_id, tool=name, digest=digest, status=getattr(exc, "code", "FAILED"), audit_id=audit_id)

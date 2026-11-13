@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import asyncio
 import threading
 import time
 import uuid
@@ -32,6 +33,8 @@ class SessionState:
     legacy_registry: Any = None
     touched: float = field(default_factory=time.monotonic)
     active_calls: int = 0
+    pointer_interruption: str | None = None
+    last_pointer_motion: dict | None = None
     lock: threading.RLock = field(default_factory=threading.RLock)
 
     def check(self, generation: int | None = None) -> None:
@@ -61,7 +64,13 @@ _bound: contextvars.ContextVar[SessionState | None] = contextvars.ContextVar("wm
 
 
 class EngineRuntime:
-    def __init__(self, policy: PolicyGate | None = None) -> None:
+    def __init__(self, policy: PolicyGate | None = None, *, interaction_mode: str = "semantic", motion=None) -> None:
+        if interaction_mode not in {"semantic", "pointer"}:
+            raise ValueError("interaction_mode must be semantic or pointer")
+        self.interaction_mode = interaction_mode
+        from windows_mcp.desktop.pointer_motion import MotionSettings
+
+        self.motion = motion or MotionSettings()
         self.policy = policy or PolicyGate()
         self.audit = AuditLog(CONFIG_DIR / "audit.jsonl")
         self.sessions: OrderedDict[str, SessionState] = OrderedDict()
@@ -129,6 +138,12 @@ class EngineRuntime:
             state.cancelled.set()
         if self.browser:
             await self.browser.close_all()
+        from windows_mcp.desktop.pointer_monitor import monitor
+
+        await asyncio.to_thread(monitor.stop)
+        from windows_mcp.vision.capture_worker import worker
+
+        await asyncio.to_thread(worker.close)
         from windows_mcp.runtime import run_on_desktop
 
         for state in self.sessions.values():
@@ -168,7 +183,7 @@ def get_runtime() -> EngineRuntime:
     return _runtime
 
 
-def configure_runtime(policy: PolicyGate) -> EngineRuntime:
+def configure_runtime(policy: PolicyGate, *, interaction_mode: str = "semantic", motion=None) -> EngineRuntime:
     global _runtime
-    _runtime = EngineRuntime(policy)
+    _runtime = EngineRuntime(policy, interaction_mode=interaction_mode, motion=motion)
     return _runtime

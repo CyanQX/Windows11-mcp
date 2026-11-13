@@ -225,6 +225,9 @@ def call_with_timeout(func: Callable[[], Any], timeout: float = 5.0) -> tuple[bo
                 from windows_mcp.infrastructure.authorization import check_dispatch
 
                 check_dispatch()
+                from windows_mcp.engine.dispatch import record_uia
+
+                record_uia()
                 value = func()
         except BaseException as exc:  # noqa: BLE001 -- re-raised in the caller
             runtime.pending.completed(action, error=exc)
@@ -1106,6 +1109,79 @@ def prepare_for_pointer(desktop: Any, element: Element) -> tuple[int, int, Eleme
     )
 
 
+class PointerTarget:
+    """Pin identity, track numeric bounds with event hints and bounded fallback reads."""
+
+    def __init__(self, element: Element):
+        self.element = element
+        self.identity = (element.window_handle, element.pid, element.runtime_id)
+        self.window_handle = element.window_handle
+        self.original_rect = element.rect
+        self.current = element
+        self.sampled_at = 0.0
+        self.hub = self.subscription = None
+
+    def _read(self, *, force=False):
+        dirty = False
+        if self.subscription is not None:
+            items, overflow = self.hub.drain(self.subscription)
+            dirty = bool(items or overflow)
+        if not force and not dirty and time.monotonic() - self.sampled_at < 0.1:
+            return self.current
+        fresh = refresh(self.element)
+        if fresh is None or (fresh.window_handle, fresh.pid, fresh.runtime_id) != self.identity:
+            raise StaleTarget("TARGET_STALE: the original control disappeared or changed identity before pressing")
+        if not fresh.enabled:
+            raise NotEnabledError("The target became disabled before pressing; no further button was pressed")
+        if fresh.offscreen or not fresh.has_area:
+            raise StaleTarget("TARGET_STALE: the pinned control is no longer visible")
+        self.current, self.sampled_at = fresh, time.monotonic()
+        return fresh
+
+    def __call__(self, x: int, y: int) -> None:
+        fresh = self._read(force=True)
+        left, top, right, bottom = fresh.rect
+        if not (left <= x < right and top <= y < bottom):
+            raise StaleTarget("TARGET_STALE: the target moved away from the pointer before pressing")
+        if not hits(fresh, x, y):
+            raise OccludedError("The target became covered before pressing; no further button was pressed")
+
+    def motion_target(self, x, y, *, force=False):
+        fresh = self._read(force=force)
+        left, top, right, bottom = self.original_rect
+        fx = max(0, min(1, (x - left) / max(1, right - left - 1)))
+        fy = max(0, min(1, (y - top) / max(1, bottom - top - 1)))
+        left, top, right, bottom = fresh.rect
+        return ((left + round(fx * max(0, right - left - 1)),
+                 top + round(fy * max(0, bottom - top - 1))), min(right - left, bottom - top))
+
+    def tracking(self):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def scope():
+            from windows_mcp.engine.sessions import get_runtime
+
+            runtime = get_runtime()
+            session = runtime.current()
+            if runtime.watchdog is not None:
+                self.hub = runtime.watchdog.subscriptions
+                self.subscription = self.hub.subscribe(session.session_id, self.window_handle,
+                                                       ["structure", "property"], ttl=15.0)
+            try:
+                yield self
+            finally:
+                if self.subscription is not None:
+                    self.hub.cancel(self.subscription.subscription_id, session.session_id)
+                    self.subscription = None
+
+        return scope()
+
+
+def pointer_guard(element: Element) -> PointerTarget:
+    return PointerTarget(element)
+
+
 # --------------------------------------------------------------------------------------------
 # Keyboard safety interlock
 # --------------------------------------------------------------------------------------------
@@ -1123,6 +1199,39 @@ def _owned_by(hwnd: int, owner: int) -> bool:
         if root_of(current) == owner:
             return True
     return False
+
+
+def combo_popup_of(hwnd: int, owner: int) -> bool:
+    """Prove a Win32 ComboLBox is the exact list of a combo in the approved window.
+
+    Some native combos do not expose a GW_OWNER chain for their popup list. Class name
+    or same-process membership alone is insufficient; GetComboBoxInfo must link it.
+    """
+    class ComboInfo(ctypes.Structure):
+        _fields_ = [("size", wt.DWORD), ("item", wt.RECT), ("button", wt.RECT),
+                    ("state", wt.DWORD), ("combo", wt.HWND), ("edit", wt.HWND), ("list", wt.HWND)]
+
+    matched, visited = False, 0
+    try:
+        if win32gui.GetClassName(hwnd).casefold() != "combolbox":
+            return False
+        get_info = ctypes.windll.user32.GetComboBoxInfo
+        get_info.argtypes = (wt.HWND, ctypes.POINTER(ComboInfo))
+        get_info.restype = wt.BOOL
+
+        def inspect(child, _):
+            nonlocal matched, visited
+            visited += 1
+            if win32gui.GetClassName(child).casefold() == "combobox":
+                info = ComboInfo(size=ctypes.sizeof(ComboInfo))
+                if get_info(child, ctypes.byref(info)) and info.combo == child and info.list == hwnd:
+                    matched = True
+            return not matched and visited < 256
+
+        win32gui.EnumChildWindows(owner, inspect, None)
+        return matched
+    except (OSError, win32gui.error):
+        return False
 
 
 def ensure_foreground(desktop: Any, hwnd: int) -> None:
@@ -1306,7 +1415,10 @@ class ActOutcome:
 
 def _pointer(desktop: Any, element: Element, button: str, count: int) -> ActOutcome:
     x, y, element, notes = prepare_for_pointer(desktop, element)
-    native_input.click(x, y, button=button, count=count, glide=0.12 if count == 0 else 0.04)
+    final = native_input.click(x, y, button=button, count=count, glide=0.12 if count == 0 else 0.04,
+                              before_press=pointer_guard(element))
+    if final is not None:
+        x, y = final
     kind = {0: "moved the pointer onto", 1: f"{button} click on", 2: f"{button} double click on"}[count]
     return ActOutcome(f"real {kind} it at ({x},{y})", None, "", notes, element)
 
@@ -1316,7 +1428,8 @@ def _call_pattern(element: Element, pattern_id: int, method: str, *args: Any, ti
     pattern = get_pattern(element.raw, pattern_id)
     if pattern is None:
         return False
-    call_with_timeout(lambda: getattr(pattern, method)(*args), timeout=timeout)
+    operation = getattr(pattern, method)
+    call_with_timeout(lambda: operation(*args), timeout=timeout)
     return True
 
 
@@ -1399,7 +1512,7 @@ def _notify_win32_trackbar(element: Element, position: float) -> str | None:
 def keyboard_replace(desktop: Any, element: Element, text: str, *, clear: bool = True) -> list[str]:
     """Focus ``element`` with a real click and type ``text`` (optionally replacing its content)."""
     x, y, element, notes = prepare_for_pointer(desktop, element)
-    native_input.click(x, y)
+    native_input.click(x, y, before_press=pointer_guard(element))
     window = element.window_handle or root_at(x, y)
     ensure_foreground(desktop, window)
     if clear:
@@ -1493,7 +1606,7 @@ def _select_item(desktop: Any, container: Element, value: str, via: str) -> ActO
         if via != "uia":
             try:
                 x, y, container, extra = prepare_for_pointer(desktop, container)
-                native_input.click(x, y)
+                native_input.click(x, y, before_press=pointer_guard(container))
                 notes += extra
                 opened = True
             except OccludedError as exc:
@@ -1604,7 +1717,10 @@ def _set_text(desktop: Any, element: Element, action: str, value: str, via: str)
     multiline_value = "\n" in value or "\r" in value
 
     def by_pattern() -> str:
-        call_with_timeout(lambda: get_pattern(element.raw, PatternId.ValuePattern).SetValue(value))
+        pattern = get_pattern(element.raw, PatternId.ValuePattern)
+        if pattern is None:
+            raise StaleTarget("TARGET_STALE: ValuePattern disappeared before setting the value")
+        call_with_timeout(lambda: pattern.SetValue(value))
         return "UIA SetValue"
 
     def by_keyboard() -> str:
@@ -1722,6 +1838,9 @@ def act(desktop: Any, element: Element, action: str, value: str | None = None, v
             fresh, focused = _poll_state(outcome.element or element, "focused", False) if not element.focused else (element, True)
         else:
             try:
+                from windows_mcp.engine.dispatch import record_uia
+
+                record_uia()
                 element.raw.SetFocus()
             except (COMError, OSError) as exc:
                 raise ElementError(f"{element.label} refused keyboard focus ({exc}).") from exc

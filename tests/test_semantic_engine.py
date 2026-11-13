@@ -86,7 +86,13 @@ def test_auto_uses_supported_semantic_pattern(observed, monkeypatch):
 
 def test_dispatch_is_not_mistaken_for_business_success(observed, monkeypatch):
     desktop, session, runtime, element, first = observed
-    monkeypatch.setattr(elements, "act", lambda *args, **kwargs: elements.ActOutcome("UIA Invoke", None, "", [], element))
+    def invoked(*args, **kwargs):
+        from windows_mcp.engine.dispatch import record_uia
+
+        record_uia()
+        return elements.ActOutcome("UIA Invoke", None, "", [], element)
+
+    monkeypatch.setattr(elements, "act", invoked)
     result = execute(desktop, runtime, session, target=first["elements"][0]["element_id"], action="click")
     assert result["input_dispatched"]
     assert result["status"] == "DISPATCHED_UNVERIFIED"

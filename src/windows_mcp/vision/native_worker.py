@@ -1,4 +1,4 @@
-"""Private, one-shot native capture/OCR helper. No UIA, input, policy changes or shell API."""
+"""Private native helper with bounded one-shot and persistent capture protocols."""
 
 from __future__ import annotations
 
@@ -200,13 +200,7 @@ def ocr(image: Image.Image, backend: str, language: str | None) -> dict:
             "words": words, "truncated": len(words) == 1000, "coordinate_space": "image_pixels"}
 
 
-def main() -> None:
-    # The helper's coordinate reads are physical pixels. Do not change the server's DPI mode.
-    try:
-        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-    except (OSError, AttributeError):
-        pass
-    request = json.loads(sys.stdin.read(65537))
+def dispatch(request: dict) -> dict:
     operation = request["operation"]
     if operation == "probe":
         result = probe()
@@ -223,8 +217,35 @@ def main() -> None:
             result = ocr(image.convert("RGB"), request["backend"], request.get("language"))
     else:
         raise ValueError("Unsupported native helper operation")
-    sys.stdout.write(json.dumps(result, ensure_ascii=False))
+    return result
+
+
+def main(*, stream: bool = False) -> None:
+    # Only the helper changes its process DPI mode. It holds no UIA or input capabilities.
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except (OSError, AttributeError):
+        pass
+    if not stream:
+        sys.stdout.write(json.dumps(dispatch(json.loads(sys.stdin.read(65537))), ensure_ascii=False))
+        return
+    while True:
+        line = sys.stdin.readline(65537)
+        if not line:
+            return
+        if len(line.encode("utf-8")) > 65536 or not line.endswith("\n"):
+            raise ValueError("Native request exceeded its limit")
+        envelope = json.loads(line)
+        try:
+            # Keep OCR/probes one-shot, separate from the warm capture process.
+            if envelope["request"]["operation"] not in {"capture", "probe"}:
+                raise ValueError("Persistent helper supports capture/probe only")
+            response = {"id": envelope["id"], "result": dispatch(envelope["request"])}
+        except Exception as exc:
+            response = {"id": envelope["id"], "result": {}, "error": type(exc).__name__}
+        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":
-    main()
+    main(stream="--stream" in sys.argv[1:])

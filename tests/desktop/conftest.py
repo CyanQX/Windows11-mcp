@@ -14,12 +14,16 @@ the mouse and keyboard while the suite runs (about a minute).
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import ctypes.wintypes as wt
+import contextvars
 import json
 import os
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -30,6 +34,38 @@ if not ENABLED:
     collect_ignore_glob = ["test_*.py"]
 
 FIXTURE_SCRIPT = Path(__file__).resolve().parents[1] / "fixtures" / "win32_fixture.py"
+_fixture_clip = contextvars.ContextVar("fixture_cursor_bounds", default=None)
+
+
+def pytest_addoption(parser):
+    parser.addoption("--fixture-cursor", action="store_true", default=False,
+                     help="Temporarily constrain the pointer to each test window; restore its prior clip afterwards")
+
+
+@contextmanager
+def fixture_cursor(instance, enabled):
+    if not enabled:
+        yield
+        return
+    from tests.desktop.guard import pid_of
+
+    if pid_of(instance.hwnd) != instance.pid:
+        raise RuntimeError("Fixture identity changed before setting test cursor bounds")
+    user32 = ctypes.windll.user32
+    user32.GetClipCursor.argtypes = (ctypes.POINTER(wt.RECT),)
+    user32.ClipCursor.argtypes = (ctypes.POINTER(wt.RECT),)
+    original, bounded = wt.RECT(), wt.RECT(*instance.window)
+    if not user32.GetClipCursor(ctypes.byref(original)):
+        raise RuntimeError("Cannot save the original cursor restriction")
+    if not user32.ClipCursor(ctypes.byref(bounded)):
+        raise RuntimeError("Cannot establish fixture cursor bounds")
+    token = _fixture_clip.set({"pid": instance.pid, "bounds": tuple(instance.window)})
+    try:
+        yield
+    finally:
+        _fixture_clip.reset(token)
+        if not user32.ClipCursor(ctypes.byref(original)):
+            raise RuntimeError("Could not restore the original cursor restriction")
 
 
 class FixtureApp:
@@ -157,6 +193,20 @@ def call(tools):
 
         with runtime.bind("local") as state:
             scope = call_on_desktop(runtime.scope_resolver, tool_name, arguments, state)
+        clip = _fixture_clip.get()
+        if clip is not None:
+            # A modal dialog can extend past its fixture's main window. Expand only
+            # for windows independently resolved to this exact fixture process.
+            import win32gui
+
+            rectangles = [clip["bounds"]]
+            for window in scope.get("windows", [scope]):
+                if window.get("pid") == clip["pid"] and window.get("window"):
+                    rectangles.append(win32gui.GetWindowRect(window["window"]))
+            bounds = wt.RECT(min(r[0] for r in rectangles), min(r[1] for r in rectangles),
+                             max(r[2] for r in rectangles), max(r[3] for r in rectangles))
+            if not ctypes.windll.user32.ClipCursor(ctypes.byref(bounds)):
+                raise RuntimeError("Cannot set bounds for the fixture's owned dialog")
         risk = runtime.policy.risk(tool_name, arguments, scope)
         if risk >= 2:
             request = runtime.policy.approvals.request(runtime.current().session_id, tool_name, arguments, risk, "Authorized fixture-only regression action", authorization_scope=scope)
@@ -167,10 +217,13 @@ def call(tools):
 
 
 @pytest.fixture
-def app(tmp_path):
+def app(tmp_path, request):
     instance = FixtureApp(tmp_path, f"WMCP Fixture {uuid.uuid4().hex[:6]}")
-    yield instance
-    instance.close()
+    try:
+        with fixture_cursor(instance, request.config.getoption("--fixture-cursor")):
+            yield instance
+    finally:
+        instance.close()
 
 
 @pytest.fixture

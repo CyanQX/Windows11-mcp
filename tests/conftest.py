@@ -1,4 +1,5 @@
 import os
+import ctypes
 
 import pytest
 
@@ -11,6 +12,29 @@ os.environ.setdefault("WINDOWS_MCP_DISABLE_FLASH", "1")
 from windows_mcp.tree.views import BoundingBox, Center, TreeElementNode, ScrollElementNode
 from windows_mcp.desktop.views import Window, Status, DesktopState
 
+
+@pytest.fixture(autouse=True)
+def block_unmocked_unit_input(request, monkeypatch):
+    """Only the explicit tests/desktop harness may reach real Windows input APIs.
+
+    Backend migrations must fail a unit test instead of moving the operator's pointer.
+    Individual unit tests may replace these guards with their own recording stubs.
+    """
+    if request.node.path.parent.name == "desktop":
+        return
+    from windows_mcp.desktop import native_input
+    from windows_mcp.desktop import coordination
+
+    # Synthetic desktop jobs must not reserve the operator's production mutex.
+    # Process-boundary tests explicitly pass this private namespace to their child.
+    monkeypatch.setattr(coordination, "NAME", rf"Local\WindowsMCP.Test.{os.getpid()}")
+
+    def blocked(*args, **kwargs):
+        pytest.fail("Unit tests must stub native input; real input belongs in tests/desktop")
+
+    for library in (native_input._user32, ctypes.windll.user32):
+        for name in ("SendInput", "SetCursorPos", "mouse_event", "keybd_event"):
+            monkeypatch.setattr(library, name, blocked)
 
 @pytest.fixture
 def sample_bounding_box():

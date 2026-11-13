@@ -822,14 +822,16 @@ class Desktop:
             results.append((element_node.center.x, element_node.center.y))
         return results
 
-    def click(self, loc: tuple[int, int] | list[int], button: str = "left", clicks: int = 1):
+    def click(self, loc: tuple[int, int] | list[int], button: str = "left", clicks: int = 1,
+              *, before_press=None):
         """Real mouse click(s) through SendInput; ``clicks=0`` only moves the pointer (hover)."""
         if isinstance(loc, list):
             x, y = loc[0], loc[1]
         else:
             x, y = loc
         flash_overlay.cancel_active_flash()
-        native_input.click(int(x), int(y), button=button, count=clicks)
+        options = {"before_press": before_press} if before_press is not None else {}
+        return native_input.click(int(x), int(y), button=button, count=clicks, **options)
 
     # Text longer than this is pasted in "auto" mode. Typing uses batched SendInput Unicode
     # events (exact, IME-proof, no clipboard side effects), which stays reliable for long text
@@ -845,6 +847,7 @@ class Desktop:
         clear: bool | str = False,
         press_enter: bool | str = False,
         method: Literal["auto", "keys", "paste"] = "auto",
+        *, before_press=None,
     ) -> str:
         """Click (x, y), confirm its window really has the keyboard, then type ``text``.
 
@@ -852,9 +855,10 @@ class Desktop:
         window holds the foreground when the keystrokes would be sent.
         """
         x, y = int(loc[0]), int(loc[1])
-        target_window = elements.root_at(x, y)
+        target_window = getattr(before_press, "window_handle", 0) or elements.root_at(x, y)
         flash_overlay.cancel_active_flash()
-        native_input.click(x, y)
+        options = {"before_press": before_press} if before_press is not None else {}
+        native_input.click(x, y, **options)
         sleep(0.05)
         if target_window:
             elements.ensure_foreground(self, target_window)
@@ -949,29 +953,55 @@ class Desktop:
         loc: tuple[int, int] | list[int],
         from_loc: tuple[int, int] | list[int] | None = None,
         duration: float | int | str | None = None,
+        *, before_release=None,
     ) -> dict[str, object]:
         x, y = self._normalize_drag_point(loc, "loc")
         normalized_from_loc = (
             None if from_loc is None else self._normalize_drag_point(from_loc, "from_loc")
         )
         effective_duration = self._normalize_drag_duration(duration)
-        sleep(0.5)
         if normalized_from_loc is None:
-            cx, cy = uia.GetCursorPos()
+            cx, cy = native_input.cursor_position()
         else:
             cx, cy = normalized_from_loc
-        uia.DragDrop(cx, cy, x, y, moveSpeed=1, duration=effective_duration)
+        flash_overlay.cancel_active_flash()
+        start_root, end_root = elements.root_at(cx, cy), elements.root_at(x, y)
+
+        def check_start(px, py):
+            if not start_root or elements.root_at(px, py) != start_root:
+                raise elements.StaleTarget("TARGET_STALE: drag source window changed before pressing")
+
+        def check_end(px, py):
+            # Window-title drags and drag images may move the source over the drop point.
+            if not end_root or elements.root_at(px, py) not in {end_root, start_root}:
+                raise elements.StaleTarget("TARGET_STALE: drag destination window changed during movement")
+            if before_release is not None:
+                before_release(px, py)
+
+        if before_release is not None:
+            # Preserve the target resolver for feedback tracking as well as the final guard.
+            check_end.motion_target = getattr(before_release, "motion_target", None)
+            check_end.tracking = getattr(before_release, "tracking", None)
+            check_end.window_handle = getattr(before_release, "window_handle", 0)
+            if check_end.motion_target is None:
+                del check_end.motion_target
+            if check_end.tracking is None:
+                del check_end.tracking
+        final = native_input.drag((cx, cy), (x, y), duration=effective_duration,
+                                  before_press=check_start, before_release=check_end)
+        if final is not None:
+            x, y = final
         return {
             "start": [cx, cy],
             "end": [x, y],
             "duration": effective_duration,
         }
 
-    def move(self, loc: tuple[int, int]):
+    def move(self, loc: tuple[int, int], *, target_guard=None):
         """Glide the pointer to (x, y) through real move events (hover menus/tooltips react)."""
         x, y = loc
         flash_overlay.cancel_active_flash()
-        native_input.move_to(int(x), int(y), duration=0.12)
+        return native_input.click(int(x), int(y), count=0, glide=0.12, before_press=target_guard)
 
     def shortcut(self, shortcut: str, repeat: int = 1):
         """Press a key combination ("ctrl+s", "alt+f4") or a sequence ("ctrl+k ctrl+s")."""

@@ -26,7 +26,7 @@ import ctypes
 import ctypes.wintypes as wt
 import math
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -54,7 +54,8 @@ KEYEVENTF_UNICODE = 0x0004
 WHEEL_DELTA = 120
 
 # Tags every event we inject, so they can be told apart from physical input if ever needed.
-EXTRA_INFO = 0x574D4350  # "WMCP"
+_PROCESS_ID = ctypes.windll.kernel32.GetCurrentProcessId() & 0xFFFFFFFF
+EXTRA_INFO = 0x574D4350 ^ _PROCESS_ID  # Unique process tag, including 32-bit input transports.
 
 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
 SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
@@ -111,6 +112,57 @@ _user32.GetAsyncKeyState.restype = ctypes.c_short
 class InputBlockedError(RuntimeError):
     """Windows refused (part of) the input -- nothing should be assumed to have happened."""
 
+    def __init__(self, message: str, *, accepted_events: int = 0):
+        super().__init__(message)
+        self.accepted_events = accepted_events
+
+
+def _check_active() -> None:
+    from windows_mcp.engine.sessions import _bound
+    from windows_mcp.infrastructure.authorization import check_dispatch
+    from windows_mcp.desktop.pointer_motion import check_handoff
+
+    check_handoff()
+    session = _bound.get()
+    if session is not None and session.cancelled.is_set():
+        raise InputBlockedError("CANCELLED: input stopped by the owning session")
+    check_dispatch()
+
+
+def _wait(seconds: float) -> None:
+    """Bound cancellation/revocation latency during a gesture, even between input batches."""
+    remaining = seconds
+    while remaining > 0:
+        _check_active()
+        interval = min(remaining, 0.02)
+        time.sleep(interval)
+        remaining -= interval
+    _check_active()
+
+
+def _partial_releases(inputs: Sequence[INPUT]) -> list[INPUT]:
+    """Release only buttons/keys left DOWN by an accepted prefix of our own batch."""
+    held: dict[tuple, INPUT] = {}
+    for event in inputs:
+        if event.type == INPUT_KEYBOARD:
+            key = event.u.ki
+            identity = (INPUT_KEYBOARD, key.wVk, key.wScan, key.dwFlags & ~KEYEVENTF_KEYUP)
+            if key.dwFlags & KEYEVENTF_KEYUP:
+                held.pop(identity, None)
+            else:
+                up = INPUT.from_buffer_copy(event)
+                up.u.ki.dwFlags |= KEYEVENTF_KEYUP
+                held[identity] = up
+        elif event.type == INPUT_MOUSE:
+            flags = event.u.mi.dwFlags
+            for down, up in _BUTTONS.values():
+                identity = (INPUT_MOUSE, down)
+                if flags & down:
+                    held[identity] = _mouse(up)
+                if flags & up:
+                    held.pop(identity, None)
+    return list(reversed(held.values()))
+
 
 def _send(inputs: Sequence[INPUT]) -> None:
     if not inputs:
@@ -128,6 +180,9 @@ def _send(inputs: Sequence[INPUT]) -> None:
         if not releases:
             raise InputBlockedError("CANCELLED: input stopped by the owning session")
     if not releases:
+        from windows_mcp.desktop.pointer_motion import check_handoff
+
+        check_handoff()
         from windows_mcp.infrastructure.authorization import check_dispatch, check_window_dispatch, _dispatch
 
         if _dispatch.get() is not None:
@@ -149,13 +204,24 @@ def _send(inputs: Sequence[INPUT]) -> None:
                 check_dispatch()
     array = (INPUT * len(inputs))(*inputs)
     inserted = _user32.SendInput(len(inputs), array, ctypes.sizeof(INPUT))
+    from windows_mcp.engine.dispatch import record_native
+
+    record_native(inputs, inserted)
     if inserted != len(inputs):
         error = ctypes.get_last_error()
-        raise InputBlockedError(
+        failure = InputBlockedError(
             f"Windows accepted only {inserted} of {len(inputs)} input events (error {error}). "
             "Input is blocked when the target window runs as administrator while this server "
-            "does not, when a UAC/secure-desktop prompt is showing, or when the screen is locked."
+            "does not, when a UAC/secure-desktop prompt is showing, or when the screen is locked.",
+            accepted_events=inserted,
         )
+        cleanup = _partial_releases(inputs[:inserted])
+        if cleanup:
+            try:
+                _send(cleanup)
+            except BaseException as cleanup_error:
+                raise failure from cleanup_error
+        raise failure
 
 
 # --------------------------------------------------------------------------------------------
@@ -190,7 +256,8 @@ def to_absolute(x: int, y: int, screen: VirtualScreen | None = None) -> tuple[in
 
 def cursor_position() -> tuple[int, int]:
     point = wt.POINT()
-    _user32.GetCursorPos(ctypes.byref(point))
+    if not _user32.GetCursorPos(ctypes.byref(point)):
+        raise InputBlockedError("INPUT_CURSOR_UNAVAILABLE: Windows could not read the cursor position")
     return point.x, point.y
 
 
@@ -214,6 +281,10 @@ def move_to(x: int, y: int, duration: float = 0.0) -> tuple[int, int]:
 
     Returns the final cursor position (always exactly (x, y) unless Windows blocks the cursor).
     """
+    from windows_mcp.desktop import pointer_motion
+
+    if pointer_motion.enabled():
+        return pointer_motion.move(int(x), int(y), duration=duration if duration > 0 else None)
     x, y = int(x), int(y)
     screen = virtual_screen()
     if duration > 0:
@@ -223,11 +294,12 @@ def move_to(x: int, y: int, duration: float = 0.0) -> tuple[int, int]:
         for step in range(1, steps):
             t = _ease(step / steps)
             _send([_move_event(round(start_x + (x - start_x) * t), round(start_y + (y - start_y) * t), screen)])
-            time.sleep(duration / steps)
+            _wait(duration / steps)
     _send([_move_event(x, y, screen)])
     final = cursor_position()
     if final != (x, y):
-        # Absolute mapping can be off by a pixel on odd virtual-screen sizes; pin it exactly.
+        # Preserve the native cursor correction for rounding/session-specific mapping.
+        _check_active()
         _user32.SetCursorPos(x, y)
         final = cursor_position()
     return final
@@ -247,22 +319,32 @@ def _button_flags(button: str) -> tuple[int, int]:
         raise ValueError(f"button must be one of {sorted(_BUTTONS)}, got {button!r}") from None
 
 
-def click(x: int, y: int, button: str = "left", count: int = 1, glide: float = 0.04) -> tuple[int, int]:
+def click(x: int, y: int, button: str = "left", count: int = 1, glide: float = 0.04,
+          *, before_press: Callable[[int, int], None] | None = None) -> tuple[int, int]:
     """Real click(s) at (x, y). ``count`` 0 only moves (hover), 2 is a double click, 3 a triple."""
     down, up = _button_flags(button)
     if count < 0 or count > 3:
         raise ValueError("clicks must be between 0 and 3")
+    from windows_mcp.desktop import pointer_motion
+
+    if pointer_motion.enabled():
+        return pointer_motion.click(x, y, button=button, count=count, target=before_press)
     start = cursor_position()
     final = move_to(x, y, duration=glide if math.dist(start, (x, y)) > 4 else 0.0)
     if final != (x, y):
         raise InputBlockedError(
-            f"INPUT_TARGET_UNREACHABLE: cursor could not reach ({x},{y}); "
+            f"INPUT_TARGET_UNREACHABLE: cursor could not reach ({x},{y}) (observed {final}); "
             "no mouse button was pressed. Check the input desktop and cursor restrictions."
         )
     if count == 0:
+        if before_press is not None:
+            before_press(x, y)
         return final
     gap = min(0.06, _user32.GetDoubleClickTime() / 5000.0)
     for index in range(count):
+        _check_active()
+        if before_press is not None:
+            before_press(x, y)
         if cursor_position() != (x, y):
             raise InputBlockedError(
                 "INPUT_TARGET_UNREACHABLE: cursor moved away from the target; "
@@ -270,7 +352,7 @@ def click(x: int, y: int, button: str = "left", count: int = 1, glide: float = 0
             )
         _send([_mouse(down), _mouse(up)])
         if index + 1 < count:
-            time.sleep(gap)
+            _wait(gap)
     return final
 
 
@@ -286,17 +368,38 @@ def drag(
     start: tuple[int, int],
     end: tuple[int, int],
     button: str = "left",
-    duration: float = 0.35,
-) -> None:
+    duration: float | None = None,
+    *,
+    before_press: Callable[[int, int], None] | None = None,
+    before_release: Callable[[int, int], None] | None = None,
+) -> tuple[int, int]:
     """Press at ``start``, glide to ``end`` through real move events, release. Always releases."""
-    move_to(*start)
+    if duration is not None and (not math.isfinite(duration) or not 0 <= duration <= 10):
+        raise ValueError("duration must be finite and between 0 and 10 seconds")
+    _button_flags(button)
+    from windows_mcp.desktop import pointer_motion
+
+    if pointer_motion.enabled():
+        return pointer_motion.drag(start, end, button=button, duration=duration,
+                                   before_press=before_press, before_release=before_release)
+    if move_to(*start, duration=0.04) != start:
+        raise InputBlockedError("INPUT_TARGET_UNREACHABLE: drag start could not be reached; no button was pressed")
+    _check_active()
+    if before_press is not None:
+        before_press(*start)
+    if cursor_position() != start:
+        raise InputBlockedError("INPUT_TARGET_UNREACHABLE: cursor left the drag start; no button was pressed")
     press(button)
     try:
-        time.sleep(0.05)
-        move_to(*end, duration=max(duration, 0.05))
-        time.sleep(0.05)
+        _wait(0.05)
+        if move_to(*end, duration=0.35 if duration is None else duration) != end:
+            raise InputBlockedError("INPUT_TARGET_UNREACHABLE: drag end could not be reached; button released for cleanup")
+        _wait(0.05)
+        if before_release is not None:
+            before_release(*end)
     finally:
         release(button)
+    return end
 
 
 def wheel(notches: int, horizontal: bool = False, interval: float = 0.03) -> None:
@@ -305,7 +408,7 @@ def wheel(notches: int, horizontal: bool = False, interval: float = 0.03) -> Non
     step = WHEEL_DELTA if notches > 0 else -WHEEL_DELTA
     for _ in range(abs(int(notches))):
         _send([_mouse(flag, data=step)])
-        time.sleep(interval)
+        _wait(interval)
 
 
 # --------------------------------------------------------------------------------------------
@@ -471,7 +574,7 @@ def press_keys(spec: str, repeat: int = 1, interval: float = 0.03) -> list[Chord
     for _ in range(repeat):
         for chord in chords:
             _send(chord_events(chord))  # one atomic batch per chord
-            time.sleep(interval)
+            _wait(interval)
     return chords
 
 
@@ -510,7 +613,7 @@ def type_text(text: str, chunk_chars: int = 32, pause: float = 0.01) -> int:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     for start in range(0, len(normalized), chunk_chars):
         _send(text_events(normalized[start : start + chunk_chars]))
-        time.sleep(pause)
+        _wait(pause)
     return len(normalized)
 
 

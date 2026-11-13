@@ -60,7 +60,7 @@ def register(mcp, *, get_desktop, get_analytics):
         except TimeoutError:
             return ObservationResponse(status="TIMEOUT", diagnostics=["UIA provider exceeded the observation deadline; no action was dispatched"]).model_dump(mode="json")
 
-    @mcp.tool(name="Execute", description="Act on a server-issued Observe target. auto chooses supported UIA patterns then physical input; semantic/physical can be explicit. Results distinguish VERIFIED from DISPATCHED_UNVERIFIED. Supply a typed business postcondition in expected. select_text/replace_text/delete_text accept text range options (literal + optional one-based occurrence, or provider unit/index/count); append_text uses document end. Local edits require verified selection/focus and physical input. This tool never retries dispatched input automatically.", annotations=_WRITE, output_schema=ActionResult.model_json_schema())
+    @mcp.tool(name="Execute", description="Act on a server-issued Observe target. auto follows Session.interaction_mode: semantic prefers supported UIA patterns; pointer sends real mouse input for click/double_click/right_click/hover, rechecking the pinned control after movement before each press. Explicit semantic/physical modes override the server setting. dispatch reports accepted native events and UIA provider calls; input_dispatched never implies business success. Results distinguish VERIFIED from DISPATCHED_UNVERIFIED. Supply a typed business postcondition in expected. select_text/replace_text/delete_text accept text range options (literal + optional one-based occurrence, or provider unit/index/count); append_text uses document end. Local edits require verified selection/focus and physical input. This tool never retries dispatched input automatically.", annotations=_WRITE, output_schema=ActionResult.model_json_schema())
     @with_analytics(get_analytics(), "Execute-Tool")
     def execute_tool(target: str, action: str = "click", value: str | None = None,
                      mode: Literal["auto", "semantic", "physical", "visual"] = "auto",
@@ -119,6 +119,7 @@ def register(mcp, *, get_desktop, get_analytics):
                 await runtime.browser.close_session(session.session_id)
         elif operation == "resume":
             session.cancelled.clear()
+            session.pointer_interruption = None
         elif operation == "acknowledge":
             runtime.pending.acknowledge(session.session_id, action_id)
         trust = runtime.policy.trust.status() if runtime.policy.trust else None
@@ -126,9 +127,18 @@ def register(mcp, *, get_desktop, get_analytics):
             trust = None
         from windows_mcp.vision.native_bridge import capabilities
         native = await asyncio.to_thread(capabilities) if operation == "status" else {"probe": "skipped_for_control_operation"}
+        from windows_mcp.desktop.coordination import status as desktop_status
+        from windows_mcp.vision.capture_worker import worker
+
         return {"status": Status.CANCELLED.value if session.cancelled.is_set() else "READY",
+                "desktop_coordination": desktop_status(), "capture_worker": worker.status(),
                 "native_components": native,
                 "session_id": session.session_id, "revision": session.revision,
+                "interaction_mode": runtime.interaction_mode,
+                "pointer_motion": runtime.motion.style, "hover_ms": runtime.motion.hover_ms,
+                "human_takeover": runtime.motion.human_takeover and runtime.motion.style == "natural",
+                "pointer_interruption": session.pointer_interruption,
+                "last_pointer_motion": session.last_pointer_motion,
                 "workspace_roots": [str(root) for root in runtime.policy.roots],
                 "r3_enabled": runtime.policy.allow_r3, "pending_action": runtime.pending.status(),
                 "trust_mode": (trust or {}).get("mode"), "trust_scope": trust,
@@ -160,7 +170,7 @@ def register(mcp, *, get_desktop, get_analytics):
                 "operator_guidance": "由本地操作员核对会话、应用、参数和出网站点。勾选「全自动」仅覆盖所示会话与应用，最长8小时；出网站点单独确认。AI不能代为批准或勾选。",
                 "operator_command": f"windows-mcp approve {request['request_id']}"}
 
-    @mcp.tool(name="Visual", description="Window-bound image fallback. auto tries HWND Windows.Graphics.Capture, isolated PrintWindow, then foreground desktop crop. Window capture may observe covered/background windows; physical clicks still require foreground and hit-testing. region is an unscaled image ROI; max_width bounds transfer. Optional local OCR returns image-pixel word boxes and availability diagnostics. previous_target/only_if_changed reduce duplicate images; pixel change is not business verification. Declare fallback_reason.", annotations=_READ)
+    @mcp.tool(name="Visual", description="Window-bound image fallback. auto tries HWND Windows.Graphics.Capture, isolated PrintWindow, then foreground desktop crop. A serialized native capture process is reused, with job-wide timeout cleanup. Window capture may observe covered/background windows; physical clicks require foreground, hit-testing and local pixel-patch revalidation before pressing. Changed content requires a new observation; no automatic relocation/replay. region is an unscaled image ROI; max_width bounds transfer. Optional local OCR returns image-pixel word boxes and availability diagnostics. previous_target/only_if_changed omit duplicate image encoding/transfer, not fresh capture. Pixel agreement is not control identity or business verification. Declare fallback_reason.", annotations=_READ)
     @with_analytics(get_analytics(), "Visual-Tool")
     async def visual_tool(window: str, fallback_reason: Literal["no_semantic_target", "canvas", "provider_failure"],
                     backend: Literal["auto", "wgc", "printwindow", "desktop"] = "auto",

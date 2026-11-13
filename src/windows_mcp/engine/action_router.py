@@ -1,14 +1,15 @@
-"""Semantic-first actions. Never retry an already dispatched, unverified action."""
+"""Policy-routed actions. Never retry an already dispatched, unverified action."""
 
 from __future__ import annotations
 
 import json
 
 from windows_mcp.desktop import elements
-from windows_mcp.engine.contracts import ActionResult, Status, Verification, TextRangeSpec, normalize_expected
+from windows_mcp.engine.contracts import ActionResult, DispatchEvidence, Status, Verification, TextRangeSpec, normalize_expected
 from windows_mcp.engine.target_resolver import resolve
 from windows_mcp.engine.verifier import verify
 from windows_mcp.engine.pending import ActionInProgress
+from windows_mcp.engine.dispatch import trace_dispatch
 
 _CAPABILITY = {"click": "invoke", "invoke": "invoke", "toggle": "toggle", "select": "select",
                "expand": "expand", "collapse": "expand", "set_value": "value", "set_range": "range",
@@ -17,6 +18,26 @@ _CAPABILITY = {"click": "invoke", "invoke": "invoke", "toggle": "toggle", "selec
 
 def execute(desktop, runtime, session, *, target: str, action: str, value: str | None = None,
             mode: str = "auto", expected: dict | None = None, text=None) -> dict:
+    with trace_dispatch() as trace:
+        result = _execute(desktop, runtime, session, target=target, action=action,
+                          value=value, mode=mode, expected=expected, text=text)
+    evidence = trace.snapshot()
+    result.dispatch = DispatchEvidence(**evidence)
+    result.input_dispatched = bool(evidence["native_events"] or evidence["uia_calls"])
+    mutated = bool(evidence["button_downs"] or evidence["keyboard_events"] or evidence["uia_calls"])
+    if result.input_dispatched:
+        result.retryable = False
+        if result.method == "none":
+            result.method = "uia_provider_call" if evidence["uia_calls"] else "win32_sendinput"
+    if mutated:
+        result.precondition_passed = True
+        if result.status in {Status.FAILED, Status.TARGET_STALE, Status.FOCUS_MISMATCH, Status.BLOCKED_BY_POLICY}:
+            result.status = Status.DISPATCHED_UNVERIFIED
+    return result.model_dump()
+
+
+def _execute(desktop, runtime, session, *, target: str, action: str, value: str | None = None,
+             mode: str = "auto", expected: dict | None = None, text=None) -> ActionResult:
     expected = normalize_expected(expected)
     if text is not None:
         text = TextRangeSpec.model_validate(text).model_dump(mode="json")
@@ -37,16 +58,18 @@ def execute(desktop, runtime, session, *, target: str, action: str, value: str |
             if expected:
                 verify(desktop, runtime, session, expected)
             result.fallback_reason = click(session, target, coordinates)
-            result.precondition_passed, result.input_dispatched = True, True
+            result.precondition_passed = True
             result.method = "win32_sendinput_visual"
             result.verification = verify(desktop, runtime, session, expected)
             result.status = Status.VERIFIED if result.verification.passed is True else Status.DISPATCHED_UNVERIFIED
-            return result.model_dump()
+            return result
         element = resolve(desktop, session, target)
         capability = _CAPABILITY.get(action)
         if mode == "semantic":
             via = "uia"
         elif mode == "physical":
+            via = "input"
+        elif runtime.interaction_mode == "pointer" and action in {"click", "double_click", "right_click", "hover"}:
             via = "input"
         elif action in {"focus", "select_text"} or capability in element.capabilities:
             via = "uia"
@@ -57,10 +80,9 @@ def execute(desktop, runtime, session, *, target: str, action: str, value: str |
             # Validate kinds and file scopes before dispatch, including a missing output file.
             verify(desktop, runtime, session, expected)
         session.check()
-        result.precondition_passed = True
-        result.input_dispatched = True
         options = {"text": text} if text is not None else {}
         outcome = elements.act(desktop, element, action, value, via=via, **options)
+        result.precondition_passed = True
         result.method = outcome.method
         if expected:
             evidence = verify(desktop, runtime, session, expected)
@@ -87,6 +109,11 @@ def execute(desktop, runtime, session, *, target: str, action: str, value: str |
         result.status = Status.FOCUS_MISMATCH
         result.errors = [str(exc)]
         result.input_dispatched = False
+    except PermissionError as exc:
+        result.status = Status.BLOCKED_BY_POLICY
+        result.errors = [str(exc)]
     except (elements.ElementError, ValueError, RuntimeError) as exc:
         result.errors = [str(exc)]
-    return result.model_dump()
+        if session.cancelled.is_set():
+            result.status = Status.CANCELLED
+    return result

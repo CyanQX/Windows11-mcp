@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Windows-MCP 1.5.0</h1>
+  <h1>Windows-MCP 1.6.0</h1>
   <p>让已连接的 AI 观察、操作并核对真实 Windows 应用</p>
 </div>
 
@@ -14,7 +14,7 @@
 
 Windows-MCP 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude Code、Codex 桌面端、DeepSeek Harness、Gemini CLI、Zcode 或 Trae 后，AI 可以读取真实窗口和控件、操作应用和网页，并通过状态或文件结果核对任务。模型与 AI 客户端由你选择，本项目不提供模型账号或云端算力。
 
-**当前稳定版：[v1.5.0](https://github.com/CyanQX/Windows11-mcp/releases/tag/v1.5.0)，文档更新于 2026-10-27。** 本版整合前三批引擎、文本效率、窗口视觉与部署配套升级；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
+**本次发布：v1.6.0，文档更新于 2026-11-14。** 整合第四至第六批统一真实输入、自然移动、动态控件跟随、人工接管、视觉落点复核和捕获进程复用。安装包在发布流水线完成后提供；正式安装包、验证记录和校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整版本变化见 [CHANGELOG](CHANGELOG.md)。
 
 | 组成 | 负责什么 |
 |---|---|
@@ -24,13 +24,70 @@ Windows-MCP 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude C
 
 适合窗口控件操作、表单填写、应用内文本编辑、重复桌面流程和结果检查。网页聊天或云端模型需要能够连接本机 MCP 的客户端，打开本仓库网页不会自动获得桌面控制能力。
 
-![Windows-MCP 1.5.0 安装与维护管理器实拍](assets/manager-v1.5.0.png)
+![Windows-MCP 1.5.0 安装与维护管理器历史实拍](assets/manager-v1.5.0.png)
 
-以上为本版源码在隔离验收环境中的真实界面截图；客户端检测状态为测试夹具数据。
+以上为 v1.5.0 在隔离验收环境中的真实界面截图（管理器布局沿用）；客户端检测状态为测试夹具数据。
 
 本项目基于 [CursorTouch/Windows-MCP](https://github.com/CursorTouch/Windows-MCP) 二次开发，遵循 [MIT 许可证](LICENSE.md)，保留上游及第三方组件的许可声明。
 
 ## 功能简介
+
+### 第四批：统一鼠标输入（1.6.0）
+
+1.6.0 整合第四至第六批：第四批统一输入、目标复核和执行记录；第五批提供自然移动、动态目标和人工接管；第六批完成视觉局部复核、捕获进程复用和跨进程桌面协调。
+
+| 能力 | 当前行为 |
+|---|---|
+| 鼠标优先策略 | `Execute(mode="auto")` 可按服务配置，对 click、double_click、right_click、hover 使用真实鼠标。显式 `mode="physical"` / `"semantic"` 优先于服务配置；其他动作保持原策略 |
+| 统一拖拽 | 公开 `Move(drag=True)` 与点击、悬停共用 SendInput 后端；保留 from_loc / duration 参数，确认起点到达后才按下，结束或失败均执行必要释放 |
+| 按下前复核 | Execute/Act，以及 Click/Type 的控件引用路径，在移动完成后、每次按下前重新核对身份、可见性、启用状态、边界和命中对象。目标变化时停止；裸坐标、无独立控件的词框及旧 MultiSelect/MultiEdit 的批量坐标路径无法提供同等的控件身份保证 |
+| 取消与清理 | 移动和拖拽的等待分段检查取消、授权撤销；停止后的清理释放仍可执行。Windows 仅接受部分输入时，释放已接受且仍按下的本次按钮/按键；系统拒绝清理时仍会报告错误 |
+| 派发证据 | 桌面 Execute 的 `dispatch` 返回已接受的 native_events、pointer_moves、button_downs、button_ups、keyboard_events、uia_calls 与 partial_native。`input_dispatched` 根据实际边界记录，已满足条件的无动作不会冒称输入；这些记录不等于应用收到事件或业务结果完成 |
+
+开启鼠标优先，可在**当前使用的服务配置文件**中加入：
+
+```toml
+[interaction]
+mode = "pointer"
+```
+
+也可用控制台参数启动：`windows-mcp serve --interaction-mode pointer`，或设置环境变量 `WINDOWS_MCP_INTERACTION_MODE=pointer`。优先级为命令行 > 环境变量 > 配置文件；未设置时仍为 `semantic`，保持既有自动路由。保存配置后重启 MCP 服务并重连客户端，用 `Session(operation="status").interaction_mode` 核对实际模式。模式只选择执行方式，沿用现有操作授权。
+
+已有接口也支持单次指定真实鼠标：`Observe(window="目标窗口")` → `Execute(target="返回的目标 ID", action="click", mode="physical")`。按下前检查与输入发送之间仍可能发生界面变化，失败或未验证时应先重新观察结果；取消无法撤销已送到应用的操作。
+
+### 第五批：自然移动与动态目标（1.6.0）
+
+第五批的物理鼠标默认采用 `natural` 控制器：根据距离和目标大小选择约 0.12–0.8 秒的移动时间，使用五次平滑速度曲线，接近目标时减速。控制器以 90 Hz 为调度目标，实际频率取决于 Windows、UIA provider 和机器负载；空间路径默认直线，不加入随机抖动。显式拖拽 duration 仍控制该段移动时长。
+
+- **本地反馈与目标跟踪**：读取实际光标位置，容许输入队列的短暂投递延迟，再对残余误差进行有限修正。有控件身份的目标使用 UIA/窗口变化事件唤醒刷新，并以约 100 毫秒的定向回读兜底；移动后再强制复核。目标移动会调整路径，替换、隐藏、禁用或持续不稳定时停止，最多三次重新规划。此过程不请求截图，也不需要模型逐帧指挥。
+- **悬停与按压**：悬停默认等待 400 毫秒；普通点击到达后短暂稳定，再以约 50 毫秒的按压完成一次点击。悬停等待是有上限的停留，不保证每个应用都会显示菜单或提示。
+- **外部输入接管**：鼠标手势期间，通过独立消息线程监听外部鼠标/键盘输入，保留用户输入，停止本次后续输入并清理本次按住的按钮。当前客户端会话暂停，Session.pointer_interruption 返回原因。核对已经发生的结果，等待用户明确继续后再调用 `Session(operation="resume")`；客户端不应自行抢回控制。输入标记用于区分本服务事件，不是安全边界，也不把其他软件注入误称为硬件操作。
+- **可核对的运行记录**：桌面 Execute.dispatch.motion 返回 style、elapsed_ms、samples、replans、max_feedback_error_px、stop_reason、human_takeover、window_events；Session.last_pointer_motion 也提供最近一次记录。max_feedback_error_px 是命令与回读之间的最大差异，包含投递延迟，不等于最终点击误差；业务结果仍需要 expected / Verify。
+
+推荐配置：
+
+```toml
+[interaction]
+mode = "pointer"
+pointer_motion = "natural"
+hover_ms = 400
+human_takeover = true
+```
+
+控制台可用 `windows-mcp serve --interaction-mode pointer --pointer-motion natural`；`WINDOWS_MCP_POINTER_MOTION` 对应移动策略。`pointer_motion="legacy"` 保留第四批固定时序，不启用新的悬停停留和接管监测；`hover_ms` 为 0–2000 的整数。`human_takeover=false` 关闭自然手势期间的外部输入监测，协作取消仍保留；Session.human_takeover 显示实际是否启用。两种移动策略均沿用相同授权边界；Win32 原生下拉列表必须通过 GetComboBoxInfo 证明归属，不能只凭进程或窗口类名放行。
+
+控件身份跟踪不适用于裸坐标、视觉图内坐标或旧批量坐标路径。接管只暂停当前会话的鼠标手势；跨进程桌面工作互斥见第六批。UIA provider 读取如果阻塞，Python 无法强制中断，停止和释放可能延迟；这些机制不提供硬实时或操作系统沙箱保证。
+
+### 第六批：视觉复核、进程复用与桌面协调（1.6.0）
+
+- **捕获进程复用**：WGC / PrintWindow 按需请求共用一个串行原生辅助进程，复用解释器和组件导入；每次仍重新取帧，WGC 会话仍逐次创建，不返回历史帧，也不在后台持续录像。OCR 和依赖探测继续使用独立的一次性进程。
+- **明确的故障边界**：单次原生请求默认 12 秒，超时结束整个 Job Object 并回收进程；失败请求不自动重发。下一次明确请求再创建进程，读取器校验响应长度及请求编号；服务关闭时回收辅助进程。
+- **视觉点击前局部核对**：保存有界的本地参考图，鼠标到达后、按下前，仅在本地重新取帧并比较落点周围最多 33×33 个图像像素。考虑 ROI、缩放和负屏坐标；局部内容变化返回 TARGET_STALE，要求重新观察。再次核对窗口生存期、几何、前台和遮挡后才允许按下；没有自动追图、换点或失败重点击。像素相同不能证明控件身份，动画、悬停样式或文本变化可能要求重新观察。
+- **跨进程桌面工作互斥**：同一 Windows 登录会话中的新版服务共用命名互斥量，覆盖每段桌面线程工作，包括鼠标手势与同步 UIA。被占用时以 DESKTOP_BUSY 拒绝尚未开始的工作，不排队补点；UIA 超时仍执行时继续持有，直到实际结束；进程退出后由 Windows 释放。其他自动化软件不参与，已有旧版本服务也不参与；这不是系统级输入隔离。多段工具调用不构成一个跨步骤事务。
+- **节省重复输出**：only_if_changed 在图像未变且不需要 OCR 时跳过 PNG 编码与图片传输，仍读取新帧。每会话最多保留 8 张参考图、合计 1600 万像素；视觉引用保留 60 秒有效期，可能因容量提前失效。
+- **可测量状态**：Session.capture_worker 提供进程、请求、启动、超时和最近耗时；Session.desktop_coordination 提供当前占用状态。Visual.capture_elapsed_ms 是捕获/准备图片的耗时，不包含后续 OCR；可用 `uv run python scripts/benchmark_capture.py --hwnd <窗口句柄> --backend printwindow --count 6` 测量冷启动和后续请求，数据随应用与机器变化，不承诺固定提速倍数。
+
+语义控件仍优先使用 Observe/Execute；无控件画布再显式使用 Visual。自然鼠标移动和控件跟随无需截图；只有视觉坐标点击增加一次本地图片复核，不将图片发给模型。UIA provider 阻塞、受保护画面、最小化窗口、不同权限级别和安全桌面仍可能不可用。
 
 ### 1.5.0 的三批升级
 
@@ -49,7 +106,7 @@ Windows-MCP 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude C
 ### 观察、操作、核对
 
 1. **观察**：优先使用 Observe、Find 或指定窗口的 Snapshot，选择当前会话返回的目标 ID。
-2. **操作**：Execute 优先选择支持的 UIA 模式；需要真实输入时检查前台、窗口身份和遮挡。Browser 操作独立 Playwright 会话，NativeAPI 操作明确授权的文本文件。
+2. **操作**：Execute 默认优先选择支持的 UIA 模式；可通过 interaction.mode 切换自动点击的鼠标优先策略。真实输入检查窗口身份和遮挡；Browser 操作独立 Playwright 会话，NativeAPI 操作明确授权的文本文件。
 3. **核对**：提供 expected，或调用 Verify 读取独立后置条件。`VERIFIED` 表示条件已得到证据支持；`DISPATCHED_UNVERIFIED` 只说明动作已派发。
 
 ```text
@@ -111,12 +168,12 @@ OCR 实际识别尚未在当前验收机通过：该机无包标识、无 Tesser
 
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.5.0/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.5.0；请在发布页核对所下载资产的版本。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.0/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.6.0；请在发布页核对所下载资产的版本。
 
 | 格式 | 文件与使用方法 | 数据位置 |
 |---|---|---|
-| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.5.0/Windows-MCP-Setup-v1.5.0-x64.exe) | `Windows-MCP-Setup-v1.5.0-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.5.0/Windows-MCP-Portable-v1.5.0-x64.zip) | `Windows-MCP-Portable-v1.5.0-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
+| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.0/Windows-MCP-Setup-v1.6.0-x64.exe) | `Windows-MCP-Setup-v1.6.0-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.6.0/Windows-MCP-Portable-v1.6.0-x64.zip) | `Windows-MCP-Portable-v1.6.0-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
 
 安装版默认路径为 `%LOCALAPPDATA%\Programs\Windows-MCP`，按用户安装，无需管理员权限；系统卸载入口位于 Windows“设置 → 应用”。**卸载管理器会保留已接入的 Skill/MCP 和个人数据，对应接入须在管理器中单独卸载。**
 

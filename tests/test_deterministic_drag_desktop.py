@@ -13,16 +13,14 @@ def _desktop() -> Desktop:
 def test_desktop_drag_uses_explicit_start_and_duration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[int, int, int, int, int, float | None]] = []
+    calls = []
     desktop = _desktop()
 
     monkeypatch.setattr(service, "sleep", lambda seconds: None)
     monkeypatch.setattr(
-        service.uia,
-        "DragDrop",
-        lambda x1, y1, x2, y2, moveSpeed=1, duration=None: calls.append(
-            (x1, y1, x2, y2, moveSpeed, duration)
-        ),
+        service.native_input,
+        "drag",
+        lambda start, end, **kwargs: calls.append((start, end, kwargs["duration"])),
     )
 
     result = desktop.drag(
@@ -31,7 +29,7 @@ def test_desktop_drag_uses_explicit_start_and_duration(
         duration="0.25",
     )
 
-    assert calls == [(10, 20, 100, 200, 1, 0.25)]
+    assert calls == [((10, 20), (100, 200), 0.25)]
     assert result["start"] == [10, 20]
     assert result["end"] == [100, 200]
     assert result["duration"] == 0.25
@@ -42,11 +40,11 @@ def test_desktop_drag_legacy_start_uses_current_cursor(monkeypatch: pytest.Monke
     desktop = _desktop()
 
     monkeypatch.setattr(service, "sleep", lambda seconds: None)
-    monkeypatch.setattr(service.uia, "GetCursorPos", lambda: (7, 8))
+    monkeypatch.setattr(service.native_input, "cursor_position", lambda: (7, 8))
     monkeypatch.setattr(
-        service.uia,
-        "DragDrop",
-        lambda x1, y1, x2, y2, **kwargs: calls.append((x1, y1, x2, y2)),
+        service.native_input,
+        "drag",
+        lambda start, end, **kwargs: calls.append((*start, *end)),
     )
 
     result = desktop.drag((30, 40))
@@ -75,8 +73,8 @@ def test_desktop_drag_rejects_boolean_duration_before_input(
         lambda seconds: pytest.fail("duration must be rejected before waiting"),
     )
     monkeypatch.setattr(
-        service.uia,
-        "DragDrop",
+        service.native_input,
+        "drag",
         lambda *args, **kwargs: pytest.fail("duration must be rejected before input"),
     )
 
@@ -109,8 +107,8 @@ def test_desktop_drag_rejects_invalid_points_before_waiting_or_input(
         lambda seconds: pytest.fail("point must be rejected before waiting"),
     )
     monkeypatch.setattr(
-        service.uia,
-        "DragDrop",
+        service.native_input,
+        "drag",
         lambda *args, **kwargs: pytest.fail("point must be rejected before input"),
     )
     kwargs: dict[str, object] = {

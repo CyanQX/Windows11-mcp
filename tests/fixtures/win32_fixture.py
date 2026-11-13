@@ -38,6 +38,7 @@ TBM_SETPOS = win32con.WM_USER + 5
 TBM_GETPOS = win32con.WM_USER
 WM_MOUSEHWHEEL = 0x020E  # not exported by win32con
 JOB_TIMER = 1
+MOVE_TIMER, INTERRUPT_TIMER = 3, 4
 _user32 = ctypes.windll.user32  # win32gui has no SetTimer/KillTimer
 
 _state = {"saves": 0, "hwnd": 0, "canvas": 0, "controls": {}}
@@ -63,6 +64,11 @@ def _set_status(text: str) -> None:
 
 # --------------------------------------------------------------------------- canvas window ----
 def canvas_proc(hwnd, msg, wparam, lparam):
+    if msg == win32con.WM_MOUSEMOVE and wparam & win32con.MK_LBUTTON:
+        cx, cy = _signed(lparam), _signed(lparam >> 16)
+        sx, sy = win32gui.ClientToScreen(hwnd, (cx, cy))
+        log(ev="mouse", kind="move", x=sx, y=sy)
+        return 0
     if msg in (
         win32con.WM_LBUTTONDOWN,
         win32con.WM_LBUTTONUP,
@@ -82,6 +88,8 @@ def canvas_proc(hwnd, msg, wparam, lparam):
         log(ev="mouse", kind=name, x=sx, y=sy)
         if msg in (win32con.WM_LBUTTONDOWN, win32con.WM_LBUTTONDBLCLK, win32con.WM_RBUTTONDOWN):
             win32gui.SetFocus(hwnd)
+        if msg == win32con.WM_LBUTTONDOWN and _state.pop("interrupt_on_down", False):
+            _user32.SetTimer(_state["hwnd"], INTERRUPT_TIMER, 60, None)
         return 0
     if msg in (win32con.WM_MOUSEWHEEL, WM_MOUSEHWHEEL):
         log(
@@ -121,6 +129,36 @@ def canvas_proc(hwnd, msg, wparam, lparam):
 
 # ---------------------------------------------------------------------------- main window -----
 def main_proc(hwnd, msg, wparam, lparam):
+    if msg == win32con.WM_APP + 31:
+        _user32.SetTimer(hwnd, MOVE_TIMER, max(50, min(1000, wparam)), None)
+        return 0
+    if msg == win32con.WM_APP + 32:
+        # Warm imports before the timed gesture; the intervention itself must be prompt.
+        from windows_mcp.desktop import native_input, pointer_motion
+        from windows_mcp.engine import sessions, dispatch
+        from windows_mcp.infrastructure import authorization
+
+        _state["external_input"] = (native_input, pointer_motion, sessions, dispatch, authorization)
+        _state["interrupt_on_down"] = True
+        return 0
+    if msg == win32con.WM_TIMER and wparam == MOVE_TIMER:
+        _user32.KillTimer(hwnd, MOVE_TIMER)
+        win32gui.MoveWindow(_state["controls"]["save"], 100, 225, 110, 30, True)
+        log(ev="target_moved", control="save", bounds=list(win32gui.GetWindowRect(_state["controls"]["save"])))
+        return 0
+    if msg == win32con.WM_TIMER and wparam == INTERRUPT_TIMER:
+        _user32.KillTimer(hwnd, INTERRUPT_TIMER)
+        if win32gui.GetForegroundWindow() != hwnd:
+            log(ev="intervention_skipped", reason="fixture_not_foreground")
+            return 0
+        from windows_mcp.desktop import native_input
+
+        events = [native_input._key_event(0x1B), native_input._key_event(0x1B, up=True)]
+        for event in events:
+            event.u.ki.dwExtraInfo = 0x54455354  # A different process's tagged test input.
+        native_input._send(events)
+        log(ev="external_intervention")
+        return 0
     if msg == win32con.WM_COMMAND:
         ctrl_id, code = wparam & 0xFFFF, (wparam >> 16) & 0xFFFF
         if ctrl_id == ID_SAVE and code == win32con.BN_CLICKED:

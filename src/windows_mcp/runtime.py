@@ -62,13 +62,22 @@ def on_desktop_thread() -> bool:
     return _thread_ident is not None and threading.get_ident() == _thread_ident
 
 
+def _desktop_job(func, args, kwargs):
+    from windows_mcp.desktop.coordination import desktop_lease
+    from windows_mcp.infrastructure.authorization import check_dispatch
+
+    with desktop_lease():
+        check_dispatch()
+        return func(*args, **kwargs)
+
+
 async def run_on_desktop(func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     """Run a blocking desktop function on the desktop thread without blocking the event loop."""
     if on_desktop_thread():
         return func(*args, **kwargs)
     loop = asyncio.get_running_loop()
     context = contextvars.copy_context()
-    call = functools.partial(context.run, func, *args, **kwargs)
+    call = functools.partial(context.run, _desktop_job, func, args, kwargs)
     return await loop.run_in_executor(desktop_executor(), call)
 
 
@@ -77,4 +86,4 @@ def call_on_desktop(func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     if on_desktop_thread():
         return func(*args, **kwargs)
     context = contextvars.copy_context()
-    return desktop_executor().submit(context.run, functools.partial(func, *args, **kwargs)).result()
+    return desktop_executor().submit(context.run, _desktop_job, func, args, kwargs).result()

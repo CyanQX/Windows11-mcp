@@ -50,12 +50,37 @@ class PolicyConfig:
     allowed_network_origins: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class MotionSettings:
+    style: str = "natural"
+    hover_ms: int = 400
+    human_takeover: bool = True
+
+    def __post_init__(self):
+        if self.style not in {"natural", "legacy"}:
+            raise ValueError("pointer_motion must be natural or legacy")
+        if isinstance(self.hover_ms, bool) or not isinstance(self.hover_ms, int) or not 0 <= self.hover_ms <= 2000:
+            raise ValueError("hover_ms must be an integer in 0..2000")
+        if not isinstance(self.human_takeover, bool):
+            raise ValueError("human_takeover must be a boolean")
+
+
+@dataclass
+class InteractionConfig:
+    # Preserve the existing automatic routing unless the operator opts into pointer clicks.
+    mode: str = "semantic"
+    pointer_motion: str = "natural"
+    hover_ms: int = 400
+    human_takeover: bool = True
+
+
 @dataclass
 class WindowsMCPConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
+    interaction: InteractionConfig = field(default_factory=InteractionConfig)
     source_path: Path | None = None
 
 
@@ -118,8 +143,22 @@ def load_config(path: Path | None) -> WindowsMCPConfig:
     security = data.get("security", {})
     tools = data.get("tools", {})
     policy = data.get("policy", {})
-    if any(not isinstance(section, dict) for section in (server, security, tools, policy)):
-        raise ValueError("server, security, tools and policy must be TOML tables")
+    interaction = data.get("interaction", {})
+    if any(not isinstance(section, dict) for section in (server, security, tools, policy, interaction)):
+        raise ValueError("server, security, tools, policy and interaction must be TOML tables")
+    if interaction.keys() - {"mode", "pointer_motion", "hover_ms", "human_takeover"}:
+        raise ValueError("Unknown interaction settings; supported keys: mode, pointer_motion, hover_ms, human_takeover")
+    if "mode" in interaction:
+        cfg.interaction.mode = _strict_string(interaction["mode"], "interaction.mode")
+        if cfg.interaction.mode not in {"semantic", "pointer"}:
+            raise ValueError("interaction.mode must be semantic or pointer")
+    if "pointer_motion" in interaction:
+        cfg.interaction.pointer_motion = _strict_string(interaction["pointer_motion"], "interaction.pointer_motion")
+    if "hover_ms" in interaction:
+        cfg.interaction.hover_ms = _strict_int(interaction["hover_ms"], "interaction.hover_ms")
+    if "human_takeover" in interaction:
+        cfg.interaction.human_takeover = _strict_bool(interaction["human_takeover"], "interaction.human_takeover")
+    MotionSettings(cfg.interaction.pointer_motion, cfg.interaction.hover_ms, cfg.interaction.human_takeover)
 
     _VALID_TRANSPORTS = {"stdio", "sse", "streamable-http"}
     if "transport" in server:
@@ -257,5 +296,17 @@ def write_config(cfg: WindowsMCPConfig, path: Path) -> None:
         policy_lines.append("allowed_network_origins = " + json.dumps(cfg.policy.allowed_network_origins))
     if policy_lines:
         lines += ["[policy]"] + policy_lines + [""]
+
+    interaction_lines = []
+    defaults = InteractionConfig()
+    for key in ("mode", "pointer_motion", "hover_ms", "human_takeover"):
+        value = getattr(cfg.interaction, key)
+        if value != getattr(defaults, key):
+            interaction_lines.append(f"{key} = {json.dumps(value)}")
+    MotionSettings(cfg.interaction.pointer_motion, cfg.interaction.hover_ms, cfg.interaction.human_takeover)
+    if cfg.interaction.mode not in {"semantic", "pointer"}:
+        raise ValueError("interaction.mode must be semantic or pointer")
+    if interaction_lines:
+        lines += ["[interaction]", *interaction_lines, ""]
 
     path.write_text("\n".join(lines), encoding="utf-8")

@@ -295,7 +295,10 @@ def register(
             x, y = _as_point(loc, "loc")
             under = _describe_point(x, y)
         before = elements.observe()
-        desktop.click(loc=[x, y], button=button, clicks=clicks)
+        options = {"before_press": elements.pointer_guard(target)} if label is not None and target is not None else {}
+        final_point = desktop.click(loc=[x, y], button=button, clicks=clicks, **options)
+        if isinstance(final_point, tuple) and len(final_point) == 2:
+            x, y = final_point
         changes = elements.wait_for_changes(before, timeout=0.5 if clicks else 0.15)
         kind = {0: "Hover", 1: "Single", 2: "Double", 3: "Triple"}[clicks]
         verb = "moved the pointer" if clicks == 0 else f"{button} clicked"
@@ -379,6 +382,7 @@ def register(
             f'{element.label} in "{element.window_title}"' if element is not None else _describe_point(x, y)
         )
         before = elements.observe(include_focus=False)
+        options = {"before_press": elements.pointer_guard(element)} if element is not None else {}
         used = desktop.type(
             loc=[x, y],
             text=text,
@@ -386,6 +390,7 @@ def register(
             clear=clear_flag,
             press_enter=enter_flag,
             method=method,
+            **options,
         )
         changes = elements.wait_for_changes(before, timeout=0.5 if enter_flag else 0.0, include_focus=False)
         focused = elements.focused_element()
@@ -461,6 +466,8 @@ def register(
             "Set drag=True to perform a drag-and-drop operation from the current mouse position "
             "to the target coordinates, or provide from_loc=[x, y] to make the drag explicit-start "
             "and atomic in one tool call. Optional duration controls bounded intermediate movement. "
+            "Uses the same SendInput backend as Click, confirms the start is reached before pressing, "
+            "and releases the held button on failure/cancellation. Label targets are checked after movement. "
             "Default (drag=False) is a simple cursor move (hover). "
             "Provide either loc or label."
         ),
@@ -509,12 +516,15 @@ def register(
                 from_loc = _as_point(from_loc, "from_loc")
         x, y = loc[0], loc[1]
         if drag:
+            options = {"before_release": elements.pointer_guard(node_point[2])} if label is not None and node_point[2] is not None else {}
             result = desktop.drag(
                 loc,
                 from_loc=from_loc,
                 duration=duration,
+                **options,
             )
             start_x, start_y = result["start"]
+            x, y = result["end"]
             effective_duration = result["duration"]
             if effective_duration is None:
                 return f"Dragged from ({start_x},{start_y}) to ({x},{y})."
@@ -523,7 +533,10 @@ def register(
                 f"over {effective_duration:.3f} seconds."
             )
         else:
-            desktop.move(loc)
+            options = {"target_guard": elements.pointer_guard(node_point[2])} if label is not None and node_point[2] is not None else {}
+            final_point = desktop.move(loc, **options)
+            if isinstance(final_point, tuple) and len(final_point) == 2:
+                x, y = final_point
             return f"Moved the mouse pointer to ({x},{y})."
 
     @mcp.tool(
