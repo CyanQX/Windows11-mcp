@@ -78,7 +78,9 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [dependency-groups]
-build = ["pyinstaller>=6,<7"]
+# Keep the build backend in the lock-managed group too. Build-system-only
+# requirements cannot be refreshed by Dependabot's lockfile-only strategy.
+build = ["pyinstaller>=6,<7", "setuptools>=84,<85"]
 
 [tool.ruff]
 line-length = 100

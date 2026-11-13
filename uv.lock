@@ -2155,6 +2155,7 @@ ocr = [
 [package.dev-dependencies]
 build = [
     { name = "pyinstaller" },
+    { name = "setuptools" },
 ]
 
 [package.metadata]
@@ -2194,7 +2195,10 @@ requires-dist = [
 provides-extras = ["browser", "capture", "ocr", "installer", "dev"]
 
 [package.metadata.requires-dev]
-build = [{ name = "pyinstaller", specifier = ">=6,<7" }]
+build = [
+    { name = "pyinstaller", specifier = ">=6,<7" },
+    { name = "setuptools", specifier = ">=84,<85" },
+]
 
 [[package]]
 name = "winrt-runtime"
