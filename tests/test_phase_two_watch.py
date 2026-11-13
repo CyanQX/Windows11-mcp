@@ -53,11 +53,21 @@ async def test_control_watch_uses_only_pinned_read_and_recovers_lost_events(setu
     assert hub.active == 0
 
 
-async def test_event_alone_does_not_verify_and_subscriptions_are_removed(setup_watch):
+async def test_event_alone_does_not_verify_and_subscriptions_are_removed(setup_watch, monkeypatch):
     desktop, session, runtime, _, first, hub = setup_watch
     expected = {"kind": "element_state", "target": first["elements"][0]["element_id"], "state": {"value": "new"}}
-    task = asyncio.create_task(watch(desktop, runtime, session, expected=expected, timeout_ms=250))
-    await asyncio.sleep(.03)
+    ready = asyncio.Event()
+    subscribe = hub.subscribe
+
+    def subscribed(*args, **kwargs):
+        subscription = subscribe(*args, **kwargs)
+        ready.set()
+        return subscription
+
+    monkeypatch.setattr(hub, "subscribe", subscribed)
+    task = asyncio.create_task(watch(desktop, runtime, session, expected=expected, timeout_ms=1500))
+    # Provider/worker startup can exceed 30ms on CI; publish only after registration.
+    await asyncio.wait_for(ready.wait(), 1.0)
     hub.publish("property", 100, runtime_id=(1, 2, 3))
     result = await task
     assert result["status"] == "TIMEOUT" and result["events"]
