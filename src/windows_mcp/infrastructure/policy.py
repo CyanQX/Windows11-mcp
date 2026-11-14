@@ -11,9 +11,10 @@ import time
 from contextlib import contextmanager
 from typing import Any
 
+from windows_mcp.coercion import truthy
 from windows_mcp.infrastructure.approvals import ApprovalStore
 from windows_mcp.infrastructure.config import CONFIG_DIR
-from windows_mcp.infrastructure.runtime_paths import portable_data_directory
+from windows_mcp.infrastructure.runtime_paths import CONFIG_DIRNAME, PORTABLE_MARKER, portable_data_directory
 from windows_mcp.infrastructure.trust import TrustStore
 from windows_mcp.infrastructure.network import NetworkGrants, origin
 from windows_mcp.infrastructure.authorization import DESKTOP_TOOLS, action_name, scope_applications
@@ -57,8 +58,8 @@ class PolicyGate:
         portable = portable_data_directory()
         self.workspace_storage = {CONFIG_DIR.resolve()}
         if portable is not None:
-            self.protected.extend([portable.resolve(), (portable.parent / "WindowsMCP.portable.json").resolve(),
-                                   (portable.parent / "Windows-MCP.exe").resolve(), (Path.home() / ".windows-mcp").resolve()])
+            self.protected.extend([portable.resolve(), (portable.parent / PORTABLE_MARKER).resolve(),
+                                   (portable.parent / "Windows-MCP.exe").resolve(), (Path.home() / CONFIG_DIRNAME).resolve()])
             self.workspace_storage.add(portable.resolve())
         # Backups can contain client credentials. They and update plans/runtime
         # are operator-owned data even if the workspace is configured broadly.
@@ -114,7 +115,7 @@ class PolicyGate:
         return path
 
     def network_origins(self, tool: str, args: dict, scope=None) -> list[str]:
-        use_dom = args.get("use_dom") is True or (isinstance(args.get("use_dom"), str) and args["use_dom"].lower() == "true")
+        use_dom = truthy(args.get("use_dom"))
         if (tool == "Scrape" and not use_dom) or (
             tool == "Browser" and args.get("operation") in {"navigate", "new_page"} and args.get("url")
         ):

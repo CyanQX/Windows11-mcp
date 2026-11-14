@@ -7,10 +7,11 @@ import io
 import json
 import os
 import shutil
-import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+
+from windows_mcp.infrastructure.local_storage import atomic_write_bytes
 
 SERVER = "windows-mcp"
 ROW = "windows-mcp-setup"
@@ -67,15 +68,7 @@ def atomic_write(path: Path, content: bytes) -> None:
     from installer.storage import check_path
     path = check_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".windows-mcp-", delete=False) as stream:
-        temporary = Path(stream.name)
-        stream.write(content)
-        stream.flush()
-        os.fsync(stream.fileno())
-    try:
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic_write_bytes(path, content, fsync=True)
 
 
 def read_file(path: Path) -> bytes | None:

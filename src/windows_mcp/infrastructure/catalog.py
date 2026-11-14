@@ -8,7 +8,7 @@ from importlib.metadata import version
 
 from fastmcp import Client, FastMCP
 
-from windows_mcp.infrastructure.profiles import select_tools
+from windows_mcp.infrastructure.profiles import apply_tool_filter, select_tools
 
 
 def wire_model(value) -> dict:
@@ -21,7 +21,7 @@ def initialize_client_options() -> dict:
 
 
 async def snapshot(profile: str = "full") -> dict:
-    from windows_mcp.__main__ import instructions, _apply_tool_filter
+    from windows_mcp.instructions import instructions
     from windows_mcp.tools import register_all
 
     # Registration mirrors the real server. No lifespan, desktop, telemetry or user mutation.
@@ -35,7 +35,7 @@ async def snapshot(profile: str = "full") -> dict:
         server._mcp_server.notification_options = NotificationOptions(tools_changed=True)
     async with Client(server, **initialize_client_options()) as client:
         names = {tool.name for tool in await client.list_tools()}
-    _apply_tool_filter(server, select_tools(profile, names), None)
+    apply_tool_filter(server, select_tools(profile, names), None)
     async with Client(server, **initialize_client_options()) as client:
         tools = await client.list_tools()
         return {"initialize": wire_model(client.initialize_result),

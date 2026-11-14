@@ -1,27 +1,12 @@
 import asyncio
 import json
-from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from tests.tool_helpers import FakeMCP
 from windows_mcp.tools import app
-
-
-class FakeMCP:
-    def __init__(self) -> None:
-        self.tools: dict[str, Callable] = {}
-        self.tool_options: dict[str, dict[str, object]] = {}
-
-    def tool(self, *, name: str, **kwargs: object) -> Callable:
-        self.tool_options[name] = kwargs
-
-        def decorator(func: Callable) -> Callable:
-            self.tools[name] = func
-            return func
-
-        return decorator
 
 
 class FakeDesktop:

@@ -5,7 +5,7 @@ from click.testing import CliRunner
 import pytest
 
 from windows_mcp.__main__ import main
-import windows_mcp.__main__ as cli
+import windows_mcp.cli.service_task as cli
 
 
 def test_resolve_program_uses_running_interpreter(monkeypatch: pytest.MonkeyPatch) -> None:

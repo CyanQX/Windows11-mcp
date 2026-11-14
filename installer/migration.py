@@ -13,24 +13,25 @@ import uuid
 
 from packaging.version import Version
 
-from installer.backend import atomic_write
+from installer.backend import atomic_write, digest
 from installer.models import ManagerError, IntegrationStatus
 from installer.storage import Journal, check_path, file_hash, private_directory
 from windows_mcp.infrastructure.approvals import sign_record, read_signed_record
+from windows_mcp.infrastructure.runtime_paths import CONFIG_DIRNAME
 from windows_mcp.product import APP_ID, EXECUTABLE
 
 UNINSTALL_KEY = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{{{APP_ID}}}_is1"
 
 
 def active_path(service):
-    return service.backend.home / ".windows-mcp/setup-active.json"
+    return service.backend.home / CONFIG_DIRNAME / "setup-active.json"
 
 
 def active(service):
     path = active_path(service)
     if not path.exists():
         return None
-    row = read_signed_record(service.backend.home / ".windows-mcp/approvals", path)
+    row = read_signed_record(service.backend.home / CONFIG_DIRNAME / "approvals", path)
     if row is None:
         raise ManagerError("INVALID_SETUP_PLAN", "安装事务标记无效，原文件已保留")
     return row
@@ -191,7 +192,7 @@ def restore_registration(record):
 
 class SetupJournal(Journal):
     def __init__(self, service, paths):
-        self.authority = service.backend.home / ".windows-mcp/approvals"
+        self.authority = service.backend.home / CONFIG_DIRNAME / "approvals"
         private_directory(self.authority)
         super().__init__(service.backend.data / "setup", "installer", "install", paths)
 
@@ -204,7 +205,7 @@ class SetupJournal(Journal):
         if path.name != "manifest.json" or len(path.parent.name) != 32:
             raise ManagerError("INVALID_SETUP_PLAN", "安装事务路径无效")
         obj = cls.__new__(cls)
-        obj.authority = service.backend.home / ".windows-mcp/approvals"
+        obj.authority = service.backend.home / CONFIG_DIRNAME / "approvals"
         obj.record = read_signed_record(obj.authority, path)
         if not obj.record or obj.record.get("id") != path.parent.name or obj.record.get("profile_id") != "installer":
             raise ManagerError("INVALID_SETUP_PLAN", "安装事务签名无效，未恢复或删除任何文件")
@@ -399,11 +400,10 @@ def commit(service, path):
                 if item["before"] is None:
                     continue
                 original = check_path(journal.root / item["slot"], journal.root).read_bytes()
-                import hashlib
-                if hashlib.sha256(original).hexdigest() != item["before"]:
+                if digest(original) != item["before"]:
                     raise ManagerError("BACKUP_CORRUPT", "客户端配置备份校验失败")
                 current = read_file(profile.config)
-                if current is None or hashlib.sha256(current).hexdigest() != item["after"]:
+                if current is None or digest(current) != item["after"]:
                     raise ManagerError("INSTALL_PLAN_CHANGED", "客户端配置在同步期间发生变化，未覆盖")
                 previous_config, updated_config = Configuration(profile, original), Configuration(profile, current)
                 same_entry = previous_config.get() == updated_config.get()

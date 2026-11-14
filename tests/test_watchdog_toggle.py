@@ -1,6 +1,6 @@
 """Tests for the WINDOWS_MCP_WATCHDOG opt-out switch (issue #332)."""
 
-from windows_mcp import __main__ as wm
+from windows_mcp import server as wm
 
 
 class TestWatchdogEnabled:

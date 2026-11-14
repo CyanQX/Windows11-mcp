@@ -1,16 +1,16 @@
 """Input tools — Click, Type, Scroll, Move, Shortcut, Wait, WaitFor."""
 
-import json
 import math
 import time
 import asyncio
 from collections.abc import Callable, Iterator
+from functools import partial
 from typing import Any, Literal
 
-from mcp.types import ToolAnnotations
+from windows_mcp.coercion import json_list, parse_bool
 from windows_mcp.desktop import elements, native_input
-from windows_mcp.infrastructure import with_analytics
 from fastmcp import Context
+from windows_mcp.tools._common import declare_tool, require_snapshot
 
 
 WaitForCondition = Literal[
@@ -24,8 +24,7 @@ WaitForCondition = Literal[
 
 def _resolve_label(desktop: Any, label: int) -> list[int]:
     """Resolve a UI element label to the coordinates recorded by the last Snapshot."""
-    if desktop.desktop_state is None:
-        raise ValueError("Desktop state is empty. Please call Snapshot first.")
+    require_snapshot(desktop)
     try:
         return list(desktop.get_coordinates_from_label(label))
     except Exception as e:
@@ -35,8 +34,7 @@ def _resolve_label(desktop: Any, label: int) -> list[int]:
 def _label_point(desktop: Any, label: int) -> tuple[int, int, Any, list[str]]:
     """Live point for a Snapshot label: the element is re-located, scrolled into view and
     hit-tested *now*, so a window that moved since the Snapshot is still hit correctly."""
-    if desktop.desktop_state is None:
-        raise ValueError("Desktop state is empty. Please call Snapshot first.")
+    require_snapshot(desktop)
     element = desktop.locate_label(label)
     if element is None:  # word boxes have no element of their own
         x, y = _resolve_label(desktop, label)
@@ -61,32 +59,9 @@ def _clip(text: str, limit: int = 60) -> str:
     return flat if len(flat) <= limit else flat[: limit - 3] + "..."
 
 
-def _as_bool(value: bool | str, name: str) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().casefold()
-        if normalized == "true":
-            return True
-        if normalized == "false":
-            return False
-    raise ValueError(f"{name} must be true or false")
-
-
 def _validate_finite_number(value: object, name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"{name} must be a finite number")
-
-
-def _as_loc(value: list | str | None) -> list | None:
-    """Coerce a JSON-stringified list back to a list.
-
-    Claude Desktop strips anyOf schemas and the model serializes lists as
-    strings (e.g. '[100, 200]'). Parsing here keeps the tools working.
-    """
-    if value is None or isinstance(value, list):
-        return value
-    return json.loads(value)
 
 
 def _as_point(value: object, name: str) -> list[int]:
@@ -251,8 +226,10 @@ def register(
     get_desktop: Callable[[], Any],
     get_analytics: Callable[[], Any],
 ) -> None:
-    @mcp.tool(
-        name="Click",
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        "Click",
         description=(
             "Real mouse click on the desktop at [x, y] (physical screen pixels) or on a Snapshot "
             "label. With label=, the element is re-located live, scrolled into view, its window "
@@ -261,15 +238,9 @@ def register(
             "only, 1=single, 2=double, 3=triple. Reports which element was under the pointer and "
             "the visible effects (windows opened/closed, focus change). Prefer Act for named controls."
         ),
-        annotations=ToolAnnotations(
-            title="Click",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
+        access="write",
+        analytics="Click-Tool",
     )
-    @with_analytics(get_analytics(), "Click-Tool")
     def click_tool(
         loc: list[int] | str | None = None,
         label: int | None = None,
@@ -278,7 +249,7 @@ def register(
         ctx: Context = None,
     ) -> str:
         desktop = get_desktop()
-        loc = _as_loc(loc)
+        loc = json_list(loc)
         if loc is None and label is None:
             raise ValueError("Either loc or label must be provided.")
         if isinstance(clicks, bool) or clicks not in (0, 1, 2, 3):
@@ -306,8 +277,8 @@ def register(
             f"{kind} {verb} at ({x},{y}) on {under}.{_notes(notes)}\n{elements.effects_line(changes)}"
         )
 
-    @mcp.tool(
-        name="Type",
+    @tool(
+        "Type",
         description=(
             "Type text into a real field at [x, y] or a Snapshot label: clicks it, confirms its window "
             "really holds the keyboard (otherwise nothing is typed), then sends genuine Unicode key "
@@ -318,15 +289,9 @@ def register(
             "(set through UIA ValuePattern without typing; needs label and clear=True). Reads the "
             "field back afterwards and reports whether the text is really there."
         ),
-        annotations=ToolAnnotations(
-            title="Type",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
+        access="write",
+        analytics="Type-Tool",
     )
-    @with_analytics(get_analytics(), "Type-Tool")
     def type_tool(
         text: str,
         loc: list[int] | str | None = None,
@@ -338,16 +303,15 @@ def register(
         ctx: Context = None,
     ) -> str:
         desktop = get_desktop()
-        loc = _as_loc(loc)
+        loc = json_list(loc)
         if loc is None and label is None:
             raise ValueError("Either loc or label must be provided.")
-        clear_flag = _as_bool(clear, "clear")
-        enter_flag = _as_bool(press_enter, "press_enter")
+        clear_flag = parse_bool(clear, "clear")
+        enter_flag = parse_bool(press_enter, "press_enter")
         notes: list[str] = []
         element = None
         if label is not None:
-            if desktop.desktop_state is None:
-                raise ValueError("Desktop state is empty. Please call Snapshot first.")
+            require_snapshot(desktop)
             element = desktop.locate_label(label)
         if method == "value":
             if element is None or not clear_flag:
@@ -411,18 +375,12 @@ def register(
             f"{elements.effects_line(changes)}"
         )
 
-    @mcp.tool(
-        name="Scroll",
+    @tool(
+        "Scroll",
         description="Real mouse-wheel scrolling at coordinates [x, y], a Snapshot label, or the current pointer position if loc=None. Type: vertical (default) or horizontal (tilt wheel). Direction: up/down for vertical, left/right for horizontal. wheel_times controls amount (1 notch ≈ 3 lines). Reports the scroll position of the container under the pointer before/after, so you know whether it actually moved or is already at the end.",
-        annotations=ToolAnnotations(
-            title="Scroll",
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
+        access="adjust",
+        analytics="Scroll-Tool",
     )
-    @with_analytics(get_analytics(), "Scroll-Tool")
     def scroll_tool(
         loc: list[int] | str | None = None,
         label: int | None = None,
@@ -432,7 +390,7 @@ def register(
         ctx: Context = None,
     ) -> str:
         desktop = get_desktop()
-        loc = _as_loc(loc)
+        loc = json_list(loc)
         if isinstance(wheel_times, bool) or not isinstance(wheel_times, int) or not 1 <= wheel_times <= 50:
             raise ValueError("wheel_times must be an integer between 1 and 50")
         if label is not None:
@@ -459,8 +417,8 @@ def register(
             text += " (No UIA scroll container under the pointer; position change not measurable.)"
         return text
 
-    @mcp.tool(
-        name="Move",
+    @tool(
+        "Move",
         description=(
             "Moves mouse cursor to coordinates [x, y] or passing a UI element's label/id. "
             "Set drag=True to perform a drag-and-drop operation from the current mouse position "
@@ -471,15 +429,9 @@ def register(
             "Default (drag=False) is a simple cursor move (hover). "
             "Provide either loc or label."
         ),
-        annotations=ToolAnnotations(
-            title="Move",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
+        access="write",
+        analytics="Move-Tool",
     )
-    @with_analytics(get_analytics(), "Move-Tool")
     def move_tool(
         loc: list[int] | str | None = None,
         label: int | None = None,
@@ -489,9 +441,9 @@ def register(
         ctx: Context = None,
     ) -> str:
         desktop = get_desktop()
-        loc = _as_loc(loc)
-        from_loc = _as_loc(from_loc)
-        drag = _as_bool(drag, "drag")
+        loc = json_list(loc)
+        from_loc = json_list(from_loc)
+        drag = parse_bool(drag, "drag")
         if loc is None and label is None:
             raise ValueError("Either loc or label must be provided.")
         if label is not None:
@@ -539,18 +491,12 @@ def register(
                 x, y = final_point
             return f"Moved the mouse pointer to ({x},{y})."
 
-    @mcp.tool(
-        name="Shortcut",
+    @tool(
+        "Shortcut",
         description='Presses real keyboard shortcuts: keys joined by +, several chords separated by spaces. Examples: "ctrl+c", "ctrl+v", "alt+tab", "win+r", "win", "ctrl+shift+esc", "f5", "enter", "ctrl+k ctrl+s" (a two-step chord), "ctrl++" (ctrl and the + key). Each chord is sent atomically, so modifiers can never stay stuck. repeat presses it N times (e.g. "down" x5). window (title / process / handle) first brings that window to the foreground and refuses to send keys if it cannot -- use it to avoid shortcuts landing in the wrong app. Reports visible effects (windows opened/closed, focus).',
-        annotations=ToolAnnotations(
-            title="Shortcut",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
+        access="write",
+        analytics="Shortcut-Tool",
     )
-    @with_analytics(get_analytics(), "Shortcut-Tool")
     def shortcut_tool(shortcut: str, repeat: int = 1, window: str | None = None, ctx: Context = None):
         desktop = get_desktop()
         if isinstance(repeat, bool) or not isinstance(repeat, int) or not 1 <= repeat <= 100:
@@ -572,18 +518,12 @@ def register(
         times = f" x{repeat}" if repeat > 1 else ""
         return f"Pressed {shortcut}{times}{target}.\n{elements.effects_line(changes)}"
 
-    @mcp.tool(
-        name="Wait",
+    @tool(
+        "Wait",
         description="Wait 1..60 integer seconds without occupying the desktop worker. Cooperatively stops when this session is cancelled; use WaitFor or Watch for a specific state.",
-        annotations=ToolAnnotations(
-            title="Wait",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
+        access="read",
+        analytics="Wait-Tool",
     )
-    @with_analytics(get_analytics(), "Wait-Tool")
     async def wait_tool(duration: int, ctx: Context = None) -> str:
         if isinstance(duration, bool) or not isinstance(duration, int) or not 1 <= duration <= 60:
             raise ValueError("duration must be an integer between 1 and 60 seconds")
@@ -598,23 +538,17 @@ def register(
         session.check(generation)
         return f"Waited for {duration} seconds."
 
-    @mcp.tool(
-        name="WaitFor",
+    @tool(
+        "WaitFor",
         description=(
             "Waits until a UI condition is satisfied, polling the Windows accessibility tree "
             "inside the tool to avoid repeated Snapshot calls. Conditions: text_exists, "
             "active_window, element_exists, element_enabled, focused_element. Provide text "
             "and/or window_name depending on the condition. Set use_dom=True for browser DOM text."
         ),
-        annotations=ToolAnnotations(
-            title="WaitFor",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
+        access="read",
+        analytics="WaitFor-Tool",
     )
-    @with_analytics(get_analytics(), "WaitFor-Tool")
     async def wait_for_tool(
         condition: str,
         text: str | None = None,
@@ -632,7 +566,7 @@ def register(
             interval=interval,
         )
         desktop = get_desktop()
-        use_dom_bool = _as_bool(use_dom, "use_dom")
+        use_dom_bool = parse_bool(use_dom, "use_dom")
         from windows_mcp.engine.sessions import get_runtime
         from windows_mcp.runtime import run_on_desktop
 

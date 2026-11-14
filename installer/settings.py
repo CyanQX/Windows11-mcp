@@ -12,7 +12,7 @@ from installer.backend import Installer, atomic_write, profiles
 from installer.detection import ClientDiscovery
 from installer.models import ManagerError
 from installer.storage import check_path, private_directory
-from windows_mcp.infrastructure.runtime_paths import portable_data_directory
+from windows_mcp.infrastructure.runtime_paths import CONFIG_DIRNAME, portable_data_directory
 
 ENV_KEYS = {"CODEX_HOME", "CLAUDE_CONFIG_DIR", "DSH_HOME", "XDG_CONFIG_HOME", "OPENCODE_CONFIG"}
 
@@ -24,7 +24,7 @@ class SettingsService:
         self.portable_data = portable_data if portable_data is not None else (portable_data_directory() if env is None else None)
         if self.portable_data is not None:
             self.portable_data = check_path(self.portable_data).resolve()
-        self.path = (self.portable_data / "config" if self.portable_data is not None else self.home / ".windows-mcp") / "manager.json"
+        self.path = (self.portable_data / "config" if self.portable_data is not None else self.home / CONFIG_DIRNAME) / "manager.json"
         self.defaults = {"schema": 1, "theme": "light", "data_dir": str(Path(self.env.get("LOCALAPPDATA", str(home / "AppData" / "Local"))) / "WindowsMCP"), "environment_overrides": {}, "client_executables": {}, "health_timeout": 60, "log_retention_days": 30, "log_max_mb": 50}
         self.defaults.update(appearance={"log_background": "blue", "log_custom_color": "#E8F3FF", "glass_strength": 65, "reduce_motion": False}, layout={})
         if self.portable_data is not None:

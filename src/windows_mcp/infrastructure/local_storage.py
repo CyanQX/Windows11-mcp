@@ -3,8 +3,26 @@
 from __future__ import annotations
 
 import os
+import secrets
 import time
 from pathlib import Path
+
+
+def atomic_write_bytes(path: Path, content: bytes, *, fsync: bool = False) -> None:
+    """Replace ``path`` with ``content`` in one step; a failed write leaves no temp file behind.
+
+    The temporary sibling keeps the ``.tmp`` suffix that ``ApprovalStore.prune`` sweeps.
+    """
+    temporary = path.with_suffix(f".{secrets.token_hex(8)}.tmp")
+    try:
+        with temporary.open("wb") as stream:
+            stream.write(content)
+            if fsync:
+                stream.flush()
+                os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def private_directory(path: Path) -> None:

@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import os
 import re
-import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from windows_mcp.infrastructure.approvals import read_signed_record, sign_record
-from windows_mcp.infrastructure.local_storage import FileLock, private_directory
+from windows_mcp.infrastructure.local_storage import FileLock, atomic_write_bytes, private_directory
 
 
 def origin(url: str) -> str:
@@ -74,9 +72,5 @@ class NetworkGrants:
             self._save([row for row in self.status() if session_id is not None and row.get("session_id") != session_id])
 
     def _save(self, rows: list[dict]) -> None:
-        temporary = self.path.with_suffix(f".{secrets.token_hex(8)}.tmp")
-        try:
-            temporary.write_text(json.dumps(sign_record(self.directory, {"schema": 1, "grants": rows}), ensure_ascii=False), encoding="utf-8")
-            os.replace(temporary, self.path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        record = sign_record(self.directory, {"schema": 1, "grants": rows})
+        atomic_write_bytes(self.path, json.dumps(record, ensure_ascii=False).encode("utf-8"))

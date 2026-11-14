@@ -8,25 +8,11 @@ import time
 
 import pytest
 
+from tests.tool_helpers import FakeMCP
 from windows_mcp import runtime
 from windows_mcp.infrastructure import analytics as analytics_module
 from windows_mcp.infrastructure import telemetry_enabled, with_analytics
 from windows_mcp.tree.views import BoundingBox, Center, ScrollElementNode, SemanticNode, TreeElementNode, TreeState
-
-
-class FakeMCP:
-    def __init__(self):
-        self.tools = {}
-        self.options = {}
-
-    def tool(self, *, name, **kwargs):
-        self.options[name] = kwargs
-
-        def decorator(func):
-            self.tools[name] = func
-            return func
-
-        return decorator
 
 
 class TestDesktopThread:
@@ -220,7 +206,7 @@ def test_word_nodes_are_opt_in(monkeypatch):
 
 
 def test_instructions_tell_the_agent_to_act_and_verify():
-    from windows_mcp.__main__ import instructions
+    from windows_mcp.instructions import instructions
 
     for phrase in ("REAL Windows desktop", "OBSERVE -> ACT -> VERIFY", "Act(", "Find", "NOT verified", "foreground"):
         assert phrase in instructions

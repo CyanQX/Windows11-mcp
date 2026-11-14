@@ -132,8 +132,9 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
     from installer.startup import StartupTrace
     from installer.models import ManagerError
     from windows_mcp.infrastructure.approvals import ApprovalStore
+    from windows_mcp.infrastructure.runtime_paths import CONFIG_DIRNAME
 
-    initial_root = Path.home() / ".windows-mcp"
+    initial_root = Path.home() / CONFIG_DIRNAME
     private_directory(initial_root)
     trace = StartupTrace(initial_root)
     trace.record("starting")
@@ -143,7 +144,7 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
         trace.record("settings-failed", status="failed", error=exc)
         raise
     private_directory(settings.path.parent)
-    instance_root = settings.home / ".windows-mcp"
+    instance_root = settings.home / CONFIG_DIRNAME
     private_directory(instance_root)
     trace.record("settings-ready")
     wake = instance_root / "manager-wake.json"

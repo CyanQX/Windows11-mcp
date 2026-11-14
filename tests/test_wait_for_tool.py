@@ -5,21 +5,10 @@ from collections.abc import Callable
 
 import pytest
 
+from tests.tool_helpers import register_tools
 from windows_mcp.desktop.views import DesktopState, Status, Window
 from windows_mcp.tools.input import register
 from windows_mcp.tree.views import BoundingBox, Center, TextElementNode, TreeElementNode, TreeState
-
-
-class FakeMCP:
-    def __init__(self) -> None:
-        self.tools: dict[str, Callable] = {}
-
-    def tool(self, *, name: str, **kwargs: object) -> Callable:
-        def decorator(func: Callable) -> Callable:
-            self.tools[name] = func
-            return func
-
-        return decorator
 
 
 class FakeDesktop:
@@ -89,9 +78,7 @@ def _state(
 
 
 def _register_tools(desktop: FakeDesktop) -> dict[str, Callable]:
-    mcp = FakeMCP()
-    register(mcp, get_desktop=lambda: desktop, get_analytics=lambda: None)
-    return mcp.tools
+    return register_tools(register, desktop)
 
 
 def test_wait_for_text_polls_until_dom_text_appears() -> None:

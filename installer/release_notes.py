@@ -6,6 +6,7 @@ import time
 
 from installer.backend import atomic_write
 from installer.storage import ProcessLock, private_directory
+from windows_mcp.infrastructure.runtime_paths import CONFIG_DIRNAME
 
 TITLE = "本次更新"
 CONTENT = """Actilo v1.9.11｜修复安装完成后的启动时序。
@@ -35,7 +36,7 @@ CONTENT = """Actilo v1.9.11｜修复安装完成后的启动时序。
 
 class ReleaseNotesState:
     def __init__(self, home, version):
-        self.directory, self.version = home / ".windows-mcp", version
+        self.directory, self.version = home / CONFIG_DIRNAME, version
         self.path = self.directory / "release-notes-shown.json"
 
     def shown(self):

@@ -11,18 +11,18 @@ from time import sleep,perf_counter
 from _ctypes import COMError
 import logging
 import weakref
-import os
+from windows_mcp.profiling import snapshot_profile_enabled
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# Control types are classified once per module load, not once per visited node.
+_NOT_SCROLLABLE_TYPES = INTERACTIVE_CONTROL_TYPE_NAMES | INFORMATIVE_CONTROL_TYPE_NAMES
+_ROLE_CHECKED_TYPES = INTERACTIVE_CONTROL_TYPE_NAMES | DOCUMENT_CONTROL_TYPE_NAMES
+_ALWAYS_FOCUSABLE_TYPES = frozenset({'EditControl', 'ButtonControl', 'CheckBoxControl',
+                                     'RadioButtonControl', 'TabItemControl', 'ListItemControl'})
 _COMTYPES_ORD_TYPEERROR_FRAGMENT = "ord() expected a character"
 _COMTYPES_AUTOMATION_PATH_FRAGMENT = "comtypes/automation.py"
-
-
-def _snapshot_profile_enabled() -> bool:
-    value = os.getenv("WINDOWS_MCP_PROFILE_SNAPSHOT", "")
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _is_comtypes_variant_ord_typeerror(error: TypeError) -> bool:
@@ -67,7 +67,7 @@ class Tree:
         # stall UI Automation or blow up the serialized response.
         self.element_budget = TreeElementBudget(resolve_max_tree_elements())
         start_time = perf_counter()
-        profile_enabled = _snapshot_profile_enabled()
+        profile_enabled = snapshot_profile_enabled()
 
         active_window_flag=False
         if active_window_handle:
@@ -376,6 +376,221 @@ class Tree:
                 dom_interactive_nodes.pop()
 
 
+    def _collect_scrollable(self, node: Control, window_name: str, scrollable_nodes: list[ScrollElementNode],
+                            current_semantic_node: 'Optional[SemanticNode]', is_dom: bool) -> bool:
+        """Record a vertically scrollable container; True when it also joined the semantic tree."""
+        semantic_added = False
+        try:
+            scroll_pattern:ScrollPattern=node.GetCachedPattern(PatternId.ScrollPattern, True)
+            if scroll_pattern and scroll_pattern.VerticallyScrollable:
+                box = node.CachedBoundingRectangle
+                x,y=random_point_within_bounding_box(node=node,scale_factor=0.8)
+                center = Center(x=x,y=y)
+                name = node.CachedName
+                automation_id = node.CachedAutomationId
+                localized_control_type = node.CachedLocalizedControlType
+                metadata:dict[str,Any]={}
+                metadata['has_focused']=node.CachedHasKeyboardFocus
+                metadata['horizontal_scrollable']=scroll_pattern.HorizontallyScrollable
+                metadata['horizontal_scroll_percent']=round(scroll_pattern.HorizontalScrollPercent,2) if scroll_pattern.HorizontallyScrollable else 0
+                metadata['vertical_scrollable']=scroll_pattern.VerticallyScrollable
+                metadata['vertical_scroll_percent']=round(scroll_pattern.VerticalScrollPercent,2) if scroll_pattern.VerticallyScrollable else 0
+
+                sem_scroll_name = name.strip() or automation_id or localized_control_type.capitalize() or "''"
+                self.element_budget.try_consume()
+                scrollable_nodes.append(ScrollElementNode(**{
+                    'name':sem_scroll_name,
+                    'control_type':localized_control_type.title(),
+                    'bounding_box':BoundingBox.from_bounding_rectangle(box),
+                    'center':center,
+                    'window_name':window_name,
+                    'metadata':metadata
+                }))
+                if current_semantic_node is not None and not is_dom:
+                    current_semantic_node.add_child(SemanticNode(
+                        control_type=localized_control_type.title(),
+                        element_type='scrollable',
+                        name=sem_scroll_name,
+                        window_name=window_name,
+                        center=center,
+                        bounding_box=BoundingBox.from_bounding_rectangle(box),
+                        metadata=dict(metadata),
+                    ))
+                    semantic_added = True
+        except Exception:
+            pass
+        return semantic_added
+
+    def _read_interactive_metadata(self, node: Control, is_focused: bool, accelerator_key: str,
+                                   is_dom: bool) -> tuple[dict[str, Any], list[tuple[str, Rect]]]:
+        """Control-specific metadata (state, value, selection, range) and optional word boxes."""
+        metadata:dict[str,Any]={}
+        metadata['has_focused']=is_focused
+        if accelerator_key:
+            metadata['shortcut']=accelerator_key
+
+        word_elements: list[tuple[str, Rect]] = []
+
+        try:
+            help_text = node.CachedHelpText
+            if help_text:
+                metadata['help_text']=help_text.encode('ascii', 'ignore').decode('ascii')
+        except Exception:
+            pass
+
+        if isinstance(node,(ButtonControl,CheckBoxControl)):
+            try:
+                toggle_state = node.GetCachedPropertyValue(PropertyId.ToggleToggleStateProperty)
+                if toggle_state is not None:
+                    match toggle_state:
+                        case ToggleState.On:
+                            metadata['toggle_state'] = 'on'
+                        case ToggleState.Off:
+                            metadata['toggle_state'] = 'off'
+                        case _:
+                            pass
+            except Exception:
+                pass
+
+        if isinstance(node,(EditControl,DocumentControl,ImageControl)):
+            is_password = False
+            try:
+                is_password = bool(node.CachedIsPassword)
+                if is_password:
+                    metadata['is_password']=True
+            except Exception:
+                pass
+
+            try:
+                value = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleValueProperty)
+                metadata['value']=value.strip() if value else '(empty)'
+                if not is_password and not is_dom and getattr(self, 'include_words', False):
+                    words=node.GetAllWordBoundingBoxes()
+                    for word,boxes in words:
+                        for box in boxes:
+                            word_elements.append((word,box))
+            except Exception:
+                pass
+
+        if isinstance(node,ComboBoxControl):
+            try:
+                value = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleValueProperty)
+                metadata['value']=value.strip() if value else '(empty)'
+            except Exception:
+                pass
+
+            try:
+                control_state=node.GetCachedPropertyValue(PropertyId.ExpandCollapseExpandCollapseStateProperty)
+                match control_state:
+                    case ExpandCollapseState.Expanded:
+                        metadata['expand_collapse_state']='expanded'
+                    case ExpandCollapseState.Collapsed:
+                        metadata['expand_collapse_state']='collapsed'
+                    case ExpandCollapseState.PartiallyExpanded:
+                        metadata['expand_collapse_state']='partially expanded'
+                    case _:
+                        pass
+            except Exception:
+                pass
+
+            try:
+                can_select_multiple=node.GetCachedPropertyValue(PropertyId.SelectionCanSelectMultipleProperty)
+                metadata['is_selection_required']=can_select_multiple
+            except Exception:
+                pass
+
+            try:
+                is_selection_required=node.GetCachedPropertyValue(PropertyId.SelectionIsSelectionRequiredProperty)
+                metadata['is_selection_required']=is_selection_required
+            except Exception:
+                pass
+
+            try:
+                is_selected=node.GetCachedPropertyValue(PropertyId.SelectionItemIsSelectedProperty)
+                metadata['is_selected']=is_selected
+            except Exception:
+                pass
+
+            try:
+                selection_raw = node.GetCachedPropertyValue(PropertyId.SelectionSelectionProperty)
+                selected_items = Control.CreateControlsFromRawElementArray(selection_raw)
+                selected_names = [item.Name for item in selected_items if item.Name]
+                if selected_names:
+                    metadata['selection'] = selected_names
+            except Exception:
+                pass
+
+        if isinstance(node, SliderControl):
+            try:
+                value = node.GetCachedPropertyValue(PropertyId.RangeValueValueProperty)
+                minimum = node.GetCachedPropertyValue(PropertyId.RangeValueMinimumProperty)
+                maximum = node.GetCachedPropertyValue(PropertyId.RangeValueMaximumProperty)
+                if value is not None:
+                    metadata['value'] = round(value, 2)
+                if minimum is not None:
+                    metadata['min'] = round(minimum, 2)
+                if maximum is not None:
+                    metadata['max'] = round(maximum, 2)
+            except Exception:
+                pass
+        return metadata, word_elements
+
+    def _is_interactive_control(self, node: Control, control_type_name: str, is_browser: bool,
+                                is_keyboard_focusable: bool) -> bool:
+        """Whether a visible, enabled control should be offered as an interactive element."""
+        is_interactive = False
+        if is_browser and control_type_name == 'DataItemControl' and not is_keyboard_focusable:
+            is_interactive = False
+        elif not is_browser and control_type_name == "ImageControl" and is_keyboard_focusable:
+            is_interactive = True
+        elif control_type_name in _ROLE_CHECKED_TYPES:
+             # Role check
+             try:
+                role = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleRoleProperty)
+                is_role_interactive = AccessibleRoleNames.get(role, "Default") in INTERACTIVE_ROLES
+             except Exception:
+                is_role_interactive = False
+
+             # Image check
+             is_image = False
+             if control_type_name == 'ImageControl': # approximated
+                 localized = node.CachedLocalizedControlType
+                 if localized == 'graphic' or not is_keyboard_focusable:
+                     is_image = True
+
+             if is_role_interactive and (not is_image or is_keyboard_focusable):
+                 is_interactive = True
+
+        elif control_type_name == 'GroupControl':
+             if is_browser:
+                try:
+                    has_expand_collapse = node.GetCachedPropertyValue(PropertyId.ExpandCollapseExpandCollapseStateProperty)
+                    if has_expand_collapse in ExpandCollapseState:
+                        is_interactive = True
+                except Exception:
+                    pass
+
+                try:
+                    role = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleRoleProperty)
+                    is_role_interactive = AccessibleRoleNames.get(role, "Default") in INTERACTIVE_ROLES
+                except Exception:
+                    is_role_interactive = False
+
+                is_default_action = False
+                try:
+                    default_action = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleDefaultActionProperty)
+                    if default_action and default_action.title() in DEFAULT_ACTIONS:
+                        is_default_action = True
+                except Exception:
+                    pass
+
+                if is_role_interactive and (is_default_action or is_keyboard_focusable):
+                    is_interactive = True
+
+        if isinstance(node,DocumentControl):
+            is_interactive=True
+        return is_interactive
+
     def tree_traversal(self, node: Control, window_bounding_box:Rect, window_name:str, is_browser:bool,
                     interactive_nodes:Optional[list[TreeElementNode]]=None, scrollable_nodes:Optional[list[ScrollElementNode]]=None,
                     dom_interactive_nodes:Optional[list[TreeElementNode]]=None, dom_informative_nodes:Optional[list[TextElementNode]]=None,
@@ -395,57 +610,10 @@ class Tree:
 
             # Scrollable check
             if scrollable_nodes is not None:
-                if (control_type_name not in (INTERACTIVE_CONTROL_TYPE_NAMES|INFORMATIVE_CONTROL_TYPE_NAMES)) and not is_offscreen:
-                    try:
-                        scroll_pattern:ScrollPattern=node.GetCachedPattern(PatternId.ScrollPattern, True)
-                        if scroll_pattern and scroll_pattern.VerticallyScrollable:
-                            box = node.CachedBoundingRectangle
-                            x,y=random_point_within_bounding_box(node=node,scale_factor=0.8)
-                            center = Center(x=x,y=y)
-                            name = node.CachedName
-                            automation_id = node.CachedAutomationId
-                            localized_control_type = node.CachedLocalizedControlType
-                            metadata:dict[str,Any]={}
-                            metadata['has_focused']=node.CachedHasKeyboardFocus
-                            metadata['horizontal_scrollable']=scroll_pattern.HorizontallyScrollable
-                            metadata['horizontal_scroll_percent']=round(scroll_pattern.HorizontalScrollPercent,2) if scroll_pattern.HorizontallyScrollable else 0
-                            metadata['vertical_scrollable']=scroll_pattern.VerticallyScrollable
-                            metadata['vertical_scroll_percent']=round(scroll_pattern.VerticalScrollPercent,2) if scroll_pattern.VerticallyScrollable else 0
-
-                            sem_scroll_name = name.strip() or automation_id or localized_control_type.capitalize() or "''"
-                            self.element_budget.try_consume()
-                            scrollable_nodes.append(ScrollElementNode(**{
-                                'name':sem_scroll_name,
-                                'control_type':localized_control_type.title(),
-                                'bounding_box':BoundingBox(**{
-                                    'left':box.left,
-                                    'top':box.top,
-                                    'right':box.right,
-                                    'bottom':box.bottom,
-                                    'width':box.width(),
-                                    'height':box.height()
-                                }),
-                                'center':center,
-                                'window_name':window_name,
-                                'metadata':metadata
-                            }))
-                            if current_semantic_node is not None and not is_dom:
-                                current_semantic_node.add_child(SemanticNode(
-                                    control_type=localized_control_type.title(),
-                                    element_type='scrollable',
-                                    name=sem_scroll_name,
-                                    window_name=window_name,
-                                    center=center,
-                                    bounding_box=BoundingBox(
-                                        left=box.left, top=box.top, right=box.right, bottom=box.bottom,
-                                        width=box.width(), height=box.height()
-                                    ),
-                                    metadata=dict(metadata),
-                                ))
-                                semantic_added = True
-                    except Exception:
-                        pass
-
+                if (control_type_name not in _NOT_SCROLLABLE_TYPES) and not is_offscreen:
+                    semantic_added = self._collect_scrollable(
+                        node, window_name, scrollable_nodes, current_semantic_node, is_dom
+                    )
             # Interactive and Informative checks
             # Pre-calculate common properties
             is_control_element = node.CachedIsControlElement
@@ -461,7 +629,7 @@ class Tree:
                 is_enabled = node.CachedIsEnabled
                 if is_enabled:
                     # Determine is_keyboard_focusable
-                    if control_type_name in set(['EditControl','ButtonControl','CheckBoxControl','RadioButtonControl','TabItemControl','ListItemControl']):
+                    if control_type_name in _ALWAYS_FOCUSABLE_TYPES:
                         is_keyboard_focusable = True
                     else:
                         #Experimentally, ListItemControl is keyboard focusable
@@ -469,57 +637,9 @@ class Tree:
 
                     # Interactive Check
                     if interactive_nodes is not None:
-                        is_interactive = False
-                        if is_browser and control_type_name in set(['DataItemControl']) and not is_keyboard_focusable:
-                            is_interactive = False
-                        elif not is_browser and control_type_name == "ImageControl" and is_keyboard_focusable:
-                            is_interactive = True
-                        elif control_type_name in (INTERACTIVE_CONTROL_TYPE_NAMES|DOCUMENT_CONTROL_TYPE_NAMES):
-                             # Role check
-                             try:
-                                role = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleRoleProperty)
-                                is_role_interactive = AccessibleRoleNames.get(role, "Default") in INTERACTIVE_ROLES
-                             except Exception:
-                                is_role_interactive = False
-
-                             # Image check
-                             is_image = False
-                             if control_type_name == 'ImageControl': # approximated
-                                 localized = node.CachedLocalizedControlType
-                                 if localized == 'graphic' or not is_keyboard_focusable:
-                                     is_image = True
-
-                             if is_role_interactive and (not is_image or is_keyboard_focusable):
-                                 is_interactive = True
-
-                        elif control_type_name == 'GroupControl':
-                             if is_browser:
-                                try:
-                                    has_expand_collapse = node.GetCachedPropertyValue(PropertyId.ExpandCollapseExpandCollapseStateProperty)
-                                    if has_expand_collapse in ExpandCollapseState:
-                                        is_interactive = True
-                                except Exception:
-                                    pass
-
-                                try:
-                                    role = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleRoleProperty)
-                                    is_role_interactive = AccessibleRoleNames.get(role, "Default") in INTERACTIVE_ROLES
-                                except Exception:
-                                    is_role_interactive = False
-
-                                is_default_action = False
-                                try:
-                                    default_action = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleDefaultActionProperty)
-                                    if default_action and default_action.title() in DEFAULT_ACTIONS:
-                                        is_default_action = True
-                                except Exception:
-                                    pass
-
-                                if is_role_interactive and (is_default_action or is_keyboard_focusable):
-                                    is_interactive = True
-
-                        if isinstance(node,DocumentControl):
-                            is_interactive=True
+                        is_interactive = self._is_interactive_control(
+                            node, control_type_name, is_browser, is_keyboard_focusable
+                        )
 
                         if is_interactive:
                             is_focused = node.CachedHasKeyboardFocus
@@ -527,115 +647,9 @@ class Tree:
                             localized_control_type = node.CachedLocalizedControlType
                             accelerator_key = node.CachedAcceleratorKey
 
-                            metadata:dict[str,Any]={}
-                            metadata['has_focused']=is_focused
-                            if accelerator_key:
-                                metadata['shortcut']=accelerator_key
-
-                            word_elements: list[tuple[str, Rect]] = []
-
-                            try:
-                                help_text = node.CachedHelpText
-                                if help_text:
-                                    metadata['help_text']=help_text.encode('ascii', 'ignore').decode('ascii')
-                            except Exception:
-                                pass
-
-                            if isinstance(node,(ButtonControl,CheckBoxControl)):
-                                try:
-                                    toggle_state = node.GetCachedPropertyValue(PropertyId.ToggleToggleStateProperty)
-                                    if toggle_state is not None:
-                                        match toggle_state:
-                                            case ToggleState.On:
-                                                metadata['toggle_state'] = 'on'
-                                            case ToggleState.Off:
-                                                metadata['toggle_state'] = 'off'
-                                            case _:
-                                                pass
-                                except Exception:
-                                    pass
-
-                            if isinstance(node,(EditControl,DocumentControl,ImageControl)):
-                                is_password = False
-                                try:
-                                    is_password = bool(node.CachedIsPassword)
-                                    if is_password:
-                                        metadata['is_password']=True
-                                except Exception:
-                                    pass
-
-                                try:
-                                    value = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleValueProperty)
-                                    metadata['value']=value.strip() if value else '(empty)'
-                                    if not is_password and not is_dom and getattr(self, 'include_words', False):
-                                        words=node.GetAllWordBoundingBoxes()
-                                        for word,boxes in words:
-                                            for box in boxes:
-                                                word_elements.append((word,box))
-                                except Exception:
-                                    pass
-
-                            if isinstance(node,ComboBoxControl):
-                                try:
-                                    value = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleValueProperty)
-                                    metadata['value']=value.strip() if value else '(empty)'
-                                except Exception:
-                                    pass
-
-                                try:
-                                    control_state=node.GetCachedPropertyValue(PropertyId.ExpandCollapseExpandCollapseStateProperty)
-                                    match control_state:
-                                        case ExpandCollapseState.Expanded:
-                                            metadata['expand_collapse_state']='expanded'
-                                        case ExpandCollapseState.Collapsed:
-                                            metadata['expand_collapse_state']='collapsed'
-                                        case ExpandCollapseState.PartiallyExpanded:
-                                            metadata['expand_collapse_state']='partially expanded'
-                                        case _:
-                                            pass
-                                except Exception:
-                                    pass
-
-                                try:
-                                    can_select_multiple=node.GetCachedPropertyValue(PropertyId.SelectionCanSelectMultipleProperty)
-                                    metadata['is_selection_required']=can_select_multiple
-                                except Exception:
-                                    pass
-
-                                try:
-                                    is_selection_required=node.GetCachedPropertyValue(PropertyId.SelectionIsSelectionRequiredProperty)
-                                    metadata['is_selection_required']=is_selection_required
-                                except Exception:
-                                    pass
-
-                                try:
-                                    is_selected=node.GetCachedPropertyValue(PropertyId.SelectionItemIsSelectedProperty)
-                                    metadata['is_selected']=is_selected
-                                except Exception:
-                                    pass
-
-                                try:
-                                    selection_raw = node.GetCachedPropertyValue(PropertyId.SelectionSelectionProperty)
-                                    selected_items = Control.CreateControlsFromRawElementArray(selection_raw)
-                                    selected_names = [item.Name for item in selected_items if item.Name]
-                                    if selected_names:
-                                        metadata['selection'] = selected_names
-                                except Exception:
-                                    pass
-
-                            if isinstance(node, SliderControl):
-                                try:
-                                    value = node.GetCachedPropertyValue(PropertyId.RangeValueValueProperty)
-                                    minimum = node.GetCachedPropertyValue(PropertyId.RangeValueMinimumProperty)
-                                    maximum = node.GetCachedPropertyValue(PropertyId.RangeValueMaximumProperty)
-                                    if value is not None:
-                                        metadata['value'] = round(value, 2)
-                                    if minimum is not None:
-                                        metadata['min'] = round(minimum, 2)
-                                    if maximum is not None:
-                                        metadata['max'] = round(maximum, 2)
-                                except Exception:
-                                    pass
+                            metadata, word_elements = self._read_interactive_metadata(
+                                node, is_focused, accelerator_key, is_dom
+                            )
 
                             if is_browser and is_dom:
                                 bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
@@ -726,6 +740,12 @@ class Tree:
             # Phase 3: Cached Children Retrieval
             children = CachedControlHelper.get_cached_children(node, children_cache_req)
 
+            def descend(child, *, dom, dialog, parent):
+                self.tree_traversal(child, window_bounding_box, window_name, is_browser, interactive_nodes,
+                                    scrollable_nodes, dom_interactive_nodes, dom_informative_nodes,
+                                    is_dom=dom, is_dialog=dialog, element_cache_req=element_cache_req,
+                                    children_cache_req=children_cache_req, current_semantic_node=parent)
+
             # Recursively traverse the tree the right to left for normal apps and for DOM traverse from left to right
             for child in (children if is_dom else reversed(children)):
                 if self.element_budget.exhausted:
@@ -737,12 +757,10 @@ class Tree:
                     # Check if the child is a DOM element
                     if is_browser and child.CachedAutomationId=="RootWebArea":
                         bounding_box=child.CachedBoundingRectangle
-                        self.dom_bounding_box=BoundingBox(left=bounding_box.left,top=bounding_box.top,
-                        right=bounding_box.right,bottom=bounding_box.bottom,width=bounding_box.width(),
-                        height=bounding_box.height())
+                        self.dom_bounding_box=BoundingBox.from_bounding_rectangle(bounding_box)
                         self.dom=child
                         # enter DOM subtree
-                        self.tree_traversal(child, window_bounding_box, window_name, is_browser, interactive_nodes, scrollable_nodes, dom_interactive_nodes, dom_informative_nodes, is_dom=True, is_dialog=is_dialog, element_cache_req=element_cache_req, children_cache_req=children_cache_req, current_semantic_node=None)
+                        descend(child, dom=True, dialog=is_dialog, parent=None)
                     # Check if the child is a dialog
                     elif isinstance(child,WindowControl):
                         if not child.CachedIsOffscreen:
@@ -762,10 +780,10 @@ class Tree:
                                 if is_modal:
                                     interactive_nodes.clear()
                         # enter dialog subtree
-                        self.tree_traversal(child, window_bounding_box, window_name, is_browser, interactive_nodes, scrollable_nodes, dom_interactive_nodes, dom_informative_nodes, is_dom=is_dom, is_dialog=True, element_cache_req=element_cache_req, children_cache_req=children_cache_req, current_semantic_node=semantic_parent)
+                        descend(child, dom=is_dom, dialog=True, parent=semantic_parent)
                     else:
                         # normal non-dialog children
-                        self.tree_traversal(child, window_bounding_box, window_name, is_browser, interactive_nodes, scrollable_nodes, dom_interactive_nodes, dom_informative_nodes, is_dom=is_dom, is_dialog=is_dialog, element_cache_req=element_cache_req, children_cache_req=children_cache_req, current_semantic_node=semantic_parent)
+                        descend(child, dom=is_dom, dialog=is_dialog, parent=semantic_parent)
                 except TypeError as e:
                     if not _is_comtypes_variant_ord_typeerror(e):
                         raise

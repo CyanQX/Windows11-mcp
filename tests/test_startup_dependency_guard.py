@@ -1,6 +1,6 @@
 import pytest
 
-from windows_mcp import __main__ as wm
+from windows_mcp import server as wm
 
 
 def test_missing_dependency_exits_nonzero_with_actionable_stderr(capsys):

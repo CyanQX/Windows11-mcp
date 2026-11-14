@@ -15,14 +15,12 @@ disabled capabilities: R3 tools still require local ``policy.allow_r3`` configur
 from __future__ import annotations
 
 import json
-import os
-import secrets
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from windows_mcp.infrastructure.approvals import read_signed_record, sign_record
-from windows_mcp.infrastructure.local_storage import FileLock, private_directory
+from windows_mcp.infrastructure.local_storage import FileLock, atomic_write_bytes, private_directory
 
 TRUST_FILE = "operator-trust.json"
 MODES = {"session", "forever"}
@@ -102,13 +100,8 @@ class TrustStore:
 
     def _save(self, payload):
         with self._exclusive():
-            temporary = self.path.with_suffix(f".{secrets.token_hex(8)}.tmp")
-            try:
-                with temporary.open("w", encoding="utf-8") as stream:
-                    json.dump(sign_record(self.directory, payload), stream, ensure_ascii=False)
-                os.replace(temporary, self.path)
-            finally:
-                temporary.unlink(missing_ok=True)
+            record = sign_record(self.directory, payload)
+            atomic_write_bytes(self.path, json.dumps(record, ensure_ascii=False).encode("utf-8"))
 
     def allows(self, session_id: str | None = None, application: str | None = None,
                tool: str | None = None, action: str | None = None) -> bool:
@@ -153,14 +146,6 @@ class TrustStore:
         }
         self._save(payload)
         return payload
-
-    def grant_for_request(self, request: dict, mode: str = "session", *, operator: str = "approval-ui") -> dict:
-        from windows_mcp.infrastructure.authorization import scope_applications
-
-        scope = request.get("authorization_scope") or {}
-        if request.get("risk") != 2 or not scope.get("application") or request.get("expires_at", 0) <= time.time():
-            raise ValueError("Choose a scoped R2 request before enabling automatic authorization")
-        return self.grant(mode, operator=operator, session_id=request["session_id"], applications=scope_applications(scope))
 
     def revoke(self) -> None:
         with self._exclusive():

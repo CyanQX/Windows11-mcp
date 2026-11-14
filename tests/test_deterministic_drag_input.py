@@ -3,22 +3,8 @@ from collections.abc import Callable
 
 import pytest
 
+from tests.tool_helpers import FakeMCP, register_tools
 from windows_mcp.tools.input import register
-
-
-class FakeMCP:
-    def __init__(self) -> None:
-        self.tools: dict[str, Callable] = {}
-        self.tool_options: dict[str, dict[str, object]] = {}
-
-    def tool(self, *, name: str, **kwargs: object) -> Callable:
-        self.tool_options[name] = kwargs
-
-        def decorator(func: Callable) -> Callable:
-            self.tools[name] = func
-            return func
-
-        return decorator
 
 
 class FakeDesktop:
@@ -40,9 +26,7 @@ class FakeDesktop:
 
 
 def _tools(desktop: FakeDesktop) -> dict[str, Callable]:
-    mcp = FakeMCP()
-    register(mcp, get_desktop=lambda: desktop, get_analytics=lambda: None)
-    return mcp.tools
+    return register_tools(register, desktop)
 
 
 def test_move_tool_preserves_legacy_move_behavior() -> None:

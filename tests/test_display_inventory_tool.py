@@ -1,23 +1,11 @@
 import asyncio
 from types import SimpleNamespace
-from collections.abc import Callable
 
 import pytest
 
+from tests.tool_helpers import FakeMCP
 from windows_mcp.tools import display as display_tool_module
 from windows_mcp.uia import DisplayInfo, Rect, core
-
-
-class FakeMCP:
-    def __init__(self) -> None:
-        self.tools: dict[str, Callable] = {}
-
-    def tool(self, *, name: str, **kwargs: object) -> Callable:
-        def decorator(func: Callable) -> Callable:
-            self.tools[name] = func
-            return func
-
-        return decorator
 
 
 class FakeDesktop:

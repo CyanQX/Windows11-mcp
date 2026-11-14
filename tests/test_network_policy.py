@@ -151,11 +151,12 @@ def test_network_allowlist_round_trips_and_does_not_disable_private_address_prot
 def test_approval_cli_discloses_and_revokes_network_scope(secured, monkeypatch):
     from click.testing import CliRunner
     from windows_mcp import __main__ as cli
+    from windows_mcp.cli import grants
     from windows_mcp.infrastructure.approvals import ApprovalStore
 
     runtime, _, _ = secured
-    monkeypatch.setattr(cli, "CONFIG_DIR", runtime.policy.approvals.directory.parent)
-    authority = ApprovalStore(cli.CONFIG_DIR / "approvals")
+    monkeypatch.setattr(grants, "CONFIG_DIR", runtime.policy.approvals.directory.parent)
+    authority = ApprovalStore(grants.CONFIG_DIR / "approvals")
     request = authority.request("client-A", "Scrape", {"url": "https://example.com"}, 0, "read",
                                 network_origins=["https://example.com"])
     runner = CliRunner()

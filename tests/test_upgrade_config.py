@@ -44,9 +44,10 @@ def test_insecure_remote_flag_cannot_bypass_hardening(monkeypatch):
 
 def test_approval_cli_is_an_operator_boundary(tmp_path, monkeypatch):
     from windows_mcp import __main__ as cli
+    from windows_mcp.cli import grants
     from windows_mcp.infrastructure.approvals import ApprovalStore
 
-    monkeypatch.setattr(cli, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(grants, "CONFIG_DIR", tmp_path)
     store = ApprovalStore(tmp_path / "approvals")
     request = store.request("session", "Click", {"loc": [100, 200]}, 2, "Owned fixture point")
     assert not store.consume("session", "Click", {"loc": [100, 200]})

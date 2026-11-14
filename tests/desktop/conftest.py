@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.tool_helpers import FakeMCP
+
 ENABLED = os.getenv("WINDOWS_MCP_DESKTOP_TESTS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 if not ENABLED:
@@ -124,18 +126,6 @@ class FixtureApp:
                 self.proc.kill()
 
 
-class FakeMCP:
-    def __init__(self) -> None:
-        self.tools: dict[str, object] = {}
-
-    def tool(self, *, name: str, **kwargs: object):
-        def decorator(func):
-            self.tools[name] = func
-            return func
-
-        return decorator
-
-
 @pytest.fixture(scope="session", autouse=True)
 def isolated_desktop_authority(tmp_path_factory):
     """Real fixture actions never reuse the user's approval, trust or audit storage."""
@@ -146,20 +136,20 @@ def isolated_desktop_authority(tmp_path_factory):
     from windows_mcp.infrastructure.policy import PolicyGate
     from windows_mcp.infrastructure.approvals import ApprovalStore
     from windows_mcp.infrastructure.audit import AuditLog
-    from windows_mcp import __main__ as cli
+    from windows_mcp import server
 
     directory = tmp_path_factory.mktemp("desktop-authority")
     workspace = directory / "workspace"
     workspace.mkdir()
     runtime = sessions.EngineRuntime(PolicyGate(roots=[workspace], approvals=ApprovalStore(directory / "approvals")))
     runtime.audit = AuditLog(directory / "audit.jsonl")
-    previous, previous_mcp = sessions._runtime, cli._mcp
-    sessions._runtime, cli._mcp = runtime, None
+    previous, previous_mcp = sessions._runtime, server._mcp
+    sessions._runtime, server._mcp = runtime, None
     try:
         yield
     finally:
         asyncio.run(runtime.close())
-        sessions._runtime, cli._mcp = previous, previous_mcp
+        sessions._runtime, server._mcp = previous, previous_mcp
 
 
 @pytest.fixture(scope="session")

@@ -1,27 +1,24 @@
 """Notification tool — Windows toast notifications."""
 
+from functools import partial
 from typing import Annotated
 
-from mcp.types import ToolAnnotations
 from pydantic import Field
-from windows_mcp.infrastructure import with_analytics
 from fastmcp import Context
 from windows_mcp import notifications
+from windows_mcp.tools._common import declare_tool
 
 
 def register(mcp, *, get_desktop, get_analytics):
-    @mcp.tool(
-        name="Notification",
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        "Notification",
         description="Sends a Windows toast notification with a title and message.",
-        annotations=ToolAnnotations(
-            title="Notification",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
+        access="write",
+        analytics="Notification-Tool",
+        offload="background",
     )
-    @with_analytics(get_analytics(), "Notification-Tool", offload="background")
     def notification_tool(
         title: Annotated[
             str,

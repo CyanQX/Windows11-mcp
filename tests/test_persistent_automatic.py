@@ -201,8 +201,9 @@ def test_frozen_notifier_does_not_open_a_redundant_review(tmp_path, monkeypatch)
 
 def test_operator_cli_can_explicitly_save_and_revoke_automatic(tmp_path, monkeypatch):
     from windows_mcp import __main__ as cli
+    from windows_mcp.cli import grants
 
-    monkeypatch.setattr(cli, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(grants, "CONFIG_DIR", tmp_path)
     runner = CliRunner()
     store = TrustStore(tmp_path / "approvals")
     assert runner.invoke(cli.main, ["trust", "--mode", "automatic"], input="n\n").exit_code != 0

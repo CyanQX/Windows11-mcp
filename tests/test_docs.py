@@ -7,17 +7,11 @@ import re
 import tomllib
 from pathlib import Path
 
+from tests.tool_helpers import FakeMCP
+
 ROOT = Path(__file__).resolve().parents[1]
+_NON_DOCUMENT_DIRS = {"node_modules", ".pytest_cache", ".ruff_cache", ".claude", "build", "dist", "reports"}
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-
-
-class FakeMCP:
-    def __init__(self):
-        self.options: dict[str, dict] = {}
-
-    def tool(self, *, name, **kwargs):
-        self.options[name] = kwargs
-        return lambda func: func
 
 
 def registered_tools() -> dict[str, dict]:
@@ -78,8 +72,8 @@ def test_readme_is_the_only_user_document():
         str(p.relative_to(ROOT)).replace("\\", "/")
         for p in ROOT.rglob("*.md")
         if p != ROOT / "design-qa.md"  # Local visual review is a working artifact.
-        # Optional developer-local skills may be added/removed independently of product docs.
-        if not any(part.startswith(".venv") or part in {"node_modules", ".pytest_cache", ".claude"} for part in p.parts)
+        # Optional developer-local skills and build output are not product docs.
+        if not any(part.startswith(".venv") or part in _NON_DOCUMENT_DIRS for part in p.parts)
     )
     assert markdown == ["CHANGELOG.md", "CLAUDE.md", "LICENSE.md", "README.md", "skills/windows-mcp/SKILL.md", "skills/windows-mcp/references/advanced.md"]
 

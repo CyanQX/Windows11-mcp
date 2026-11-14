@@ -14,6 +14,56 @@ from windows_mcp.runtime import run_on_desktop
 from windows_mcp.desktop.pointer_motion import bind_motion
 
 
+# Tools whose calls carry a dispatch authorization down to the code that mutates the machine.
+_DISPATCH_BOUND = frozenset(DESKTOP_TOOLS) | {
+    "NativeAPI", "FileSystem", "Browser", "PowerShell", "Terminal", "Registry", "Process",
+    "Clipboard", "Notification",
+}
+_FILE_EXPECTATIONS = frozenset({"file_exists", "file_content", "file_sha256"})
+
+
+def _normalize_expected(arguments: dict, name: str, policy) -> None:
+    from windows_mcp.engine.contracts import normalize_expected
+
+    if arguments.get("expected") is not None:
+        arguments["expected"] = normalize_expected(arguments["expected"], browser=name == "Browser")
+
+
+def _normalize_text_range(arguments: dict, name: str, policy) -> None:
+    from windows_mcp.engine.contracts import TextRangeSpec
+
+    if arguments.get("text") is not None:
+        arguments["text"] = TextRangeSpec.model_validate(arguments["text"]).model_dump(mode="json")
+
+
+def _check_paths(*keys: str):
+    def rule(arguments: dict, name: str, policy) -> None:
+        for key in keys:
+            if arguments.get(key):
+                arguments[key] = str(policy.check_path(arguments[key]))
+
+    return rule
+
+
+def _scope_expected_files(arguments: dict, name: str, policy) -> None:
+    expected = arguments.get("expected")
+    if expected and expected.get("kind") in _FILE_EXPECTATIONS:
+        arguments["expected"] = {**expected, "path": str(policy.check_path(expected.get("path") or ""))}
+
+
+# Argument rules run in order before authorization, so the policy sees canonical values.
+_ARGUMENT_RULES = {
+    "Execute": (_normalize_expected, _normalize_text_range, _scope_expected_files),
+    "Verify": (_normalize_expected, _scope_expected_files),
+    "Watch": (_normalize_expected, _scope_expected_files),
+    "Browser": (_normalize_expected,),
+    "Observe": (_normalize_text_range,),
+    "FileSystem": (_check_paths("path", "destination"),),
+    "NativeAPI": (_check_paths("path", "destination"),),
+    "Terminal": (_check_paths("cwd"),),
+}
+
+
 class ToolGateway:
     def __init__(self, mcp, *, runtime=None, get_desktop=lambda: None) -> None:
         self.mcp = mcp
@@ -26,23 +76,11 @@ class ToolGateway:
         def register(func):
             signature = inspect.signature(func)
 
-            def prepare(bound):
-                from windows_mcp.engine.contracts import TextRangeSpec, normalize_expected
+            rules = _ARGUMENT_RULES.get(name, ())
 
-                if name in {"Execute", "Verify", "Watch", "Browser"} and bound.arguments.get("expected") is not None:
-                    bound.arguments["expected"] = normalize_expected(bound.arguments["expected"], browser=name == "Browser")
-                if name in {"Execute", "Observe"} and bound.arguments.get("text") is not None:
-                    bound.arguments["text"] = TextRangeSpec.model_validate(bound.arguments["text"]).model_dump(mode="json")
-                if name in {"FileSystem", "NativeAPI"}:
-                    for key in ("path", "destination"):
-                        if bound.arguments.get(key):
-                            bound.arguments[key] = str(self.runtime.policy.check_path(bound.arguments[key]))
-                if name == "Terminal" and bound.arguments.get("cwd"):
-                    bound.arguments["cwd"] = str(self.runtime.policy.check_path(bound.arguments["cwd"]))
-                if name in {"Execute", "Verify", "Watch"}:
-                    expected = bound.arguments.get("expected")
-                    if expected and expected.get("kind") in {"file_exists", "file_content", "file_sha256"}:
-                        bound.arguments["expected"] = {**expected, "path": str(self.runtime.policy.check_path(expected.get("path") or ""))}
+            def prepare(bound):
+                for rule in rules:
+                    rule(bound.arguments, name, self.runtime.policy)
                 return bound
 
             def normalize(arguments: dict) -> dict:
@@ -89,7 +127,7 @@ class ToolGateway:
                         capability_one_use = getattr(risk, "capability_one_use", False)
                         trusted = getattr(risk, "trusted", False)
                         authorization = DispatchAuthorization(self.runtime.policy, state.session_id, name, arguments, scope, risk, trusted, generation, capability_one_use)
-                        with self.runtime.policy.network_call(state.session_id, risk, scope), bind_dispatch(authorization if name in DESKTOP_TOOLS | {"NativeAPI", "FileSystem", "Browser", "PowerShell", "Terminal", "Registry", "Process", "Clipboard", "Notification"} else None), bind_motion(self.runtime.motion):
+                        with self.runtime.policy.network_call(state.session_id, risk, scope), bind_dispatch(authorization if name in _DISPATCH_BOUND else None), bind_motion(self.runtime.motion):
                             result = await func(**bound.arguments)
                     except Exception as exc:
                         self.runtime.audit.record(session=state.session_id, tool=name, digest=digest, status=getattr(exc, "code", "FAILED"), audit_id=audit_id)

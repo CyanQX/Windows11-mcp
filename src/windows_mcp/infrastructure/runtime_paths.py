@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+CONFIG_DIRNAME = ".windows-mcp"  # Per-user state directory name, relative to the home directory.
 PORTABLE_MARKER = "WindowsMCP.portable.json"
 PORTABLE_MODE = {"schema": 1, "mode": "portable"}
 
@@ -40,4 +41,4 @@ def portable_data_directory(executable: Path | None = None, *, frozen: bool | No
 
 def configuration_directory() -> Path:
     data = portable_data_directory()
-    return data / "config" if data is not None else Path.home() / ".windows-mcp"
+    return data / "config" if data is not None else Path.home() / CONFIG_DIRNAME

@@ -9,13 +9,14 @@ actually happened.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from typing import Any, Literal
 
 from fastmcp import Context
-from mcp.types import ToolAnnotations
 
+from windows_mcp.coercion import parse_bool
 from windows_mcp.desktop import elements
-from windows_mcp.infrastructure import with_analytics
+from windows_mcp.tools._common import declare_tool
 
 ActAction = Literal[
     "click",
@@ -33,14 +34,6 @@ ActAction = Literal[
     "focus",
     "scroll_into_view",
 ]
-
-
-def _as_bool(value: bool | str, name: str) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-        return value.strip().lower() == "true"
-    raise ValueError(f"{name} must be true or false")
 
 
 def _windows_for(window: str | int | None) -> list[elements.TopWindow]:
@@ -202,8 +195,10 @@ def act_on(
 
 
 def register(mcp: Any, *, get_desktop: Callable[[], Any], get_analytics: Callable[[], Any]) -> None:
-    @mcp.tool(
-        name="Find",
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        "Find",
         description=(
             "Find controls in a REAL window by name / control type / automation id, live through "
             "UI Automation (one fast query, no screenshot). Keywords: find button, locate field, "
@@ -213,15 +208,9 @@ def register(mcp: Any, *, get_desktop: Callable[[], Any], get_analytics: Callabl
             "text, process name ('notepad'), handle, 'taskbar', '*' for all windows; default = the "
             "foreground window. Use the references with Act."
         ),
-        annotations=ToolAnnotations(
-            title="Find",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
+        access="read",
+        analytics="Find-Tool",
     )
-    @with_analytics(get_analytics(), "Find-Tool")
     def find_tool(
         name: str | None = None,
         control_type: str | None = None,
@@ -238,11 +227,11 @@ def register(mcp: Any, *, get_desktop: Callable[[], Any], get_analytics: Callabl
             automation_id=automation_id,
             window=window,
             limit=limit,
-            include_offscreen=_as_bool(include_offscreen, "include_offscreen"),
+            include_offscreen=parse_bool(include_offscreen, "include_offscreen"),
         )
 
-    @mcp.tool(
-        name="Act",
+    @tool(
+        "Act",
         description=(
             "Operate a REAL control the way a person would and verify the result. target: an element "
             "reference from Find (e5), a Snapshot label (12), or the control's name ('Save'). "
@@ -258,15 +247,9 @@ def register(mcp: Any, *, get_desktop: Callable[[], Any], get_analytics: Callabl
             "control back, and the visible effects (windows opened/closed, focus). Keyboard text is "
             "only sent when the control's window is confirmed in the foreground."
         ),
-        annotations=ToolAnnotations(
-            title="Act",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
+        access="write",
+        analytics="Act-Tool",
     )
-    @with_analytics(get_analytics(), "Act-Tool")
     def act_tool(
         target: str,
         action: ActAction = "click",

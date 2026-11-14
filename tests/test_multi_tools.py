@@ -1,22 +1,11 @@
 import asyncio
 from unittest.mock import MagicMock
 
+from tests.tool_helpers import register_tools
 from windows_mcp.desktop.service import Desktop
 from windows_mcp.desktop.views import DesktopState
 from windows_mcp.tree.views import BoundingBox, Center, ScrollElementNode, TreeElementNode, TreeState
 from windows_mcp.tools.multi import register
-
-
-class FakeMCP:
-    def __init__(self):
-        self.tools = {}
-
-    def tool(self, *, name, **kwargs):
-        def decorator(func):
-            self.tools[name] = func
-            return func
-
-        return decorator
 
 
 def make_desktop_with_tree_state():
@@ -57,10 +46,8 @@ def make_desktop_with_tree_state():
     return desktop
 
 
-def register_tools(desktop):
-    mcp = FakeMCP()
-    register(mcp, get_desktop=lambda: desktop, get_analytics=lambda: None)
-    return mcp.tools
+def make_tools(desktop):
+    return register_tools(register, desktop)
 
 
 def test_get_coordinates_from_labels_returns_bulk_coordinates():
@@ -74,7 +61,7 @@ def test_multiselect_uses_bulk_coordinate_resolution():
     desktop.desktop_state = object()
     desktop.get_coordinates_from_labels.return_value = [(10, 10), (40, 40)]
 
-    tools = register_tools(desktop)
+    tools = make_tools(desktop)
     result = asyncio.run(tools["MultiSelect"](labels=[0, 1], press_ctrl=False))
 
     assert result == "Multi-selected elements at:\n(10,10)\n(40,40)"
@@ -87,7 +74,7 @@ def test_multiedit_uses_bulk_coordinate_resolution():
     desktop.desktop_state = object()
     desktop.get_coordinates_from_labels.return_value = [(10, 10), (40, 40)]
 
-    tools = register_tools(desktop)
+    tools = make_tools(desktop)
     result = asyncio.run(tools["MultiEdit"](labels=[[0, "First"], [1, "Second"]]))
 
     assert result == "Multi-edited elements at: (10,10) with text 'First', (40,40) with text 'Second'"

@@ -1,11 +1,11 @@
 """DisplayInventory tool - read-only display and DPI metadata."""
 
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 from fastmcp import Context
-from mcp.types import ToolAnnotations
-from windows_mcp.infrastructure import with_analytics
+from windows_mcp.tools._common import declare_tool
 
 
 def _rect_to_dict(rect: Any) -> dict[str, int] | None:
@@ -27,22 +27,18 @@ def register(
     get_desktop: Callable[[], Any],
     get_analytics: Callable[[], Any],
 ) -> None:
-    @mcp.tool(
-        name="DisplayInventory",
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        "DisplayInventory",
         description=(
             "Read active display layout and DPI metadata. Reports display index, device name, "
             "monitor/work-area bounds, resolution, orientation, primary flag, effective DPI, "
             "and scale."
         ),
-        annotations=ToolAnnotations(
-            title="DisplayInventory",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
+        access="read",
+        analytics="DisplayInventory-Tool",
     )
-    @with_analytics(get_analytics(), "DisplayInventory-Tool")
     def display_inventory_tool(ctx: Context = None) -> list[dict[str, object]]:
         displays = get_desktop().get_displays()
         return [

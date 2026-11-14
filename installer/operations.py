@@ -9,12 +9,13 @@ import shutil
 from contextlib import contextmanager
 from pathlib import Path
 
-from installer.backend import Configuration, Installer, SERVER, atomic_write, read_file
+from installer.backend import Configuration, Installer, SERVER, atomic_write, digest as content_digest, read_file
 from installer.detection import TargetDetector
 from installer.diagnostics import EventLog
 from installer.health import HealthChecker
 from installer.models import IntegrationStatus as Status, ManagerError
 from installer.storage import Journal, ProcessLock, check_path, file_hash, private_directory, hash_snapshot
+from windows_mcp.infrastructure.runtime_paths import CONFIG_DIRNAME
 
 
 def plan_hash(plan: dict) -> str:
@@ -57,7 +58,7 @@ class InstallerService:
         from installer.migration import assert_available
         assert_available(self)
         private_directory(self.backend.data)
-        authority = self.backend.home / ".windows-mcp"
+        authority = self.backend.home / CONFIG_DIRNAME
         private_directory(authority)
         # The home lock also protects client configs when two processes have
         # different data-directory preferences. Always acquire in this order.
@@ -459,7 +460,7 @@ class InstallerService:
         profile = self.backend.clients[key]
         row = next(item for item in journal.record["files"] if item["path"] == str(profile.config))
         original = (journal.root / row["slot"]).read_bytes() if row["before"] else None
-        if row["before"] and hashlib.sha256(original).hexdigest() != row["before"]:
+        if row["before"] and content_digest(original) != row["before"]:
             raise ManagerError("BACKUP_CORRUPT", "备份散列不一致，不能恢复")
         before = Configuration(profile, original).get()
         current = Configuration(profile, read_file(profile.config)).get()
@@ -479,7 +480,7 @@ class InstallerService:
             old = Journal.load(self.backend.data, transaction_id, allowed)
             row = next(item for item in old.record["files"] if item["path"] == str(profile.config))
             content = (old.root / row["slot"]).read_bytes() if row["before"] else None
-            if row["before"] and hashlib.sha256(content).hexdigest() != row["before"]:
+            if row["before"] and content_digest(content) != row["before"]:
                 raise ManagerError("BACKUP_CORRUPT", "备份散列不一致")
             current_bytes = read_file(profile.config)
             config = Configuration(profile, current_bytes)
@@ -488,7 +489,7 @@ class InstallerService:
             encoded = config.encode()
             if read_file(profile.config) != current_bytes:
                 raise ManagerError("CONCURRENT_CHANGE", "恢复时配置被其他程序修改")
-            journal.wrote(profile.config, hashlib.sha256(encoded).hexdigest())
+            journal.wrote(profile.config, content_digest(encoded))
             atomic_write(profile.config, encoded)
             journal.commit()
             self.health_results.clear()

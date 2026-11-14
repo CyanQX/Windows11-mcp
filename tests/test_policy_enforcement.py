@@ -10,17 +10,7 @@ from windows_mcp.infrastructure.approvals import ApprovalStore
 from windows_mcp.infrastructure.audit import AuditLog
 from windows_mcp.infrastructure.policy import PolicyBlocked, PolicyGate
 from windows_mcp.tools.gateway import ToolGateway
-
-
-class FakeMCP:
-    def __init__(self):
-        self.tools = {}
-
-    def tool(self, *, name, **options):
-        def register(func):
-            self.tools[name] = func
-            return func
-        return register
+from tests.tool_helpers import FakeMCP
 
 
 @pytest.fixture

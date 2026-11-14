@@ -7,12 +7,12 @@ by the Snapshot and Screenshot tool modules.
 import io
 import logging
 import os
-import time
 
 from fastmcp.utilities.types import Image
 from textwrap import dedent
 from windows_mcp.desktop.service import Desktop, Size
 from windows_mcp.desktop.utils import remove_private_use_chars
+from windows_mcp.profiling import StageTimer
 
 
 logger = logging.getLogger(__name__)
@@ -33,15 +33,6 @@ def _screenshot_scale() -> float:
     return scale
 
 
-def _snapshot_profile_enabled() -> bool:
-    value = os.getenv("WINDOWS_MCP_PROFILE_SNAPSHOT", "")
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _as_bool(value: bool | str) -> bool:
-    return value is True or (isinstance(value, str) and value.lower() == "true")
-
-
 def capture_desktop_state(
     desktop: Desktop,
     *,
@@ -56,12 +47,7 @@ def capture_desktop_state(
     window_handles: list[int] | None = None,
     use_words: bool = False,
 ):
-    profile_enabled = _snapshot_profile_enabled()
-    profile_started_at = time.perf_counter()
-    stage_started_at = profile_started_at
-    desktop_state_ms = 0.0
-    metadata_render_ms = 0.0
-    screenshot_encode_ms = 0.0
+    timer = StageTimer()
 
     if use_dom and not use_ui_tree:
         raise ValueError("use_dom=True requires use_ui_tree=True")
@@ -89,9 +75,7 @@ def capture_desktop_state(
         max_image_size=Size(width=MAX_IMAGE_WIDTH, height=MAX_IMAGE_HEIGHT),
         **scope_kwargs,
     )
-    if profile_enabled:
-        desktop_state_ms = (time.perf_counter() - stage_started_at) * 1000
-        stage_started_at = time.perf_counter()
+    timer.lap("desktop_state")
 
     interactive_elements = desktop_state.tree_state.interactive_elements_to_string()
     scrollable_elements = desktop_state.tree_state.scrollable_elements_to_string()
@@ -100,9 +84,7 @@ def capture_desktop_state(
     active_window = desktop_state.active_window_to_string()
     active_desktop = desktop_state.active_desktop_to_string()
     all_desktops = desktop_state.desktops_to_string()
-    if profile_enabled:
-        metadata_render_ms = (time.perf_counter() - stage_started_at) * 1000
-        stage_started_at = time.perf_counter()
+    timer.lap("metadata_render")
 
     screenshot_bytes = None
     if use_vision and desktop_state.screenshot is not None:
@@ -110,15 +92,15 @@ def capture_desktop_state(
         desktop_state.screenshot.save(buffered, format="PNG")
         screenshot_bytes = buffered.getvalue()
         buffered.close()
-    if profile_enabled:
-        screenshot_encode_ms = (time.perf_counter() - stage_started_at) * 1000
+    timer.lap("screenshot_encode")
+    if timer.enabled:
         logger.info(
             "%s profile: desktop_state_ms=%.1f metadata_render_ms=%.1f png_encode_ms=%.1f total_ms=%.1f use_vision=%s use_dom=%s use_ui_tree=%s use_annotation=%s display=%s",
             tool_name,
-            desktop_state_ms,
-            metadata_render_ms,
-            screenshot_encode_ms,
-            (time.perf_counter() - profile_started_at) * 1000,
+            timer.ms("desktop_state"),
+            timer.ms("metadata_render"),
+            timer.ms("screenshot_encode"),
+            timer.total_ms(),
             use_vision,
             use_dom,
             use_ui_tree,

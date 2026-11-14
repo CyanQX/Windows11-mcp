@@ -16,7 +16,8 @@ from windows_mcp.tree.views import (
     TreeState,
 )
 from windows_mcp.uia import Rect, DisplayInfo
-import windows_mcp.__main__ as main_module
+import windows_mcp.server as main_module
+from windows_mcp.desktop import regions
 
 
 def make_box(left: int, top: int, right: int, bottom: int) -> BoundingBox:
@@ -176,9 +177,9 @@ class TestDisplayFiltering:
             semantic_tree_root=semantic_root,
         )
 
-        filtered_tree = desktop._filter_tree_state_to_region(tree_state, region)
-        filtered_window = desktop._filter_window_to_region(kept_window, region)
-        filtered_windows = desktop._filter_windows_to_region([kept_window, dropped_window], region)
+        filtered_tree = regions.filter_tree_state(tree_state, region)
+        filtered_window = regions.filter_window(kept_window, region)
+        filtered_windows = regions.filter_windows([kept_window, dropped_window], region)
 
         assert filtered_window is not None
         assert filtered_window.bounding_box.left == 1920

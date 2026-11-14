@@ -104,3 +104,16 @@ def test_connector_config_does_not_invent_odr_ids_or_change_host_settings(tmp_pa
     assert result.exit_code == 0
     assert json.loads(path.read_text())["file_explorer"]["available"] is None
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_manifest_command_keeps_the_repository_manifest_metadata(tmp_path):
+    from pathlib import Path
+    from windows_mcp import __main__ as cli
+
+    output = tmp_path / "generated.json"
+    result = CliRunner().invoke(cli.main, ["manifest", "--profile", "browser", "--output", str(output)])
+    assert result.exit_code == 0, result.output
+    repository = json.loads((Path(__file__).resolve().parents[1] / "manifest.json").read_text(encoding="utf-8"))
+    generated = json.loads(output.read_text(encoding="utf-8"))
+    assert generated["description"] == repository["description"]
+    assert generated["server"]["entry_point"] == repository["server"]["entry_point"]

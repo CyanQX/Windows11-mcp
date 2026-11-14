@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from contextlib import contextmanager
 
-from windows_mcp.infrastructure.local_storage import FileLock, private_directory
+from windows_mcp.infrastructure.local_storage import FileLock, atomic_write_bytes, private_directory
 
 
 def action_hash(tool: str, arguments: dict[str, Any]) -> str:
@@ -100,12 +100,9 @@ class ApprovalStore:
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         record = {"payload": payload, "signature": hmac.new(self._key(), body, "sha256").hexdigest()}
         path = self._path(payload["request_id"])
-        temporary = path.with_suffix(f".{secrets.token_hex(8)}.tmp")
-        if not temporary.is_relative_to(self.directory):
+        if not path.is_relative_to(self.directory):
             raise ValueError("Approval record is outside its private directory")
-        with temporary.open("w", encoding="utf-8") as stream:
-            json.dump(record, stream, ensure_ascii=False)
-        os.replace(temporary, path)
+        atomic_write_bytes(path, json.dumps(record, ensure_ascii=False).encode("utf-8"))
 
     def read(self, request_id: str) -> dict:
         record = json.loads(self._path(request_id).read_text(encoding="utf-8"))

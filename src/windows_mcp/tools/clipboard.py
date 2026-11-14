@@ -1,25 +1,21 @@
 """Clipboard tool — copy/paste clipboard operations."""
 
+from functools import partial
 from typing import Literal
 
-from mcp.types import ToolAnnotations
-from windows_mcp.infrastructure import with_analytics
 from fastmcp import Context
+from windows_mcp.tools._common import declare_tool
 
 
 def register(mcp, *, get_desktop, get_analytics):
-    @mcp.tool(
-        name="Clipboard",
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        "Clipboard",
         description='Copy/paste clipboard operations. Keywords: copy, paste, cut, clipboard, text transfer. Use mode="get" to read current clipboard content, mode="set" to set clipboard text.',
-        annotations=ToolAnnotations(
-            title="Clipboard",
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
+        access="adjust",
+        analytics="Clipboard-Tool",
     )
-    @with_analytics(get_analytics(), "Clipboard-Tool")
     def clipboard_tool(
         mode: Literal["get", "set"], text: str | None = None, ctx: Context = None,
     ) -> str:

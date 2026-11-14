@@ -5,27 +5,20 @@ from __future__ import annotations
 import contextvars
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+
+from windows_mcp.engine.contracts import DispatchEvidence
 
 
-@dataclass
 class DispatchTrace:
-    native_events: int = 0
-    pointer_moves: int = 0
-    button_downs: int = 0
-    button_ups: int = 0
-    keyboard_events: int = 0
-    uia_calls: int = 0
-    partial_native: bool = False
-    motion: dict | None = None
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    """Thread-safe recorder; the counters themselves are the published ``DispatchEvidence``."""
+
+    def __init__(self) -> None:
+        self.evidence = DispatchEvidence()
+        self._lock = threading.Lock()
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {key: getattr(self, key) for key in (
-                "native_events", "pointer_moves", "button_downs", "button_ups",
-                "keyboard_events", "uia_calls", "partial_native", "motion",
-            )}
+            return self.evidence.model_dump()
 
 
 _trace: contextvars.ContextVar[DispatchTrace | None] = contextvars.ContextVar("wmcp_dispatch_trace", default=None)
@@ -48,16 +41,17 @@ def record_native(inputs, accepted: int) -> None:
     # SendInput inserts its array serially. Count only the accepted prefix, never intent.
     accepted = max(0, min(accepted, len(inputs)))
     with trace._lock:
-        trace.native_events += accepted
-        trace.partial_native |= accepted != len(inputs)
+        evidence = trace.evidence
+        evidence.native_events += accepted
+        evidence.partial_native |= accepted != len(inputs)
         for event in inputs[:accepted]:
             if event.type == 1:
-                trace.keyboard_events += 1
+                evidence.keyboard_events += 1
             elif event.type == 0:
                 flags = event.u.mi.dwFlags
-                trace.pointer_moves += bool(flags & 0x0001)
-                trace.button_downs += bool(flags & (0x0002 | 0x0008 | 0x0020))
-                trace.button_ups += bool(flags & (0x0004 | 0x0010 | 0x0040))
+                evidence.pointer_moves += bool(flags & 0x0001)
+                evidence.button_downs += bool(flags & (0x0002 | 0x0008 | 0x0020))
+                evidence.button_ups += bool(flags & (0x0004 | 0x0010 | 0x0040))
 
 
 def record_uia() -> None:
@@ -65,11 +59,11 @@ def record_uia() -> None:
     trace = _trace.get()
     if trace is not None:
         with trace._lock:
-            trace.uia_calls += 1
+            trace.evidence.uia_calls += 1
 
 
 def record_motion(evidence: dict) -> None:
     trace = _trace.get()
     if trace is not None:
         with trace._lock:
-            trace.motion = dict(evidence)
+            trace.evidence.motion = dict(evidence)

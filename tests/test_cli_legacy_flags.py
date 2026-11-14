@@ -4,6 +4,7 @@ import pytest
 from click.testing import CliRunner
 
 from windows_mcp import __main__ as wm
+from windows_mcp.cli import service_task
 
 
 @pytest.mark.parametrize(
@@ -35,10 +36,10 @@ def test_install_options_are_not_blocked_by_legacy_filter(monkeypatch, tmp_path)
         returncode = 1 if args[:2] == ("/Query", "/TN") else 0
         return subprocess.CompletedProcess(["schtasks", *args], returncode, "", "")
 
-    monkeypatch.setattr(wm, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(wm, "_START_SCRIPT_PATH", tmp_path / "start-server.cmd")
-    monkeypatch.setattr(wm, "_resolve_program", lambda: ["windows-mcp"])
-    monkeypatch.setattr(wm, "_schtasks", fake_schtasks)
+    monkeypatch.setattr(service_task, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(service_task, "_START_SCRIPT_PATH", tmp_path / "start-server.cmd")
+    monkeypatch.setattr(service_task, "_resolve_program", lambda: ["windows-mcp"])
+    monkeypatch.setattr(service_task, "_schtasks", fake_schtasks)
 
     result = CliRunner().invoke(wm.main, ["install", "--transport", "sse"])
 

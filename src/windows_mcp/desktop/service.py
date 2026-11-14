@@ -1,3 +1,5 @@
+from windows_mcp.coercion import truthy
+from windows_mcp.profiling import StageTimer
 from windows_mcp.desktop.utils import (
     resolve_known_folder_guid_path,
 )
@@ -8,7 +10,7 @@ from windows_mcp.vdm.core import (
     is_window_on_current_desktop,
 )
 from windows_mcp.desktop.views import DesktopState, Window, Browser, Status, Size, Display
-from windows_mcp.tree.views import BoundingBox, TreeElementNode, TreeState, SemanticNode
+from windows_mcp.tree.views import BoundingBox, TreeElementNode, TreeState
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from PIL import ImageFont, ImageDraw, Image
@@ -17,13 +19,14 @@ from windows_mcp.desktop import screenshot as screenshot_capture
 from windows_mcp.desktop import flash_overlay
 from windows_mcp.desktop import native_input
 from windows_mcp.desktop import elements
+from windows_mcp.desktop import regions
 from windows_mcp.infrastructure import validate_url
 from urllib.parse import urljoin
 from locale import getpreferredencoding
 from typing import Literal
 from markdownify import markdownify
 from thefuzz import process
-from time import sleep, time, perf_counter, monotonic
+from time import sleep, time, monotonic
 from psutil import Process
 import math
 import win32process
@@ -41,11 +44,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 import windows_mcp.uia as uia  # noqa: E402
-
-
-def _snapshot_profile_enabled() -> bool:
-    value = os.getenv("WINDOWS_MCP_PROFILE_SNAPSHOT", "")
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class Desktop:
@@ -122,37 +120,21 @@ class Desktop:
         window_handles: list[int] | None = None,
         use_words: bool = False,
     ) -> DesktopState:
-        use_annotation = use_annotation is True or (
-            isinstance(use_annotation, str) and use_annotation.lower() == "true"
+        use_annotation, use_vision, use_dom, use_ui_tree, as_bytes = (
+            truthy(flag) for flag in (use_annotation, use_vision, use_dom, use_ui_tree, as_bytes)
         )
-        use_vision = use_vision is True or (
-            isinstance(use_vision, str) and use_vision.lower() == "true"
-        )
-        use_dom = use_dom is True or (isinstance(use_dom, str) and use_dom.lower() == "true")
-        use_ui_tree = use_ui_tree is True or (
-            isinstance(use_ui_tree, str) and use_ui_tree.lower() == "true"
-        )
-        as_bytes = as_bytes is True or (isinstance(as_bytes, str) and as_bytes.lower() == "true")
 
         if use_dom and not use_ui_tree:
             raise ValueError("use_dom=True requires use_ui_tree=True")
 
         start_time = time()
-        profile_enabled = _snapshot_profile_enabled()
-        profile_started_at = perf_counter()
-        stage_started_at = profile_started_at
-        desktop_context_ms = 0.0
-        tree_capture_ms = 0.0
-        region_filter_ms = 0.0
-        screenshot_capture_ms = 0.0
-        screenshot_resize_ms = 0.0
-        state_build_ms = 0.0
+        timer = StageTimer()
         displays = self.get_displays()
         available_displays = [self._display_to_view(display) for display in displays]
         capture_rect = (
             self.get_display_union_rect(display_indices, displays) if display_indices else None
         )
-        screenshot_region = self._rect_to_bounding_box(capture_rect) if capture_rect else None
+        screenshot_region = regions.rect_to_bounding_box(capture_rect) if capture_rect else None
 
         # Fast path for Screenshot tool (use_ui_tree=False): skip window enumeration.
         # UIAutomation calls (get_controls_handles / get_windows / get_active_window)
@@ -161,66 +143,32 @@ class Desktop:
             controls_handles = self.get_controls_handles()  # Taskbar,Program Manager,Apps, Dialogs
             windows, windows_handles = self.get_windows(controls_handles=controls_handles)  # Apps
             active_window = self.get_active_window(windows=windows)  # Active Window
-            active_window_handle = active_window.handle if active_window else None
         else:
             controls_handles = set()
             windows = []
             windows_handles = set()
             active_window = None
-            active_window_handle = None
 
         cursor_position = self.get_cursor_location()
-
-        try:
-            active_desktop = get_current_desktop()
-            all_desktops = get_all_desktops()
-        except RuntimeError:
-            active_desktop = {
-                "id": "00000000-0000-0000-0000-000000000000",
-                "name": "Default Desktop",
-            }
-            all_desktops = [active_desktop]
+        active_desktop, all_desktops = self._virtual_desktops()
 
         if active_window is not None and active_window in windows:
             windows.remove(active_window)
-
-        if profile_enabled:
-            desktop_context_ms = (perf_counter() - stage_started_at) * 1000
-            stage_started_at = perf_counter()
+        timer.lap("desktop_context")
 
         logger.debug(f"Active window: {active_window or 'No Active Window Found'}")
         logger.debug(f"Windows: {windows}")
 
         if use_ui_tree:
-            other_windows_handles = set(controls_handles - windows_handles)
-            if active_window_handle is not None:
-                other_windows_handles.discard(active_window_handle)
-            tree_active_window_handle = active_window_handle
-            if screenshot_region:
-                active_window_in_region = (
-                    self._filter_window_to_region(active_window, screenshot_region) is not None
-                )
-                tree_active_window_handle = (
-                    active_window_handle if active_window_in_region else None
-                )
-                other_windows_handles.update(
-                    window.handle
-                    for window in windows
-                    if self._filter_window_to_region(window, screenshot_region) is not None
-                )
-            if window_handles:
-                # Scoped capture: only walk the requested window(s) -- much faster than the
-                # whole desktop and keeps the element budget for the window that matters.
-                wanted = set(window_handles)
-                tree_active_window_handle = (
-                    active_window_handle if active_window_handle in wanted else None
-                )
-                other_windows_handles = wanted - {active_window_handle}
-            tree_state = self.tree.get_state(
-                tree_active_window_handle,
-                list(other_windows_handles),
+            tree_state = self._capture_tree(
+                controls_handles=controls_handles,
+                windows_handles=windows_handles,
+                windows=windows,
+                active_window=active_window,
+                screenshot_region=screenshot_region,
+                window_handles=window_handles,
                 use_dom=use_dom,
-                include_words=use_words,
+                use_words=use_words,
             )
         else:
             root_box = screenshot_region or self.tree.screen_box
@@ -235,74 +183,30 @@ class Desktop:
                     metadata={},
                 ),
             )
-
-        if profile_enabled:
-            tree_capture_ms = (perf_counter() - stage_started_at) * 1000
-            stage_started_at = perf_counter()
+        timer.lap("tree_capture")
 
         if screenshot_region:
-            active_window = self._filter_window_to_region(active_window, screenshot_region)
-            windows = self._filter_windows_to_region(windows, screenshot_region)
+            active_window = regions.filter_window(active_window, screenshot_region)
+            windows = regions.filter_windows(windows, screenshot_region)
             if use_ui_tree:
-                tree_state = self._filter_tree_state_to_region(tree_state, screenshot_region)
-            if cursor_position and not self._point_in_region(cursor_position, screenshot_region):
+                tree_state = regions.filter_tree_state(tree_state, screenshot_region)
+            if cursor_position and not regions.point_in_region(cursor_position, screenshot_region):
                 cursor_position = None
+        timer.lap("region_filter")
 
-        if profile_enabled:
-            region_filter_ms = (perf_counter() - stage_started_at) * 1000
-            stage_started_at = perf_counter()
-
-        screenshot_original_size = None
-        applied_scale = None
+        screenshot = screenshot_original_size = applied_scale = None
         if use_vision:
-            if use_annotation:
-                nodes = tree_state.interactive_nodes
-                screenshot = self.get_annotated_screenshot(
-                    nodes=nodes,
-                    cursor_pos=cursor_position,
-                    grid_lines=grid_lines,
-                    capture_rect=capture_rect,
-                )
-            else:
-                screenshot = self.get_screenshot(capture_rect=capture_rect)
-
-            screenshot_original_size = Size(width=screenshot.width, height=screenshot.height)
-
-            if profile_enabled:
-                screenshot_capture_ms = (perf_counter() - stage_started_at) * 1000
-                stage_started_at = perf_counter()
-
-            if max_image_size:
-                scale_width = (
-                    max_image_size.width / screenshot.width
-                    if screenshot.width > max_image_size.width
-                    else 1.0
-                )
-                scale_height = (
-                    max_image_size.height / screenshot.height
-                    if screenshot.height > max_image_size.height
-                    else 1.0
-                )
-                scale = min(scale, scale_width, scale_height)
-
-            applied_scale = scale
-            if not math.isclose(scale, 1.0, rel_tol=0.0, abs_tol=1e-12):
-                screenshot = screenshot.resize(
-                    (int(screenshot.width * scale), int(screenshot.height * scale)),
-                    Image.LANCZOS,
-                )
-
-            if profile_enabled:
-                screenshot_resize_ms = (perf_counter() - stage_started_at) * 1000
-                stage_started_at = perf_counter()
-
-            if as_bytes:
-                buffered = io.BytesIO()
-                screenshot.save(buffered, format="PNG", optimize=True, compress_level=6)
-                screenshot = buffered.getvalue()
-                buffered.close()
-        else:
-            screenshot = None
+            screenshot, screenshot_original_size, applied_scale = self._capture_screenshot(
+                tree_state=tree_state,
+                cursor_position=cursor_position,
+                capture_rect=capture_rect,
+                use_annotation=use_annotation,
+                grid_lines=grid_lines,
+                scale=scale,
+                max_image_size=max_image_size,
+                as_bytes=as_bytes,
+                timer=timer,
+            )
 
         self.desktop_state = DesktopState(
             active_window=active_window,
@@ -322,18 +226,17 @@ class Desktop:
             else None,
             capture_sec=time() - start_time,
         )
-        if profile_enabled:
-            state_build_ms = (perf_counter() - stage_started_at) * 1000
-            total_profile_ms = (perf_counter() - profile_started_at) * 1000
+        timer.lap("state_build")
+        if timer.enabled:
             logger.info(
                 "Snapshot profile: desktop_context_ms=%.1f tree_capture_ms=%.1f region_filter_ms=%.1f screenshot_capture_ms=%.1f screenshot_resize_ms=%.1f state_build_ms=%.1f total_ms=%.1f use_vision=%s use_dom=%s use_ui_tree=%s use_annotation=%s displays=%s",
-                desktop_context_ms,
-                tree_capture_ms,
-                region_filter_ms,
-                screenshot_capture_ms,
-                screenshot_resize_ms,
-                state_build_ms,
-                total_profile_ms,
+                timer.ms("desktop_context"),
+                timer.ms("tree_capture"),
+                timer.ms("region_filter"),
+                timer.ms("screenshot_capture"),
+                timer.ms("screenshot_resize"),
+                timer.ms("state_build"),
+                timer.total_ms(),
                 use_vision,
                 use_dom,
                 use_ui_tree,
@@ -344,6 +247,116 @@ class Desktop:
         end_time = time()
         logger.info(f"Desktop State capture took {end_time - start_time:.2f} seconds")
         return self.desktop_state
+
+    @staticmethod
+    def _virtual_desktops() -> tuple[dict, list]:
+        try:
+            return get_current_desktop(), get_all_desktops()
+        except RuntimeError:
+            active_desktop = {
+                "id": "00000000-0000-0000-0000-000000000000",
+                "name": "Default Desktop",
+            }
+            return active_desktop, [active_desktop]
+
+    def _capture_tree(
+        self,
+        *,
+        controls_handles: set,
+        windows_handles: set,
+        windows: list[Window],
+        active_window: Window | None,
+        screenshot_region: BoundingBox | None,
+        window_handles: list[int] | None,
+        use_dom: bool,
+        use_words: bool,
+    ) -> TreeState:
+        active_window_handle = active_window.handle if active_window else None
+        other_windows_handles = set(controls_handles - windows_handles)
+        if active_window_handle is not None:
+            other_windows_handles.discard(active_window_handle)
+        tree_active_window_handle = active_window_handle
+        if screenshot_region:
+            active_window_in_region = (
+                regions.filter_window(active_window, screenshot_region) is not None
+            )
+            tree_active_window_handle = active_window_handle if active_window_in_region else None
+            other_windows_handles.update(
+                window.handle
+                for window in windows
+                if regions.filter_window(window, screenshot_region) is not None
+            )
+        if window_handles:
+            # Scoped capture: only walk the requested window(s) -- much faster than the
+            # whole desktop and keeps the element budget for the window that matters.
+            wanted = set(window_handles)
+            tree_active_window_handle = (
+                active_window_handle if active_window_handle in wanted else None
+            )
+            other_windows_handles = wanted - {active_window_handle}
+        return self.tree.get_state(
+            tree_active_window_handle,
+            list(other_windows_handles),
+            use_dom=use_dom,
+            include_words=use_words,
+        )
+
+    def _capture_screenshot(
+        self,
+        *,
+        tree_state: TreeState,
+        cursor_position: tuple[int, int] | None,
+        capture_rect,
+        use_annotation: bool,
+        grid_lines: tuple[int, int] | None,
+        scale: float,
+        max_image_size: Size | None,
+        as_bytes: bool,
+        timer: StageTimer,
+    ):
+        """Capture (and optionally annotate, downscale and PNG-encode) the screenshot.
+
+        Returns ``(screenshot, original_size, applied_scale)``.
+        """
+        if use_annotation:
+            screenshot = self.get_annotated_screenshot(
+                nodes=tree_state.interactive_nodes,
+                cursor_pos=cursor_position,
+                grid_lines=grid_lines,
+                capture_rect=capture_rect,
+            )
+        else:
+            screenshot = self.get_screenshot(capture_rect=capture_rect)
+
+        original_size = Size(width=screenshot.width, height=screenshot.height)
+        timer.lap("screenshot_capture")
+
+        if max_image_size:
+            scale_width = (
+                max_image_size.width / screenshot.width
+                if screenshot.width > max_image_size.width
+                else 1.0
+            )
+            scale_height = (
+                max_image_size.height / screenshot.height
+                if screenshot.height > max_image_size.height
+                else 1.0
+            )
+            scale = min(scale, scale_width, scale_height)
+
+        if not math.isclose(scale, 1.0, rel_tol=0.0, abs_tol=1e-12):
+            screenshot = screenshot.resize(
+                (int(screenshot.width * scale), int(screenshot.height * scale)),
+                Image.LANCZOS,
+            )
+        timer.lap("screenshot_resize")
+
+        if as_bytes:
+            buffered = io.BytesIO()
+            screenshot.save(buffered, format="PNG", optimize=True, compress_level=6)
+            screenshot = buffered.getvalue()
+            buffered.close()
+        return screenshot, original_size, scale
 
     def get_window_status(self, control: uia.Control) -> Status:
         if uia.IsIconic(control.NativeWindowHandle):
@@ -902,7 +915,7 @@ class Desktop:
             native_input.press_keys("home")
         elif caret_position == "end":
             native_input.press_keys("end")
-        if clear is True or (isinstance(clear, str) and clear.lower() == "true"):
+        if truthy(clear):
             native_input.press_keys("ctrl+a")
             native_input.press_keys("backspace")
         if target_window:
@@ -913,7 +926,7 @@ class Desktop:
         else:
             native_input.type_text(text)
             used = "keys"
-        if press_enter is True or (isinstance(press_enter, str) and press_enter.lower() == "true"):
+        if truthy(press_enter):
             native_input.press_keys("enter")
         return used
 
@@ -1044,9 +1057,7 @@ class Desktop:
         native_input.press_keys(shortcut, repeat=repeat)
 
     def multi_select(self, press_ctrl: bool | str = False, locs: list[tuple[int, int]] = []):
-        press_ctrl = press_ctrl is True or (
-            isinstance(press_ctrl, str) and press_ctrl.lower() == "true"
-        )
+        press_ctrl = truthy(press_ctrl)
         flash_overlay.cancel_active_flash()
         # Ctrl is held for the whole sequence and always released, even if a click fails.
         with native_input.hold("ctrl") if press_ctrl else nullcontext():
@@ -1315,7 +1326,7 @@ class Desktop:
         return Display(
             index=display.index,
             device_name=display.device_name,
-            bounding_box=Desktop._rect_to_bounding_box(display.rect),
+            bounding_box=regions.rect_to_bounding_box(display.rect),
             primary=display.primary,
         )
 
@@ -1460,174 +1471,3 @@ class Desktop:
             draw_label(c_label, acx + r, acy - r, "red")
 
         return annotated_screenshot
-
-    @staticmethod
-    def _rect_to_bounding_box(rect: uia.Rect | None) -> BoundingBox | None:
-        if rect is None:
-            return None
-        return BoundingBox(
-            left=rect.left,
-            top=rect.top,
-            right=rect.right,
-            bottom=rect.bottom,
-            width=rect.width(),
-            height=rect.height(),
-        )
-
-    @staticmethod
-    def _point_in_region(point: tuple[int, int], region: BoundingBox) -> bool:
-        x, y = point
-        return region.left <= x < region.right and region.top <= y < region.bottom
-
-    @staticmethod
-    def _clip_bounding_box_to_region(
-        box: BoundingBox | None, region: BoundingBox
-    ) -> BoundingBox | None:
-        if box is None:
-            return None
-        left = max(box.left, region.left)
-        top = max(box.top, region.top)
-        right = min(box.right, region.right)
-        bottom = min(box.bottom, region.bottom)
-        if right <= left or bottom <= top:
-            return None
-        return BoundingBox(
-            left=left,
-            top=top,
-            right=right,
-            bottom=bottom,
-            width=right - left,
-            height=bottom - top,
-        )
-
-    def _filter_window_to_region(self, window: Window | None, region: BoundingBox) -> Window | None:
-        if window is None:
-            return None
-        clipped_box = self._clip_bounding_box_to_region(window.bounding_box, region)
-        if clipped_box is None:
-            return None
-        return Window(
-            name=window.name,
-            is_browser=window.is_browser,
-            depth=window.depth,
-            status=window.status,
-            bounding_box=clipped_box,
-            handle=window.handle,
-            process_id=window.process_id,
-        )
-
-    def _filter_windows_to_region(self, windows: list[Window], region: BoundingBox) -> list[Window]:
-        filtered_windows: list[Window] = []
-        for window in windows:
-            filtered_window = self._filter_window_to_region(window, region)
-            if filtered_window is not None:
-                filtered_windows.append(filtered_window)
-        return filtered_windows
-
-    def _filter_tree_node_to_region(
-        self, node: TreeElementNode, region: BoundingBox
-    ) -> TreeElementNode | None:
-        clipped_box = self._clip_bounding_box_to_region(node.bounding_box, region)
-        if clipped_box is None:
-            return None
-        return TreeElementNode(
-            name=node.name,
-            control_type=node.control_type,
-            window_name=node.window_name,
-            bounding_box=clipped_box,
-            center=clipped_box.get_center(),
-            metadata=node.metadata,
-        )
-
-    def _filter_scroll_node_to_region(self, node, region: BoundingBox):
-        clipped_box = self._clip_bounding_box_to_region(node.bounding_box, region)
-        if clipped_box is None:
-            return None
-        return node.__class__(
-            name=node.name,
-            control_type=node.control_type,
-            window_name=node.window_name,
-            bounding_box=clipped_box,
-            center=clipped_box.get_center(),
-            metadata=node.metadata,
-        )
-
-    def _filter_semantic_node_to_region(
-        self,
-        node: SemanticNode | None,
-        region: BoundingBox,
-    ) -> SemanticNode | None:
-        if node is None:
-            return None
-
-        clipped_box = None
-        if node.bounding_box is not None:
-            clipped_box = self._clip_bounding_box_to_region(node.bounding_box, region)
-            if clipped_box is None:
-                return None
-
-        filtered_children = []
-        for child in node.children:
-            filtered_child = self._filter_semantic_node_to_region(child, region)
-            if filtered_child is not None:
-                filtered_children.append(filtered_child)
-
-        if node.element_type != "desktop" and clipped_box is None and not filtered_children:
-            return None
-
-        filtered_node = SemanticNode(
-            control_type=node.control_type,
-            element_type=node.element_type,
-            name=node.name,
-            window_name=node.window_name,
-            center=clipped_box.get_center() if clipped_box is not None else node.center,
-            bounding_box=clipped_box,
-            metadata=dict(node.metadata),
-        )
-        filtered_node.children = filtered_children
-        return filtered_node
-
-    def _filter_tree_state_to_region(self, tree_state, region: BoundingBox):
-        filtered_interactive_nodes = []
-        for node in tree_state.interactive_nodes:
-            filtered_node = self._filter_tree_node_to_region(node, region)
-            if filtered_node is not None:
-                filtered_interactive_nodes.append(filtered_node)
-
-        filtered_scrollable_nodes = []
-        for node in tree_state.scrollable_nodes:
-            filtered_node = self._filter_scroll_node_to_region(node, region)
-            if filtered_node is not None:
-                filtered_scrollable_nodes.append(filtered_node)
-
-        filtered_dom_node = None
-        if tree_state.dom_node is not None:
-            filtered_dom_node = self._filter_scroll_node_to_region(tree_state.dom_node, region)
-
-        filtered_semantic_root = self._filter_semantic_node_to_region(
-            tree_state.semantic_tree_root,
-            region,
-        )
-        if filtered_semantic_root is not None:
-            filtered_semantic_root.bounding_box = region
-            filtered_semantic_root.center = region.get_center()
-
-        return tree_state.__class__(
-            status=tree_state.status,
-            root_node=TreeElementNode(
-                name="Desktop",
-                control_type="PaneControl",
-                bounding_box=region,
-                center=region.get_center(),
-                window_name="Desktop",
-                metadata={},
-            ),
-            dom_node=filtered_dom_node,
-            interactive_nodes=filtered_interactive_nodes,
-            scrollable_nodes=filtered_scrollable_nodes,
-            dom_informative_nodes=tree_state.dom_informative_nodes if filtered_dom_node else [],
-            capture_sec=tree_state.capture_sec,
-            semantic_tree_root=filtered_semantic_root,
-            truncated=tree_state.truncated,
-            element_limit=tree_state.element_limit,
-        )

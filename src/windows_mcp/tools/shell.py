@@ -1,26 +1,24 @@
 """PowerShell tool — shell/command execution."""
 
-from mcp.types import ToolAnnotations
-from windows_mcp.infrastructure import with_analytics
+from functools import partial
 from windows_mcp.powershell import PowerShellExecutor
 from fastmcp import Context
 from typing import Literal
 from pathlib import Path
+from windows_mcp.tools._common import declare_tool
 
 
 def register(mcp, *, get_desktop, get_analytics):
-    @mcp.tool(
-        name="PowerShell",
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        "PowerShell",
         description="Legacy PowerShell command execution under a verified non-elevated user token. No UAC, Administrator, SYSTEM or installer-maintenance privileges. Bounded output and process-tree timeout. Prefer Terminal for separate stdout/stderr, exit codes, interactive sessions and cancellation.",
-        annotations=ToolAnnotations(
-            title="PowerShell",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=True,
-        ),
+        access="write",
+        open_world=True,
+        analytics="Powershell-Tool",
+        offload="background",
     )
-    @with_analytics(get_analytics(), "Powershell-Tool", offload="background")
     def powershell_tool(command: str, timeout: int = 30, ctx: Context = None) -> str:
         try:
             response, status_code = PowerShellExecutor.execute_command(command, timeout)
@@ -28,8 +26,15 @@ def register(mcp, *, get_desktop, get_analytics):
         except Exception:
             raise
 
-    @mcp.tool(name="Terminal", description="Run non-elevated powershell.exe, installed pwsh.exe or cmd.exe. execute returns bounded stdout/stderr, exit_code, cwd, duration, timeout/cancellation. start/write/read/cancel/close manage a client-owned shell; write includes a newline when submitting a command. Use App to open wt.exe (Windows Terminal host), then Observe/Execute for its UI; its host is not an output-capture sandbox. No elevation or privileged maintenance. Output may contain secrets; do not request credentials.", annotations=ToolAnnotations(title="Terminal", readOnlyHint=False, destructiveHint=True, openWorldHint=True))
-    @with_analytics(get_analytics(), "Terminal-Tool", offload="background")
+    @tool(
+        "Terminal",
+        description="Run non-elevated powershell.exe, installed pwsh.exe or cmd.exe. execute returns bounded stdout/stderr, exit_code, cwd, duration, timeout/cancellation. start/write/read/cancel/close manage a client-owned shell; write includes a newline when submitting a command. Use App to open wt.exe (Windows Terminal host), then Observe/Execute for its UI; its host is not an output-capture sandbox. No elevation or privileged maintenance. Output may contain secrets; do not request credentials.",
+        access="write",
+        open_world=True,
+        idempotent=None,  # Published without an idempotentHint; keep the wire format stable.
+        analytics="Terminal-Tool",
+        offload="background",
+    )
     def terminal_tool(operation: Literal["execute", "start", "write", "read", "cancel", "close"] = "execute",
                       shell: Literal["powershell", "pwsh", "cmd"] = "powershell", command: str = "",
                       cwd: str | None = None, timeout: float = 30, terminal_id: str | None = None,

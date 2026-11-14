@@ -1,26 +1,24 @@
 """Scrape tool — fetch/scrape web page content."""
 
 import asyncio
+from functools import partial
 
-from mcp.types import ToolAnnotations
-from windows_mcp.infrastructure import with_analytics
+from windows_mcp.coercion import truthy
 from windows_mcp.runtime import run_on_desktop
 from fastmcp import Context
+from windows_mcp.tools._common import declare_tool
 
 
 def register(mcp, *, get_desktop, get_analytics):
-    @mcp.tool(
-        name="Scrape",
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        "Scrape",
         description="Fetch/scrape web page content from a URL. Keywords: scrape, fetch, browse, web, URL, extract, download, read webpage. By default (use_dom=False), performs a lightweight HTTP request to the URL and returns a clean LLM-processed summary of the page to avoid context bloat. Provide query to focus extraction on specific information. Set use_dom=True to extract from the active browser tab's DOM instead (required when site blocks HTTP requests; supported in Chrome, Edge, and Firefox). Set use_sampling=False to get raw content without LLM processing.",
-        annotations=ToolAnnotations(
-            title="Scrape",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=True,
-        ),
+        access="read",
+        open_world=True,
+        analytics="Scrape-Tool",
     )
-    @with_analytics(get_analytics(), "Scrape-Tool")
     async def scrape_tool(
         url: str,
         query: str | None = None,
@@ -29,8 +27,8 @@ def register(mcp, *, get_desktop, get_analytics):
         ctx: Context = None,
     ) -> str:
         desktop = get_desktop()
-        use_dom = use_dom is True or (isinstance(use_dom, str) and use_dom.lower() == "true")
-        use_sampling = use_sampling is True or (isinstance(use_sampling, str) and use_sampling.lower() == "true")
+        use_dom = truthy(use_dom)
+        use_sampling = truthy(use_sampling)
 
         if not use_dom:
             # Blocking HTTP: keep it off the event loop.

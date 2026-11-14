@@ -1,27 +1,25 @@
 """FileSystem tool — file and directory operations."""
 
 import os
+from functools import partial
 from typing import Literal
 
-from mcp.types import ToolAnnotations
-from windows_mcp.infrastructure import with_analytics
 from windows_mcp import filesystem
+from windows_mcp.coercion import truthy
 from fastmcp import Context
+from windows_mcp.tools._common import declare_tool
 
 
 def register(mcp, *, get_desktop, get_analytics):
-    @mcp.tool(
-        name='FileSystem',
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        'FileSystem',
         description="Manages file system operations with eight modes: 'read' (read text file contents with optional line offset/limit), 'write' (create or overwrite a file, set append=True to append), 'copy' (copy file or directory to destination), 'move' (move or rename file/directory), 'delete' (delete file or directory, set recursive=True for non-empty dirs), 'list' (list directory contents with optional pattern filter), 'search' (find files matching a glob pattern), 'info' (get file/directory metadata like size, dates, type). Relative paths are resolved from the user's Desktop folder. Use absolute paths to access other locations.",
-        annotations=ToolAnnotations(
-            title="FileSystem",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
+        access="write",
+        analytics="FileSystem-Tool",
+        offload="background",
     )
-    @with_analytics(get_analytics(), "FileSystem-Tool", offload="background")
     def file_system_tool(
         mode: Literal['read', 'write', 'copy', 'move', 'delete', 'list', 'search', 'info'],
         path: str,
@@ -45,10 +43,9 @@ def register(mcp, *, get_desktop, get_analytics):
             if destination and not os.path.isabs(destination):
                 destination = os.path.join(default_dir, destination)
 
-            recursive = recursive is True or (isinstance(recursive, str) and recursive.lower() == 'true')
-            append = append is True or (isinstance(append, str) and append.lower() == 'true')
-            overwrite = overwrite is True or (isinstance(overwrite, str) and overwrite.lower() == 'true')
-            show_hidden = show_hidden is True or (isinstance(show_hidden, str) and show_hidden.lower() == 'true')
+            recursive, append, overwrite, show_hidden = (
+                truthy(flag) for flag in (recursive, append, overwrite, show_hidden)
+            )
 
             match mode:
                 case 'read':

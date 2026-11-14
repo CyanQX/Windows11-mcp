@@ -2,21 +2,19 @@
 
 import json
 import subprocess
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
-from mcp.types import ToolAnnotations
-from windows_mcp.infrastructure import with_analytics
 from fastmcp import Context
+from windows_mcp.coercion import json_list
+from windows_mcp.tools._common import declare_tool
 
 
 def _as_args(value: list[str] | str | None) -> list[str]:
-    if value is None:
+    args = json_list(value)
+    if args is None:
         return []
-    if isinstance(value, list):
-        args = value
-    else:
-        args = json.loads(value)
     if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
         raise ValueError("args must be a list of strings")
     return args
@@ -72,8 +70,10 @@ def _launch_executable(
 
 
 def register(mcp, *, get_desktop, get_analytics):
-    @mcp.tool(
-        name="App",
+    tool = partial(declare_tool, mcp, get_analytics)
+
+    @tool(
+        "App",
         description=(
             "Open/start/launch applications and manage real windows. Keywords: open, start, launch, "
             "program, application, window, foreground, focus, resize, minimize, maximize, close. Modes: "
@@ -84,15 +84,9 @@ def register(mcp, *, get_desktop, get_analytics):
             "(polite WM_CLOSE like clicking X -- the app may ask to save; confirm with the user first "
             "if work could be lost). Target a window by name (title/process) or exactly by handle."
         ),
-        annotations=ToolAnnotations(
-            title="App",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
-        ),
+        access="write",
+        analytics="App-Tool",
     )
-    @with_analytics(get_analytics(), "App-Tool")
     def app_tool(
         mode: Literal[
             "launch", "launch_executable", "resize", "switch", "minimize", "maximize", "restore", "close"

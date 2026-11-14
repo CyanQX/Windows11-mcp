@@ -116,13 +116,14 @@ async def test_other_sessions_do_not_report_or_inherit_active_trust(secured):
 def test_scoped_trust_cli_displays_and_enforces_the_signed_request_scope(secured, monkeypatch):
     from click.testing import CliRunner
     from windows_mcp import __main__ as cli
+    from windows_mcp.cli import grants
 
     runtime, _, _ = secured
-    monkeypatch.setattr(cli, "CONFIG_DIR", runtime.policy.approvals.directory.parent)
+    monkeypatch.setattr(grants, "CONFIG_DIR", runtime.policy.approvals.directory.parent)
     # The CLI uses CONFIG_DIR/approvals; keep this test's authority isolated.
     from windows_mcp.infrastructure.approvals import ApprovalStore
 
-    authority = ApprovalStore(cli.CONFIG_DIR / "approvals")
+    authority = ApprovalStore(grants.CONFIG_DIR / "approvals")
     request = authority.request("client-A", "Click", {"loc": [1, 2]}, 2, "owned", authorization_scope=SCOPE)
     runner = CliRunner()
     assert runner.invoke(cli.main, ["trust", "--yes"]).exit_code != 0
