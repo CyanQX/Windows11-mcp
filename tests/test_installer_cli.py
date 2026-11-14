@@ -15,6 +15,26 @@ def test_acceptance_error_path_uses_the_full_option_value(arguments):
     assert argument_value(arguments, "--self-test") is None
 
 
+def test_invalid_update_plan_cannot_choose_report_destination(tmp_path):
+    from installer.app import report_update_failure
+    path = tmp_path / "plan.json"
+    path.write_text('{"nonce":"wrong"}')
+    assert report_update_failure(["--finish-update=" + str(path), "--update-nonce=" + "a" * 32], RuntimeError("fixture"))
+    assert not (tmp_path / "result.json").exists()
+
+
+def test_frozen_update_helper_exits_with_no_unhandled_error_dialog(tmp_path, monkeypatch):
+    import ctypes
+    import runpy
+    from pathlib import Path
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "argv", ["Windows-MCP.exe", "--apply-update=" + str(tmp_path / "missing.json")])
+    monkeypatch.setattr(ctypes.windll.user32, "MessageBoxW", lambda *args: pytest.fail("Update helper opened an error dialog"))
+    with pytest.raises(SystemExit) as result:
+        runpy.run_path(str(Path(__file__).resolve().parents[1] / "installer/app.py"), run_name="__main__")
+    assert result.value.code == 1
+
+
 @pytest.mark.parametrize("stream", [False, True])
 def test_native_helper_dispatch_skips_the_mcp_server_import(monkeypatch, stream):
     from installer import app

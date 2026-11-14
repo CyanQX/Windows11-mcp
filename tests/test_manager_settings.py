@@ -1,6 +1,7 @@
 """Private settings, report redaction and local GUI approval invariants."""
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -10,6 +11,31 @@ from installer.models import ManagerError
 from installer.settings import SettingsService
 from windows_mcp.infrastructure.approvals import ApprovalStore
 from windows_mcp.infrastructure.operator_ui import notify_operator
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory ownership")
+def test_owned_portable_directory_outside_profile_alias_is_not_another_user(tmp_path):
+    home = tmp_path / "profile-alias"
+    home.mkdir()
+    portable = tmp_path / "portable"
+    portable.mkdir()
+    settings = SettingsService(home, env={"LOCALAPPDATA": str(home / "AppData")}, portable_data=portable)
+    settings.validate(settings.value)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory ownership")
+def test_profile_alias_does_not_allow_nonowned_portable_directory(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import win32security
+    home = tmp_path / "profile-alias"
+    home.mkdir()
+    portable = tmp_path / "portable"
+    portable.mkdir()
+    settings = SettingsService(home, env={"LOCALAPPDATA": str(home / "AppData")}, portable_data=portable)
+    foreign = win32security.ConvertStringSidToSid("S-1-1-0")
+    monkeypatch.setattr(win32security, "GetNamedSecurityInfo", lambda *args: SimpleNamespace(GetSecurityDescriptorOwner=lambda: foreign))
+    with pytest.raises(ManagerError, match="OTHER_USER_PATH|DIRECTORY_OWNER_UNKNOWN"):
+        settings.validate(settings.value)
 
 
 def test_settings_roundtrip_and_unsupported_environment(tmp_path):

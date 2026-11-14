@@ -304,7 +304,13 @@ def apply_update(path: Path, nonce: str):
                     atomic_write(manifest, old_manifest)
             row.update(state="rolled_back", error=str(exc))
             atomic_write(path, json.dumps(row).encode())
-            subprocess.Popen([str(target)], **background_args())
+            try:
+                subprocess.Popen([str(target)], **background_args())
+            except OSError as restart_error:
+                # Rollback is already complete. A missing/blocked/incompatible
+                # previous EXE must not turn recovery into a second crash.
+                row["rollback_restart_error"] = str(restart_error)
+                atomic_write(path, json.dumps(row).encode())
             return False
         atomic_write(path, json.dumps(row).encode())
         return True

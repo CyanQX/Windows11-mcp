@@ -51,8 +51,6 @@ class SettingsService:
         if not path.is_absolute() or path == Path(path.anchor):
             raise ManagerError("INVALID_DIRECTORY", "请选择当前用户的有效目录")
         users = Path(self.env.get("SystemDrive", "C:") + "/Users")
-        if path.is_relative_to(users) and not path.is_relative_to(self.home):
-            raise ManagerError("OTHER_USER_PATH", "不能写入其他用户的目录")
         for name in ("WINDIR", "ProgramFiles", "ProgramFiles(x86)"):
             if self.env.get(name) and path.is_relative_to(Path(self.env[name])):
                 raise ManagerError("SYSTEM_DIRECTORY", "不能将系统目录或程序目录作为数据目录")
@@ -70,7 +68,8 @@ class SettingsService:
                 token.Close()
             owner = win32security.GetNamedSecurityInfo(str(parent), win32security.SE_FILE_OBJECT, win32security.OWNER_SECURITY_INFORMATION).GetSecurityDescriptorOwner()
             if owner != current:
-                raise ManagerError("DIRECTORY_OWNER_UNKNOWN", "自定义目录须属于当前用户，请选择自己创建的文件夹")
+                code = "OTHER_USER_PATH" if path.is_relative_to(users) else "DIRECTORY_OWNER_UNKNOWN"
+                raise ManagerError(code, "目录不属于当前 Windows 用户，请选择自己创建的文件夹")
 
     def validate(self, value: dict):
         if self.portable_data is not None and Path(value["data_dir"]).absolute() != self.portable_data:

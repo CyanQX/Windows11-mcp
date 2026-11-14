@@ -27,6 +27,22 @@ def argument_value(arguments, flag):
     return None
 
 
+def report_update_failure(arguments, error):
+    """Update helpers report through their validated plan, never bootloader dialogs."""
+    value = argument_value(arguments, "--finish-update") or argument_value(arguments, "--apply-update")
+    if value is None:
+        return False
+    try:
+        from installer.updates import load_plan
+        from installer.backend import atomic_write
+        path = Path(value)
+        load_plan(path, argument_value(arguments, "--update-nonce"))
+        atomic_write(path.parent / "result.json", json.dumps({"ok": False, "error": str(error)}).encode("utf-8"))
+    except Exception:
+        pass  # A malformed plan never chooses an arbitrary report destination.
+    return True
+
+
 def restore_stdio() -> None:
     """The windowed Windows bootloader sets Python streams to None; MCP inherits pipes."""
     if os.name != "nt":
@@ -230,7 +246,8 @@ def main():
         check(args.portable_check)
     elif args.apply_update:
         from installer.updates import apply_update
-        apply_update(args.apply_update, args.update_nonce)
+        if not apply_update(args.apply_update, args.update_nonce):
+            raise SystemExit(1)
     elif args.ui_smoke:
         from installer.ui.smoke import run
         run(resources(), args.ui_smoke, args.ui_smoke_case, args.ui_smoke_size, args.ui_smoke_scale)
@@ -248,6 +265,8 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         if getattr(sys, "frozen", False):
+            if report_update_failure(sys.argv[1:], exc):
+                raise SystemExit(1) from exc
             # A windowed PyInstaller bootloader shows an error dialog for an
             # unhandled exception. Acceptance commands must fail and report,
             # so a headless runner never hangs waiting for that dialog.
@@ -264,4 +283,5 @@ if __name__ == "__main__":
                     raise SystemExit(1) from exc
         if getattr(sys, "frozen", False) and not any(arg.split("=", 1)[0] in {"--serve", "serve", "auth", "doctor", "connectors", "manifest", "native-helper", "trust", "network", "--self-test", "--portable-check", "--apply-update", "--ui-smoke", "--sync-installed"} for arg in sys.argv[1:]):
             ctypes.windll.user32.MessageBoxW(None, f"管理器未能启动：{exc}\n原配置与文件已保留。", "Windows MCP", 16)
+            raise SystemExit(1) from exc
         raise

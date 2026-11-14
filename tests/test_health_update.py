@@ -120,6 +120,27 @@ def test_update_helper_failed_launch_rolls_back_without_killing(tmp_path, monkey
     assert launched[0] == [str(current), f"--finish-update={path}", f"--update-nonce={nonce}"]
 
 
+def test_failed_rollback_restart_preserves_old_file_and_does_not_raise_second_error(tmp_path, monkeypatch):
+    import sys
+    from installer import updates
+    staged = tmp_path / "updates" / ("a" * 32) / "next.exe"
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(b"MZ new")
+    current = tmp_path / "current.exe"
+    current.write_bytes(b"MZ previous")
+    service = UpdateService(tmp_path, "1.7.0")
+    path, nonce = service.prepare(staged, {"sha256": hashlib.sha256(staged.read_bytes()).hexdigest(), "latest": "1.8.0"}, current)
+    monkeypatch.setattr(sys, "executable", str(staged))
+    monkeypatch.setattr(updates.psutil, "pid_exists", lambda _: False)
+    def incompatible(*args, **kwargs):
+        raise OSError(216, "incompatible previous image")
+    monkeypatch.setattr(updates.subprocess, "Popen", incompatible)
+    assert updates.apply_update(path, nonce) is False
+    row = json.loads(path.read_text())
+    assert row["state"] == "rolled_back" and "216" in row["rollback_restart_error"]
+    assert current.read_bytes() == b"MZ previous"
+
+
 @pytest.mark.parametrize("change", ["staged", "target"])
 def test_update_plan_rejects_alternate_program_or_cache_target(tmp_path, change):
     from installer.updates import load_plan
