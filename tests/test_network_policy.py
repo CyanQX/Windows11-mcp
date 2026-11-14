@@ -39,7 +39,18 @@ async def test_new_site_needs_independent_local_approval_and_is_session_bound(se
     with pytest.raises(PolicyBlocked):
         runtime.policy.check_network(owner, args["url"])
     runtime.policy.approvals.approve(request["request_id"])
-    runtime.policy.check_network(owner, args["url"])
+    with pytest.raises(PolicyBlocked):
+        runtime.policy.check_network(owner, args["url"])
+    normalized = runtime.normalizers["Scrape"](args)
+    scope = runtime.scope_resolver("Scrape", normalized, runtime.session("local"))
+    decision = runtime.policy.authorize(owner, "Scrape", normalized, scope=scope)
+    with runtime.policy.network_call(owner, decision, scope):
+        runtime.policy.check_network(owner, args["url"])
+        for session, url in [("other-client", args["url"]), (owner, "https://other.test")]:
+            with pytest.raises(PolicyBlocked):
+                runtime.policy.check_network(session, url)
+    with pytest.raises(PolicyBlocked):
+        runtime.policy.authorize(owner, "Scrape", normalized, scope=scope)
     for session, url in [("other-client", args["url"]), (owner, "http://example.com"),
                          (owner, "https://example.com:8443"), (owner, "https://evil.example.com")]:
         with pytest.raises(PolicyBlocked):
@@ -150,6 +161,6 @@ def test_approval_cli_discloses_and_revokes_network_scope(secured, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(cli.main, ["approve", request["request_id"], "--yes"])
     assert result.exit_code == 0 and '"network_origins"' in result.output and "https://example.com" in result.output
-    assert NetworkGrants(authority.directory).allows("client-A", "https://example.com")
+    assert not NetworkGrants(authority.directory).allows("client-A", "https://example.com")
     assert runner.invoke(cli.main, ["network", "--session-id", "client-A", "--revoke", "--yes"]).exit_code == 0
     assert not NetworkGrants(authority.directory).allows("client-A", "https://example.com")

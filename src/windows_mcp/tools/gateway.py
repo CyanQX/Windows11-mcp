@@ -19,7 +19,7 @@ class ToolGateway:
         self.mcp = mcp
         self.runtime = runtime or get_runtime()
         self.runtime.scope_resolver = lambda tool, arguments, state: scope_for_call(
-            tool, arguments, desktop=get_desktop(), session=state
+            tool, arguments, desktop=get_desktop(), session=state, browser=self.runtime.browser
         )
 
     def tool(self, *, name: str, **options):
@@ -89,7 +89,7 @@ class ToolGateway:
                         capability_one_use = getattr(risk, "capability_one_use", False)
                         trusted = getattr(risk, "trusted", False)
                         authorization = DispatchAuthorization(self.runtime.policy, state.session_id, name, arguments, scope, risk, trusted, generation, capability_one_use)
-                        with bind_dispatch(authorization if name in DESKTOP_TOOLS | {"NativeAPI", "FileSystem", "Browser", "PowerShell", "Terminal", "Registry", "Process", "Clipboard", "Notification"} else None), bind_motion(self.runtime.motion):
+                        with self.runtime.policy.network_call(state.session_id, risk, scope), bind_dispatch(authorization if name in DESKTOP_TOOLS | {"NativeAPI", "FileSystem", "Browser", "PowerShell", "Terminal", "Registry", "Process", "Clipboard", "Notification"} else None), bind_motion(self.runtime.motion):
                             result = await func(**bound.arguments)
                     except Exception as exc:
                         self.runtime.audit.record(session=state.session_id, tool=name, digest=digest, status=getattr(exc, "code", "FAILED"), audit_id=audit_id)

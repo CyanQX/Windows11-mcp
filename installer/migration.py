@@ -92,14 +92,14 @@ def legacy_artifacts(service, registered, target):
     old = check_path(Path(registered["root"]))
     owned = {str(old / EXECUTABLE).casefold(), str(service.backend.executable).casefold()}
     files, values = [], []
+    from installer.bundle import BUNDLE_FILE, load, verify
+    record = load(old)
+    if record:
+        verify(old, executable=False)
+        files.extend(old / name for name in record["files"] if name != EXECUTABLE)
+        files.append(old / BUNDLE_FILE)
     if old != target:
-        from installer.bundle import BUNDLE_FILE, load, verify
         files.append(old / EXECUTABLE)
-        record = load(old)
-        if record:
-            verify(old, executable=False)
-            files.extend(old / name for name in record["files"] if name != EXECUTABLE)
-            files.append(old / BUNDLE_FILE)
         command = registered.get("registry", {}).get("UninstallString", {}).get("value", "")
         match = re.fullmatch(r'"([^"\r\n]+)"', command)
         if match:
@@ -270,6 +270,12 @@ def prepare(service, target, payload, *, registered=None, stop=stop_owned):
             service.upgrade_targets()  # Unknown shared-runtime references must be reviewed.
         paths = {path for key in managed for path in service.paths(key)} | set(files)
         old_files, old_values = legacy_artifacts(service, registered, target)
+        data_bundle = load(service.backend.data) if managed else None
+        if data_bundle:
+            verify(service.backend.data)
+            old_files.extend(service.backend.data / name for name in data_bundle["files"] if name != EXECUTABLE)
+            old_files.append(service.backend.data / BUNDLE_FILE)
+        old_files = list(dict.fromkeys(old_files))
         paths.update(old_files)
         old = Path(registered["root"]) if registered else None
         if old:

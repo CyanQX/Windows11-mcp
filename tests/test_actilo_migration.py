@@ -90,3 +90,17 @@ def test_tampered_setup_plan_is_rejected_before_restore(tmp_path):
     plan.write_text(json.dumps(row))
     with pytest.raises(ManagerError, match="INVALID_SETUP_PLAN"):
         rollback(service, plan)
+
+
+def test_owned_old_bundle_is_retired_before_copy_and_rollback_restores_it(tmp_path):
+    service, payload, old = fixture(tmp_path, "1.7.0")
+    old_runtime = service.backend.data / ("_runtime-" + "a" * 20)
+    old_runtime.mkdir()
+    dependency = old_runtime / "python312.dll"
+    dependency.write_bytes(b"previous dependency")
+    create(service.backend.data, old_runtime.name, "1.7.0")
+    plan = prepare(service, tmp_path / "target", payload / "Windows-MCP.exe", registered=False, stop=lambda _: [])
+    assert not dependency.exists() and not service.backend.executable.exists()
+    assert rollback(service, plan) == []
+    assert dependency.read_bytes() == b"previous dependency"
+    assert service.backend.executable.read_bytes() == old

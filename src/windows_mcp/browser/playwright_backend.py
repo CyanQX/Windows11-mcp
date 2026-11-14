@@ -57,6 +57,7 @@ _BATCH_METADATA = """(elements, limit) => {
 class ManagedBrowser:
     context: object
     profile: tempfile.TemporaryDirectory
+    context_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     pages: dict = field(default_factory=dict)
     epochs: dict = field(default_factory=dict)
     targets: dict = field(default_factory=dict)
@@ -76,14 +77,31 @@ class PlaywrightBackend:
         self._locks: dict[str, asyncio.Lock] = {}
         self._background_tasks: set[asyncio.Task] = set()
 
-    async def _url(self, url: str, session_id: str) -> None:
+    def authorization_scope(self, session_id: str, arguments: dict) -> dict:
+        """Bind a human decision to the current context, page and document revision."""
+        browser = self._sessions.get(session_id)
+        scope = {"application": "provider:browser", "context_id": browser.context_id if browser else None}
+        if browser is None or arguments.get("operation") in {"start", "status", "close", "new_page"}:
+            return scope
+        browser, page_id, page = self._page(session_id, arguments.get("page_id"))
+        urls = [page.url]
+        target = browser.targets.get(arguments.get("target"))
+        if target and target["page_id"] == page_id:
+            urls.append(target["frame"].url)
+        origins = sorted({origin(url) for url in urls if url.startswith(("http://", "https://"))})
+        return {**scope, "page_id": page_id, "revision": browser.epochs[page_id], "network_origins": origins}
+
+    async def _url(self, url: str, session_id: str, *, page_id: str | None = None) -> None:
         if self.network_policy is None:
             from windows_mcp.engine.sessions import get_runtime
 
             policy = get_runtime().policy
         else:
             policy = self.network_policy
-        policy.check_network(session_id, url)
+        if page_id is None:
+            policy.check_network(session_id, url)
+        else:
+            policy.check_network(session_id, url, page_id=page_id)
         await asyncio.wait_for(asyncio.to_thread(
             validate_url, url, allow_private=self.allow_private or policy.allow_private_browser,
         ), timeout=5)
@@ -142,7 +160,9 @@ class PlaywrightBackend:
                 response = None
                 checked_url = request_route.request.url
                 try:
-                    await self._url(request_route.request.url, session)
+                    page = request_route.request.frame.page
+                    page_id = next((key for key, value in browser.pages.items() if value is page), "unowned")
+                    await self._url(request_route.request.url, session, page_id=page_id)
                     if request_route.request.method not in {"GET", "HEAD", "OPTIONS"} and time.monotonic() > browser.mutation_deadline:
                         raise ValueError("Background mutation is not authorized")
                     # Playwright routes only the first request of an automatic redirect chain.
@@ -152,7 +172,7 @@ class PlaywrightBackend:
                     if 300 <= response.status < 400 and response.headers.get("location"):
                         destination = urljoin(request_route.request.url, response.headers["location"])
                         checked_url = destination
-                        await self._url(destination, session)
+                        await self._url(destination, session, page_id=page_id)
                         request = request_route.request
                         if request.is_navigation_request() and request.frame == request.frame.page.main_frame and request.method in {"GET", "HEAD"}:
                             browser.redirects[request.frame.page] = destination
@@ -350,9 +370,10 @@ class PlaywrightBackend:
             raise ValueError("timeout_ms must be 100..30000")
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
-            from windows_mcp.infrastructure.authorization import check_dispatch
+            from windows_mcp.infrastructure.authorization import check_dispatch, check_browser_dispatch
 
             check_dispatch()  # A cancelled call must not revive after waiting for this lock.
+            check_browser_dispatch(self.authorization_scope(session_id, {"operation": operation, "page_id": page_id, "target": target}))
             if operation == "start":
                 return await self._start(session_id, channel, headless)
             if operation == "status":
@@ -366,6 +387,13 @@ class PlaywrightBackend:
                 browser, _, _ = self._page(session_id, page_id)
                 page = await browser.context.new_page()
                 page_id = self._add_page(browser, page)
+                if self.network_policy is None:
+                    from windows_mcp.engine.sessions import get_runtime
+
+                    policy = get_runtime().policy
+                else:
+                    policy = self.network_policy
+                policy.bind_network_page(session_id, page_id)
                 if url is None:
                     return self._status(session_id)
                 operation = "navigate"

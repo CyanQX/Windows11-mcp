@@ -148,10 +148,6 @@ class ApprovalStore:
             payload = self.read(request_id)
             if payload.get("rejected"):
                 raise PermissionError("Approval was rejected")
-            if payload.get("network_origins"):
-                from windows_mcp.infrastructure.network import NetworkGrants
-
-                NetworkGrants(self.directory).grant(payload["session_id"], payload["network_origins"])
             payload["approved"] = True
             self._save(payload)
             return payload

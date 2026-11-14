@@ -65,6 +65,12 @@ Filename: "{app}\Windows-MCP.exe"; Parameters: "--finish-installer-update"; Flag
 [Code]
 function SetEnvironmentVariable(lpName, lpValue: String): Boolean;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+function CreateProbeFile(FileName: String; DesiredAccess, ShareMode: Cardinal;
+  SecurityAttributes: Integer; CreationDisposition, FlagsAndAttributes: Cardinal;
+  TemplateFile: THandle): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
+function CloseProbeFile(Handle: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
 
 var
   ManagerUpdate: Boolean;
@@ -146,6 +152,7 @@ function DefaultInstallDirectory(Param: String): String;
 var
   FreeBytes, TotalBytes: Int64;
   Probe, Candidate: String;
+  Handle: THandle;
 begin
   Result := ExpandConstant('{localappdata}\Programs\Actilo');
   if (PreviousDirectory <> '') and (not LegacyInstallation) then
@@ -157,14 +164,19 @@ begin
      (FreeBytes > 2147483648) then
   begin
     Candidate := 'D:\Actilo';
+    if FileExists(Candidate) then Exit;
     try
       if DirExists(Candidate) then
-        Probe := GetTempFileName(Candidate)
+        Probe := AddBackslash(Candidate)
       else
-        Probe := GetTempFileName('D:\');
-      if Probe <> '' then
+        Probe := 'D:\';
+      Probe := Probe + '.actilo-probe-' + Copy(GetSHA256OfUnicodeString(ExpandConstant('{tmp}')), 1, 24) + '.tmp';
+      { CREATE_NEW never touches an existing file; DELETE_ON_CLOSE removes our
+        probe even if Setup is interrupted. Inno does not export GetTempFileName. }
+      Handle := CreateProbeFile(Probe, $40000000, 0, 0, 1, $04000100, 0);
+      if Handle <> -1 then
       begin
-        DeleteFile(Probe);
+        CloseProbeFile(Handle);
         Result := Candidate;
       end;
     except

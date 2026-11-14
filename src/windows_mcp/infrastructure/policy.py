@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import os
+import contextvars
+import threading
+import time
+from contextlib import contextmanager
 from typing import Any
 
 from windows_mcp.infrastructure.approvals import ApprovalStore
@@ -24,11 +28,15 @@ class PolicyBlocked(PermissionError):
 
 class AuthorizationDecision(int):
     """Risk plus the exact evidence used by this authorization, without a reread race."""
-    def __new__(cls, risk, trusted, capability_one_use=False):
+    def __new__(cls, risk, trusted, capability_one_use=False, network_origins=()):
         value = super().__new__(cls, risk)
         value.trusted = trusted
         value.capability_one_use = capability_one_use
+        value.network_origins = tuple(network_origins)
         return value
+
+
+_network_call = contextvars.ContextVar("actilo_network_call", default=None)
 
 
 class PolicyGate:
@@ -42,6 +50,8 @@ class PolicyGate:
         self.trust = trust if trust is not None else TrustStore(self.approvals.directory)
         self.network = NetworkGrants(self.approvals.directory)
         self.allowed_network_origins = {origin(value) for value in (allowed_network_origins or [])}
+        self._network_calls = {}
+        self._network_lock = threading.Lock()
         self.protected = [CONFIG_DIR.resolve(), Path("~/.codex").expanduser().resolve(),
                           Path("~/.ssh").expanduser().resolve(), self.approvals.directory]
         portable = portable_data_directory()
@@ -103,20 +113,58 @@ class PolicyGate:
             raise PolicyBlocked("Reserved device names and ambiguous Win32 path components are not allowed")
         return path
 
-    def network_origins(self, tool: str, args: dict) -> list[str]:
+    def network_origins(self, tool: str, args: dict, scope=None) -> list[str]:
         use_dom = args.get("use_dom") is True or (isinstance(args.get("use_dom"), str) and args["use_dom"].lower() == "true")
         if (tool == "Scrape" and not use_dom) or (
             tool == "Browser" and args.get("operation") in {"navigate", "new_page"} and args.get("url")
         ):
             return [origin(args["url"])]
+        if tool == "Browser" and args.get("operation") in {"click", "fill", "check", "select"}:
+            return (scope or {}).get("network_origins", [])
         return []
 
-    def check_network(self, session_id: str, url: str) -> None:
-        target = origin(url)  # Check permission before DNS to avoid leaking data via hostnames.
-        if self.trust is not None and self.trust.allows_network():
+    def network_base_allowed(self, session_id, url):
+        target = origin(url)
+        return bool(self.trust.allows_network() or target in self.allowed_network_origins or self.network.allows(session_id, url))
+
+    @contextmanager
+    def network_call(self, session_id, decision, scope):
+        origins = getattr(decision, "network_origins", ())
+        if not origins:
+            yield
             return
-        if target not in self.allowed_network_origins and not self.network.allows(session_id, url):
-            raise PolicyBlocked(f"Network origin {target} is not authorized for this session; request local operator approval")
+        key = object()
+        with self._network_lock:
+            self._network_calls[key] = {"session": session_id, "origins": frozenset(origins),
+                "page": (scope or {}).get("page_id"), "expires": time.monotonic() + 120}
+        token = _network_call.set((self, key))
+        try:
+            yield
+        finally:
+            _network_call.reset(token)
+            with self._network_lock:
+                self._network_calls.pop(key, None)
+
+    def bind_network_page(self, session_id, page_id):
+        current = _network_call.get()
+        if current is not None and current[0] is self:
+            with self._network_lock:
+                row = self._network_calls.get(current[1])
+                if row and row["session"] == session_id:
+                    row["page"] = page_id
+
+    def check_network(self, session_id: str, url: str, *, page_id=None) -> None:
+        target = origin(url)  # Check permission before DNS to avoid leaking data via hostnames.
+        if self.network_base_allowed(session_id, url):
+            return
+        current = _network_call.get()
+        with self._network_lock:
+            rows = list(self._network_calls.values()) if page_id is not None else (
+                [self._network_calls.get(current[1])] if current is not None and current[0] is self else [])
+            if any(row and row["session"] == session_id and target in row["origins"]
+                   and row["expires"] > time.monotonic() and (page_id is None or row["page"] == page_id) for row in rows):
+                return
+        raise PolicyBlocked(f"Network origin {target} is not authorized for this call; request exact one-use local approval")
 
     def trusted(self, session_id: str, tool: str, args: dict, scope: dict) -> bool:
         if self.trust is not None and self.trust.automatic():
@@ -194,8 +242,8 @@ class PolicyGate:
     def authorize(self, session_id: str, tool: str, args: dict, approval_id: str | None = None,
                   *, scope: dict | None = None) -> int:
         risk = self.risk(tool, args, scope)
-        for target in self.network_origins(tool, args):
-            self.check_network(session_id, target)
+        destinations = self.network_origins(tool, args, scope)
+        network_once = [target for target in destinations if not self.network_base_allowed(session_id, target)]
         if tool in {"Click", "Type", "Shortcut", "MultiSelect", "MultiEdit", "Act", "Execute", "Move", "Scroll", "App", "PowerShell", "Terminal"}:
             from windows_mcp.infrastructure.operator_ui import operator_review_active
             if operator_review_active() and not (tool == "Terminal" and args.get("operation") in {"read", "cancel", "close"}):
@@ -204,6 +252,6 @@ class PolicyGate:
         capability_one_use = risk == 3 and not self.allow_r3
         if capability_one_use:
             trusted = False  # Disabled capabilities require an exact local one-use decision.
-        if risk >= 2 and not trusted and not self.approvals.consume(session_id, tool, args, approval_id, authorization_scope=scope):
-            raise PolicyBlocked(f"R{risk} requires a one-use local operator approval. Call RequestApproval with this exact tool and arguments")
-        return AuthorizationDecision(risk, trusted, capability_one_use)
+        if (network_once or (risk >= 2 and not trusted)) and not self.approvals.consume(session_id, tool, args, approval_id, authorization_scope=scope):
+            raise PolicyBlocked(f"{'Network origin' if network_once else 'R' + str(risk)} requires a one-use local operator approval. Call RequestApproval with this exact tool and arguments")
+        return AuthorizationDecision(risk, trusted, capability_one_use, network_once)

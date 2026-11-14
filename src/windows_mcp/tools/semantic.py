@@ -156,7 +156,7 @@ def register(mcp, *, get_desktop, get_analytics):
         normalized = runtime.normalize(tool, arguments)
         scope = call_on_desktop(runtime.scope_resolver, tool, normalized, runtime.current())
         risk = runtime.policy.risk(tool, normalized, scope)
-        network_origins = runtime.policy.network_origins(tool, normalized)
+        network_origins = runtime.policy.network_origins(tool, normalized, scope)
         if runtime.policy.trust and runtime.policy.trust.automatic() and (risk < 3 or runtime.policy.allow_r3):
             return {"status": "TRUSTED", "risk": risk, "approval_required": False,
                     "authorization_scope": runtime.policy.trust.status(),

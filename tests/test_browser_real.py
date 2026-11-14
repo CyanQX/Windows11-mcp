@@ -95,6 +95,33 @@ def _target(observation, name):
     return next(item["element_id"] for item in observation["elements"] if item["name"] == name)
 
 
+async def test_one_use_network_approval_only_lasts_for_exact_call_and_page(browser, test_site):
+    from windows_mcp.infrastructure.policy import PolicyBlocked
+
+    policy = browser.network_policy
+    policy.allowed_network_origins.clear()
+    args = {"operation": "navigate", "url": test_site[0] + "/approved-final"}
+    scope = browser.authorization_scope("test-owner", args)
+    request = policy.approvals.request("test-owner", "Browser", args, 0, "one navigation",
+        authorization_scope=scope, network_origins=[test_site[0]])
+    policy.approvals.approve(request["request_id"])
+    with pytest.raises(PolicyBlocked):
+        policy.check_network("test-owner", args["url"])
+    decision = policy.authorize("test-owner", "Browser", args, scope=scope)
+    with policy.network_call("test-owner", decision, scope):
+        policy.check_network("test-owner", args["url"], page_id=scope["page_id"])
+        with pytest.raises(PolicyBlocked):
+            policy.check_network("test-owner", args["url"], page_id="another-tab")
+        with pytest.raises(PolicyBlocked):
+            policy.authorize("test-owner", "Browser", args, scope=scope)
+        result = await browser.run("test-owner", **args)
+        assert result["status"] == "VERIFIED"
+    assert ("GET", "/approved-final") in test_site[1]
+    with pytest.raises(PolicyBlocked):
+        policy.check_network("test-owner", args["url"], page_id=scope["page_id"])
+    assert not policy.network.status("test-owner")
+
+
 async def test_real_semantic_fill_check_and_read(browser):
     observed = await browser.run("test-owner", "observe")
     assert observed["context"]["source"] == "playwright"

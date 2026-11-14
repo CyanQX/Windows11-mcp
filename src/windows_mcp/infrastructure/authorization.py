@@ -45,7 +45,10 @@ def window_scope(hwnd: int) -> dict:
         raise PolicyBlocked("Cannot establish the target application's identity; observe again") from exc
 
 
-def scope_for_call(tool: str, arguments: dict, *, desktop, session) -> dict:
+def scope_for_call(tool: str, arguments: dict, *, desktop, session, browser=None) -> dict:
+    if tool == "Browser":
+        return browser.authorization_scope(session.session_id, arguments) if browser is not None else {
+            "application": "provider:browser", "context_id": None}
     if tool not in DESKTOP_TOOLS:
         return {"application": "native:filesystem" if tool in {"NativeAPI", "FileSystem"} else f"provider:{tool.lower()}"}
     if tool == "App" and arguments.get("mode") in {"launch", "launch_executable"}:
@@ -219,6 +222,14 @@ def check_dispatch() -> None:
     authorization = _dispatch.get()
     if authorization is not None:
         authorization.check()
+
+
+def check_browser_dispatch(scope: dict) -> None:
+    authorization = _dispatch.get()
+    if authorization is not None and authorization.tool == "Browser" and authorization.scope != scope:
+        from windows_mcp.infrastructure.policy import PolicyBlocked
+
+        raise PolicyBlocked("Browser context or document changed after authorization; request approval again")
 
 
 def check_shortcut_dispatch(spec: str) -> None:
