@@ -15,8 +15,69 @@ import shutil
 import subprocess
 import time
 import uuid
+import struct
+import zlib
 
 MANIFEST = "WindowsMCP.bundle.json"
+
+
+def installed_version(executable):
+    """Read bounded metadata, never execute the old image to learn its version."""
+    executable = safe(executable)
+    bundle = executable.parent / MANIFEST
+    if bundle.is_file() and bundle.stat().st_size <= 2 * 1048576:
+        record = json.loads(bundle.read_text(encoding="utf-8"))
+        if record.get("schema") == 1 and record.get("files", {}).get("Windows-MCP.exe", {}).get("sha256") == digest(executable):
+            return record.get("version")
+        return None
+    # Standard PyInstaller CArchive layout; inspect only the JSON resource.
+    # A footer plus strict offsets prevents treating arbitrary bytes as a plan.
+    with executable.open("rb") as stream:
+        size = executable.stat().st_size
+        start = max(0, size - 1048576)
+        stream.seek(start)
+        tail = stream.read()
+        offset = tail.rfind(b"MEI\x0c\x0b\x0a\x0b\x0e")
+        if offset < 0 or offset + 88 > len(tail):
+            return None
+        _, length, toc_offset, toc_length, _, _ = struct.unpack("!8sIIII64s", tail[offset:offset + 88])
+        base = start + offset + 88 - length
+        if base < 0 or not 0 < toc_length <= 16 * 1048576 or toc_offset + toc_length > length - 88:
+            return None
+        stream.seek(base + toc_offset)
+        toc = stream.read(toc_length)
+        cursor = 0
+        while cursor + 18 <= len(toc):
+            entry, position, packed, unpacked, compressed, _ = struct.unpack("!IIIIBc", toc[cursor:cursor + 18])
+            if entry <= 18 or cursor + entry > len(toc):
+                return None
+            name = toc[cursor + 18:cursor + entry].rstrip(b"\0")
+            cursor += entry
+            if name != b"manifest.json":
+                continue
+            if not 0 < packed <= 2 * 1048576 or not 0 < unpacked <= 2 * 1048576 or position + packed > toc_offset:
+                return None
+            stream.seek(base + position)
+            data = stream.read(packed)
+            if compressed:
+                inflater = zlib.decompressobj()
+                data = inflater.decompress(data, 2 * 1048576 + 1)
+                if not inflater.eof or inflater.unconsumed_tail:
+                    return None
+            if len(data) != unpacked:
+                return None
+            return json.loads(data.decode("utf-8")).get("version")
+    return None
+
+
+def manual_upgrade_guide():
+    import ctypes
+    text = ("发现重大版本更新：Actilo v1.9.10\n当前版本低于 v1.7.0 或无法可靠识别。"
+            "为确保迁移稳定，不执行静默原地更新。请前往 GitHub 下载 Actilo_1.9.10_setup.exe 并手动安装。"
+            "\n选择“是”前往 GitHub 下载；选择“否”稍后再说。")
+    if ctypes.windll.user32.MessageBoxW(None, text, "Actilo · 重大版本更新", 0x24) == 6:
+        import webbrowser
+        webbrowser.open("https://github.com/CyanQX/Windows11-mcp/releases/latest")
 
 
 def safe(path, root=None):
@@ -109,6 +170,16 @@ def migrate(executable, source, arguments, launch=subprocess.Popen):
                 or target.is_relative_to(root) or target.suffix.lower() != ".exe"
                 or digest(executable) != row["sha256"] or digest(target) != row["old_sha256"]):
             raise ValueError("Legacy migration plan is invalid")
+        try:
+            version = installed_version(target)
+            parts = tuple(map(int, version.split("."))) if version and re.fullmatch(r"\d+\.\d+\.\d+", version) else ()
+        except (OSError, ValueError, struct.error, zlib.error):
+            parts = ()
+        if not parts or parts < (1, 7, 0):
+            write_json(plan.parent / "result.json", {"ok": False, "manual_upgrade_required": True,
+                "error": "MANUAL_UPGRADE_REQUIRED", "url": "https://github.com/CyanQX/Windows11-mcp/releases/latest"})
+            manual_upgrade_guide()
+            return 1
     else:
         marker = executable.parent / "WindowsMCP.portable.json"
         if json.loads(marker.read_text(encoding="utf-8")) != {"schema": 1, "mode": "portable"}:

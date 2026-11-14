@@ -72,7 +72,7 @@ class TrustStore:
     def automatic_tools() -> list[str]:
         from windows_mcp.infrastructure.authorization import TRUST_TOOLS
 
-        return sorted(TRUST_TOOLS | {"PowerShell", "Registry", "Process"})
+        return sorted(TRUST_TOOLS | {"PowerShell", "Terminal", "Registry", "Process"})
 
     def automatic(self) -> bool:
         payload = self.status()

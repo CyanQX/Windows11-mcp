@@ -52,7 +52,7 @@ def read_file(path: str, offset: int | None = None, limit: int | None = None, en
     except PermissionError:
         msg = f'Error: Permission denied: {file_path}'
         if not is_elevated():
-            msg += "\n\nHINT: This operation may require an elevated (Administrator) terminal."
+            msg += "\n\nActilo cannot elevate; this operation exceeds its normal user permissions."
         return msg
     except Exception as e:
         return f'Error reading file: {e}'
@@ -76,7 +76,7 @@ def write_file(path: str, content: str, append: bool = False, encoding: str = 'u
     except PermissionError:
         msg = f'Error: Permission denied: {file_path}'
         if not is_elevated():
-            msg += "\n\nHINT: This operation may require an elevated (Administrator) terminal."
+            msg += "\n\nActilo cannot elevate; this operation exceeds its normal user permissions."
         return msg
     except Exception as e:
         return f'Error writing file: {e}'
@@ -108,7 +108,7 @@ def copy_path(source: str, destination: str, overwrite: bool = False) -> str:
     except PermissionError:
         msg = 'Error: Permission denied.'
         if not is_elevated():
-            msg += "\n\nHINT: This operation may require an elevated (Administrator) terminal."
+            msg += "\n\nActilo cannot elevate; this operation exceeds its normal user permissions."
         return msg
     except Exception as e:
         return f'Error copying: {e}'
@@ -137,7 +137,7 @@ def move_path(source: str, destination: str, overwrite: bool = False) -> str:
     except PermissionError:
         msg = 'Error: Permission denied.'
         if not is_elevated():
-            msg += "\n\nHINT: This operation may require an elevated (Administrator) terminal."
+            msg += "\n\nActilo cannot elevate; this operation exceeds its normal user permissions."
         return msg
     except Exception as e:
         return f'Error moving: {e}'
@@ -168,7 +168,7 @@ def delete_path(path: str, recursive: bool = False) -> str:
     except PermissionError:
         msg = f'Error: Permission denied: {target}'
         if not is_elevated():
-            msg += "\n\nHINT: This operation may require an elevated (Administrator) terminal."
+            msg += "\n\nActilo cannot elevate; this operation exceeds its normal user permissions."
         return msg
     except Exception as e:
         return f'Error deleting: {e}'
@@ -223,7 +223,7 @@ def list_directory(path: str, pattern: str | None = None, recursive: bool = Fals
     except PermissionError:
         msg = f'Error: Permission denied: {dir_path}'
         if not is_elevated():
-            msg += "\n\nHINT: This operation may require an elevated (Administrator) terminal."
+            msg += "\n\nActilo cannot elevate; this operation exceeds its normal user permissions."
         return msg
     except Exception as e:
         return f'Error listing directory: {e}'
@@ -269,7 +269,7 @@ def search_files(path: str, pattern: str, recursive: bool = True) -> str:
     except PermissionError:
         msg = f'Error: Permission denied: {search_root}'
         if not is_elevated():
-            msg += "\n\nHINT: This operation may require an elevated (Administrator) terminal."
+            msg += "\n\nActilo cannot elevate; this operation exceeds its normal user permissions."
         return msg
     except Exception as e:
         return f'Error searching: {e}'
@@ -314,7 +314,7 @@ def get_file_info(path: str) -> str:
     except PermissionError:
         msg = f'Error: Permission denied: {target}'
         if not is_elevated():
-            msg += "\n\nHINT: This operation may require an elevated (Administrator) terminal."
+            msg += "\n\nActilo cannot elevate; this operation exceeds its normal user permissions."
         return msg
     except Exception as e:
         return f'Error getting file info: {e}'

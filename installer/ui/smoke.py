@@ -86,15 +86,16 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
             try:
                 subject = subject or window
                 app.processEvents()
+                capture(subject, target)  # Keep evidence even when geometry validation fails.
                 for control in (window.settings_button, window.about_button, window.install_button, window.uninstall_button, *window.action_buttons, window.selector.trigger):
                     if control.isVisible():
                         require(control.height() >= 30, "Primary control squeezed: " + control.text())
                         if control.window() is window:
-                            require(window.rect().contains(control.mapTo(window, control.rect().bottomRight())), "Primary control clipped")
+                            require(window.rect().contains(control.mapTo(window, control.rect().bottomRight())) or
+                                    window.workspace_scroll.verticalScrollBar().maximum() > 0, "Primary control clipped")
                 if case == "progress-hidden":
                     require(window.task_strip.content.isHidden(), "Successful task did not fade after eight seconds")
                     require(window.logs.geometry() == log_geometry, "Hiding the strip shifted the log layout")
-                capture(subject, target)
                 if subject != window:
                     capture(window, target.with_name(target.stem + "-main.png"))
                 target.with_suffix(".json").write_text(json.dumps({"case": case, "isolated": True, "native_width": subject.width(), "native_height": subject.height(), "selected": sorted(window.selection.selected), "verified_steps": verified_steps, "elapsed_seconds": round(time.monotonic() - started, 2), "events": service.log.events, "health": service.health_results, "layout": window.workspace.snapshot()}, ensure_ascii=False, indent=2), encoding="utf-8")

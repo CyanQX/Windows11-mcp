@@ -22,10 +22,13 @@ def main():
     if not Path(compiler).is_file():
         parser.error("Install Inno Setup 6 or provide --iscc. GitHub windows-latest includes the compiler.")
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    from windows_mcp.product import NAME, installer_name
     args.out.mkdir(parents=True, exist_ok=True)
-    subprocess.run([str(compiler), "/Qp", f"/DAppVersion={version}", f"/DPayloadPath={args.executable.resolve()}", f"/DRepositoryRoot={ROOT}", f"/DOutputDir={args.out.resolve()}", str(ROOT / "installer/windows-mcp.iss")], check=True)
-    target = args.out / f"Windows-MCP-Setup-v{version}-x64.exe"
-    result = {"version": version, "installer": target.name, "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "payload_sha256": hashlib.sha256(args.executable.read_bytes()).hexdigest(), "installer_engine": "Inno Setup", "per_user": True, "directory_selection": True, "system_uninstaller": True}
+    subprocess.run([str(compiler), "/Qp", f"/DProductName={NAME}", f"/DSetupBase={Path(installer_name(version)).stem}", f"/DAppVersion={version}", f"/DPayloadPath={args.executable.resolve()}", f"/DRepositoryRoot={ROOT}", f"/DOutputDir={args.out.resolve()}", str(ROOT / "installer/windows-mcp.iss")], check=True)
+    target = args.out / installer_name(version)
+    compatibility = args.out / f"Windows-MCP-Setup-v{version}-x64.exe"
+    shutil.copyfile(target, compatibility)  # Same bytes: already shipped 1.7 clients know this name.
+    result = {"version": version, "installer": target.name, "compatibility_alias": compatibility.name, "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "payload_sha256": hashlib.sha256(args.executable.read_bytes()).hexdigest(), "installer_engine": "Inno Setup", "per_user": True, "directory_selection": True, "system_uninstaller": True}
     (args.out / "installer-build.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
 

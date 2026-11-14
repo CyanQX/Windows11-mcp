@@ -65,7 +65,7 @@ class GlassDemo(QDialog):
     def __init__(self, base, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setWindowTitle("Windows MCP · 3D 触感玻璃交互预览")
+        self.setWindowTitle("Actilo · 3D 触感玻璃交互预览")
         bounds = self.screen().availableGeometry()
         self.resize(min(1040, bounds.width() - 40), min(820, bounds.height() - 60))
         self.setMinimumSize(360, min(520, bounds.height() - 60))

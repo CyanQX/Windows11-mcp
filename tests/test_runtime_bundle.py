@@ -70,6 +70,30 @@ def test_automatic_sync_preserves_modified_skill_and_other_clients(tmp_path):
     assert changed.read_text() == "personal content" and service.backend.executable.read_bytes() == before
 
 
+def test_upgrade_removes_only_obsolete_owned_files_and_preserves_personal_files(tmp_path):
+    service = make_service(tmp_path)
+    service.install_targets(["codex"])
+    folder = service.backend.clients["codex"].skill_root / "windows-mcp"
+    (folder / "personal.txt").write_text("personal")
+    (service.backend.skill / "reference.md").unlink()
+    service.backend.source_executable.write_bytes(b"MZ changed core")
+    assert all(row["ok"] for row in service.synchronize_installed())
+    assert not (folder / "reference.md").exists() and (folder / "personal.txt").read_text() == "personal"
+
+
+def test_upgrade_new_filename_collision_never_overwrites_unmanaged_personal_content(tmp_path):
+    service = make_service(tmp_path)
+    service.install_targets(["codex"])
+    folder = service.backend.clients["codex"].skill_root / "windows-mcp"
+    (folder / "new-guide.md").write_text("user guide")
+    (service.backend.skill / "new-guide.md").write_text("product guide")
+    before = service.backend.executable.read_bytes()
+    service.backend.source_executable.write_bytes(b"MZ changed core")
+    with pytest.raises(ManagerError):
+        service.synchronize_installed()
+    assert (folder / "new-guide.md").read_text() == "user guide" and service.backend.executable.read_bytes() == before
+
+
 def test_bundle_manifest_is_journaled_and_runtime_tampering_blocks_probe(tmp_path):
     service = make_service(tmp_path)
     record = payload(tmp_path)
@@ -101,6 +125,7 @@ def test_independent_children_reset_pyinstaller_environment(monkeypatch):
 
 def test_legacy_update_bridge_preserves_plan_and_resets_child_environment(tmp_path, monkeypatch):
     from installer.legacy_migration import migrate
+    monkeypatch.setattr("installer.legacy_migration.installed_version", lambda _: "1.7.0")
     source = tmp_path / "payload"
     record = payload(source)
     data = tmp_path / "data"
@@ -126,6 +151,22 @@ def test_legacy_update_bridge_preserves_plan_and_resets_child_environment(tmp_pa
     assert calls[0][1]["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert "_PYI_APPLICATION_HOME_DIR" not in calls[0][1]["env"]
     assert target.read_bytes() == b"MZ old"
+
+
+def test_legacy_version_reader_uses_bounded_embedded_manifest(tmp_path):
+    import struct
+    import zlib
+    from installer.legacy_migration import installed_version
+    raw = json.dumps({"version": "1.5.0"}).encode()
+    data = zlib.compress(raw)
+    name = b"manifest.json\0"
+    toc = struct.pack("!IIIIBc", 18 + len(name), 0, len(data), len(raw), 1, b"x") + name
+    cookie = struct.pack("!8sIIII64s", b"MEI\x0c\x0b\x0a\x0b\x0e", len(data) + len(toc) + 88, len(data), len(toc), 312, b"python312.dll")
+    executable = tmp_path / "legacy.exe"
+    executable.write_bytes(b"MZfixture" + data + toc + cookie)
+    assert installed_version(executable) == "1.5.0"
+    executable.write_bytes(b"MZ invalid")
+    assert installed_version(executable) is None
 
 
 def test_legacy_first_launch_materializes_once_and_preserves_adjacent_data(tmp_path):

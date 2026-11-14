@@ -92,5 +92,5 @@ def test_manifest_lists_every_tool_and_matches_the_package_version():
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     locked_project = next(package for package in lock["package"] if package["name"] == project["name"])
     assert locked_project["version"] == project["version"]
-    assert f'<h1>Windows-MCP {project["version"]}</h1>' in README
+    assert f'<h1>Actilo {project["version"]}</h1>' in README
     assert manifest["user_config"]["anonymized_telemetry"]["default"] is False

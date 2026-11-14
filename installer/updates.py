@@ -58,6 +58,11 @@ class UpdateService:
                 progress(0.55, "稳定版本信息已核对")
             if Version(version) <= Version(self.version):
                 return {"available": False, "current": self.version, "latest": version}
+            if Version(self.version) < Version("1.7.0") and Version(version) >= Version("1.9.10"):
+                from windows_mcp.product import RELEASES, installer_name
+                return {"available": True, "current": self.version, "latest": version, "kind": "manual",
+                        "url": RELEASES, "name": installer_name(version),
+                        "notes": f"发现重大版本更新：Actilo v{version}\n当前版本低于 v1.7.0，可能存在启动缓慢、重复打开、更新异常及组件残留问题。请前往 GitHub 下载 {installer_name(version)} 并手动安装。新版安装器会备份并迁移可确认归属的本项目组件。"}
             name = portable_bundle_name(version) if self.portable else setup_name(version)
             asset = next((a for a in row["assets"] if a["name"] == name), None)
             if not asset and self.portable:
@@ -101,6 +106,8 @@ class UpdateService:
             raise ManagerError("UPDATE_CHECK_FAILED", "无法读取或校验官方更新信息，当前版本已保留") from exc
 
     def download(self, release, progress=None):
+        if release.get("kind") == "manual":
+            raise ManagerError("MANUAL_UPGRADE_REQUIRED", "旧版本须从 GitHub Releases 手动下载安装 Actilo")
         official_url(release["url"])
         if not re.fullmatch(r"[a-f0-9]{64}", release["sha256"]):
             raise ManagerError("UPDATE_CHECKSUM_MISSING", "校验值无效")

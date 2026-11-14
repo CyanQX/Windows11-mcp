@@ -92,5 +92,13 @@
       "source": "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/a347af95478f989038cccbf085978865264c048a/assets/Arrow%20Up/SVG/ic_fluent_arrow_up_24_regular.svg",
       "sha256": "588b480f9fff053221c9288bfbe8a9a4f063ba2c27e06366e8ad804e4b11d309"
     }
+  ],
+  "derived_assets": [
+    {
+      "path": "installer/resources/actilo.ico",
+      "source": "icons/shield.svg",
+      "transform": "Actilo blue tint; ICO sizes 16, 24, 32, 48, 64, 128, 256",
+      "sha256": "975a9779c96a23e1cfcaea65e540716b6606616c453930694acbf01de72f7591"
+    }
   ]
 }

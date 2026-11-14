@@ -54,12 +54,15 @@ class InstallerService:
 
     @contextmanager
     def lock(self):
+        from installer.migration import assert_available
+        assert_available(self)
         private_directory(self.backend.data)
         authority = self.backend.home / ".windows-mcp"
         private_directory(authority)
         # The home lock also protects client configs when two processes have
         # different data-directory preferences. Always acquire in this order.
         with ProcessLock(authority / "maintenance.lock"):
+            assert_available(self)
             with ProcessLock(self.backend.data / "locks" / "maintenance.lock"):
                 with hash_snapshot():
                     yield

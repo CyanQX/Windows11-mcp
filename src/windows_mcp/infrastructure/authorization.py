@@ -28,6 +28,8 @@ def window_scope(hwnd: int) -> dict:
 
         if is_operator_window(hwnd):
             raise PolicyBlocked("Local authorization controls cannot be operated through MCP")
+        from windows_mcp.infrastructure.execution_security import check_window
+        check_window(hwnd)
         _, pid = win32process.GetWindowThreadProcessId(hwnd)
         process = psutil.Process(pid)
         executable = str(Path(process.exe()).resolve()).casefold()
@@ -139,6 +141,9 @@ class DispatchAuthorization:
     capability_one_use: bool = False
 
     def check(self) -> None:
+        from windows_mcp.infrastructure.execution_security import require_standard, require_runtime_available
+        require_standard()
+        require_runtime_available()
         from windows_mcp.engine.sessions import get_runtime
         from windows_mcp.infrastructure.policy import PolicyBlocked
 

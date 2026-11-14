@@ -37,6 +37,8 @@ class ToolGateway:
                     for key in ("path", "destination"):
                         if bound.arguments.get(key):
                             bound.arguments[key] = str(self.runtime.policy.check_path(bound.arguments[key]))
+                if name == "Terminal" and bound.arguments.get("cwd"):
+                    bound.arguments["cwd"] = str(self.runtime.policy.check_path(bound.arguments["cwd"]))
                 if name in {"Execute", "Verify", "Watch"}:
                     expected = bound.arguments.get("expected")
                     if expected and expected.get("kind") in {"file_exists", "file_content", "file_sha256"}:
@@ -72,6 +74,10 @@ class ToolGateway:
                     audit_id = self.runtime.audit.record(session=state.session_id, tool=name, digest=digest, status="REQUESTED")
                     state.active_calls += 1
                     try:
+                        if name != "Session":
+                            from windows_mcp.infrastructure.execution_security import require_standard, require_runtime_available
+                            require_standard()
+                            require_runtime_available()
                         if name in DESKTOP_TOOLS:
                             self.runtime.pending.check()
                             scope = await run_on_desktop(self.runtime.scope_resolver, name, arguments, state)
@@ -83,7 +89,7 @@ class ToolGateway:
                         capability_one_use = getattr(risk, "capability_one_use", False)
                         trusted = getattr(risk, "trusted", False)
                         authorization = DispatchAuthorization(self.runtime.policy, state.session_id, name, arguments, scope, risk, trusted, generation, capability_one_use)
-                        with bind_dispatch(authorization if name in DESKTOP_TOOLS | {"NativeAPI", "FileSystem", "Browser", "PowerShell", "Registry", "Process", "Clipboard", "Notification"} else None), bind_motion(self.runtime.motion):
+                        with bind_dispatch(authorization if name in DESKTOP_TOOLS | {"NativeAPI", "FileSystem", "Browser", "PowerShell", "Terminal", "Registry", "Process", "Clipboard", "Notification"} else None), bind_motion(self.runtime.motion):
                             result = await func(**bound.arguments)
                     except Exception as exc:
                         self.runtime.audit.record(session=state.session_id, tool=name, digest=digest, status=getattr(exc, "code", "FAILED"), audit_id=audit_id)

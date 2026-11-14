@@ -7,7 +7,8 @@ import threading
 import traceback
 
 from PySide6.QtCore import QTimer, QVariantAnimation, QEasingCurve, Signal
-from PySide6.QtWidgets import QAbstractButton, QMainWindow, QWidget, QMessageBox, QApplication
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QAbstractButton, QMainWindow, QWidget, QMessageBox, QApplication, QScrollArea, QFrame
 
 from installer.diagnostics import EventLog
 from installer.health import HealthChecker
@@ -20,6 +21,7 @@ from installer.ui.multiselect import MultiSelect
 from installer.ui.theme import Theme, button, column, label, row, backdrop
 from installer.ui.workspace import Workspace
 from installer.ui.task_strip import TaskStrip
+from windows_mcp.product import NAME
 
 
 class MainWindow(QMainWindow):
@@ -47,11 +49,11 @@ class MainWindow(QMainWindow):
         self.task_progress = TaskProgress()
         self.reload_service(initial=True)
         mode = "本地预览 · 3D 触感玻璃" if executable.name.lower() == "windows-mcp-preview.exe" else "便携版" if settings.portable_data else ""
-        self.setWindowTitle(f"Windows MCP 安装与维护管理器  v{self.version}" + (" · " + mode if mode else ""))
-        self.setWindowIcon(self.theme.icon("shield"))
+        self.setWindowTitle(f"{NAME}  v{self.version}" + (" · " + mode if mode else ""))
+        self.setWindowIcon(QIcon(str(base / "installer/resources/actilo.ico")))
         available = self.screen().availableGeometry()
         self.resize(min(1160, available.width() - 30), min(840, available.height() - 45))
-        self.setMinimumSize(min(980, available.width() - 30), min(650, available.height() - 45))
+        self.setMinimumSize(min(680, available.width() - 30), min(520, available.height() - 45))
         root = QWidget()
         self.setCentralWidget(root)
         layout = column(root, 0, 0)
@@ -60,11 +62,20 @@ class MainWindow(QMainWindow):
         self.about_button = NavigationButton("关于", lambda: About(self), self.theme.icon("info"))
         self.settings_button.setProperty("iconName", "settings")
         self.about_button.setProperty("iconName", "info")
-        self.top_bar = row(self.settings_button, self.about_button, None)
-        self.top_bar.layout().setContentsMargins(12, 6, 12, 2)
+        self.top_bar = row(label(NAME, size=24, bold=True), label(f"v{self.version}", role="secondary"), None, self.settings_button, self.about_button)
+        self.top_bar.layout().setContentsMargins(24, 14, 18, 12)
         layout.addWidget(self.top_bar)
+        from windows_mcp.infrastructure.execution_security import require_standard, ExecutionDenied
+        try:
+            require_standard()
+        except ExecutionDenied:
+            layout.addWidget(label("当前程序权限高于 AI 允许范围：AI 执行将被拒绝。请正常重新启动客户端与 Actilo。", role="warning", wrap=True))
         self.workspace = Workspace(self)
-        layout.addWidget(self.workspace, 1)
+        self.workspace_scroll = QScrollArea()
+        self.workspace_scroll.setWidgetResizable(True)
+        self.workspace_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.workspace_scroll.setWidget(self.workspace)
+        layout.addWidget(self.workspace_scroll, 1)
 
         left = QWidget()
         left.setMinimumWidth(285)

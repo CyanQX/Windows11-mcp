@@ -43,9 +43,13 @@ def _launch_executable(
     args: list[str] | str | None,
     cwd: str | None,
 ) -> str:
+    from windows_mcp.infrastructure.execution_security import require_standard
+    from windows_mcp.terminal import reject_elevation
+    require_standard()
     resolved_executable = _resolve_executable(executable)
     resolved_cwd = _resolve_cwd(cwd)
     resolved_args = _as_args(args)
+    reject_elevation(subprocess.list2cmdline([str(resolved_executable), *resolved_args]))
 
     process = subprocess.Popen(
         [str(resolved_executable), *resolved_args],

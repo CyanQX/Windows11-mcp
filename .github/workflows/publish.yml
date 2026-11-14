@@ -51,7 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Windows-MCP $RELEASE_TAG" --notes-file release-notes.md --latest
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Actilo $RELEASE_TAG" --notes-file release-notes.md --latest
 
   windows_setup:
     name: Reuse the verified Windows build for this commit

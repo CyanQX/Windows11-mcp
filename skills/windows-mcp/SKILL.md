@@ -3,9 +3,9 @@ name: windows-mcp
 description: Use the connected Windows-MCP server to operate real Windows applications, managed browser pages, and scoped files when the user asks for desktop automation. Select semantic controls, verify results, and respect the server's local approval boundary.
 ---
 
-# Windows-MCP
+# Actilo
 
-This skill supplies operating guidance for the Windows-MCP service. Discover the client's connected tool catalog first; if the server is missing, ask the user to finish setup or reconnect the client before attempting desktop actions.
+This skill supplies operating guidance for Actilo 1.9.10 (compatible windows-mcp service). Discover the client's connected tool catalog first; if the server is missing, ask the user to finish setup or reconnect the client before attempting desktop actions.
 
 ## Choose the execution channel
 
@@ -33,7 +33,9 @@ Check `Session(operation="status")`. `trust_mode="automatic"` and `trust_scope.s
 
 Without matching trust, R2/R3 operations require exact, expiring one-use local approval. The operator clicks **持续全自动 · 完全访问** to immediately persist schema 4 full access: files outside workspace roots, high-risk tools and HTTP(S) origins under the Windows account. Clicking again revokes it immediately. There is no separate Save or 操作授权 flow. Existing schema 2/3 grants retain their old scope until the human explicitly clicks the new switch. Check `Session.full_access` and `trust_scope`; do not infer full access from automatic mode alone.
 
-**设置 → 操作审批** supports saving persistent automatic mode before any pending request exists. Merely opening a window, selecting a checkbox or refreshing never grants authority; saving is the explicit local action. Outside persistent automatic mode, new HTTP(S) origins require separate local approval, including read-only Scrape, browser navigation, redirects and subresources. A displayed origin can be authorized for the requesting client for up to eight hours. Legacy scoped R2 trust does not imply network permission; private-network and browser redirect restrictions remain in either mode.
+**设置 → 操作审批** supports enabling the switch before any pending request. Only the local human click grants or revokes authority; opening or refreshing never does. Outside full-access mode, new HTTP(S) origins need local authorization; private-address protection is restored immediately, including in existing browsers. Full access permits local/intranet HTTP(S), but credential-bearing URLs and background mutation limits remain enforced.
+
+AI execution is limited to a verified non-elevated Windows user token. Administrator/SYSTEM/TrustedInstaller/UIAccess and higher-integrity target windows are rejected even with full access. Never request UAC, runas, elevated tasks/services, token/security-policy changes, drivers or another elevation route. If the client/server was elevated, stop and restart normally. Terminal supports bounded execution and per-client interactive powershell/pwsh/cmd sessions, timeout and cancel; App can launch wt.exe as the UI host. A token check and Job Object do not form a complete OS sandbox for arbitrary hostile native code.
 
 `Wait` accepts 1..60 integer seconds and releases the desktop worker; `WaitFor` releases it between queries. On `ACTION_IN_PROGRESS`, a UIA helper may still execute. Inspect `Session.pending_action`, wait for `COMPLETED`, independently verify the effect, then call `Session(operation="acknowledge", action_id="...")` from the owning client before further desktop mutations. Cancel/resume cannot terminate or acknowledge the helper. Never replay a timed-out action blindly.
 

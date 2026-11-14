@@ -63,7 +63,7 @@ screen_size: Any | None = None
 _mcp: FastMCP | None = None
 
 instructions = dedent("""
-Windows-MCP operates the REAL Windows desktop of this machine: Click, Type, Scroll, Move,
+Actilo (windows-mcp compatibility) operates the REAL Windows desktop of this machine: Click, Type, Scroll, Move,
 Shortcut, Act and App send genuine mouse/keyboard input or native UI Automation actions to
 real applications. Do the task yourself with these tools -- do not stop at describing the
 screen and do not ask the user to click for you.
@@ -498,7 +498,7 @@ def _run_server(
 
 @click.group(cls=_LegacyAwareGroup, no_args_is_help=False)
 def main():
-    """Windows-MCP: MCP server for Windows desktop automation."""
+    """Actilo: MCP server for Windows desktop automation (windows-mcp compatibility)."""
 
 
 @main.command()

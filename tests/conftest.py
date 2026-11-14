@@ -22,6 +22,12 @@ def block_unmocked_unit_input(request, monkeypatch):
     """
     if request.node.path.parent.name == "desktop":
         return
+    if request.node.path.name != "test_execution_security.py":
+        from windows_mcp.infrastructure import execution_security
+        # Unit targets are synthetic HWNDs/PIDs. Security-specific and real
+        # desktop acceptance use actual tokens and are never patched here.
+        monkeypatch.setattr(execution_security, "require_standard", lambda pid=None: {"elevated": False, "integrity": 0x2000})
+        monkeypatch.setattr(execution_security, "check_window", lambda hwnd: None)
     from windows_mcp.desktop import native_input
     from windows_mcp.desktop import coordination
 

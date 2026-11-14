@@ -1,16 +1,12 @@
 """ PowerShell command executor service """
 
-import base64
 import ctypes
 import ctypes.wintypes
 import logging
 import os
 import winreg
 import shutil
-import subprocess
 
-from windows_mcp.desktop.utils import is_elevated
-from windows_mcp.powershell.utils import run_with_graceful_timeout
 
 __all__ = ["PowerShellExecutor"]
 
@@ -171,56 +167,16 @@ class PowerShellExecutor:
     def execute_command(
             command: str, timeout: int = 10, shell: str | None = None
     ) -> tuple[str, int]:
-        try:
-            # $OutputEncoding: controls how PS5.1 encodes output written to its stdout pipe.
-            # Without this set to UTF-8, PS5.1 uses the system codepage and native process
-            # stdout is silently lost when Python reads the pipe.
-            # [Console]::OutputEncoding: controls how PS decodes bytes from native exe stdout.
-            utf8_command = (
-                "$OutputEncoding = [System.Text.Encoding]::UTF8; "
-                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-                f"{command}"
-            )
-            encoded = base64.b64encode(utf8_command.encode("utf-16le")).decode("ascii")
-            env = _prepare_env()
-            # NO_COLOR suppresses ANSI escape sequences in pwsh 7.2+ (and many other CLI tools).
-            # PS5.1 has no ANSI output, so this is harmlessly ignored there.
-            # https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_ansi_terminals#disabling-ansi-output
-            env["NO_COLOR"] = "1"
+        from windows_mcp.terminal import execute
+        from windows_mcp.engine.sessions import get_runtime
 
-            shell = shell or ("pwsh" if shutil.which("pwsh") else "powershell")
-
-            args = [shell, "-NoProfile"]
-            # Only older Windows PowerShell (5.1) uses -OutputFormat Text successfully here
-            shell_name = os.path.basename(shell).lower().replace(".exe", "")
-            if shell_name == "powershell":
-                args.extend(["-OutputFormat", "Text"])
-            args.extend(["-EncodedCommand", encoded])
-
-            result = run_with_graceful_timeout(
-                args,
-                stdin=subprocess.DEVNULL,  # Prevent child processes from inheriting the MCP pipe stdin
-                capture_output=True,  # No errors='ignore' - let subprocess return bytes
-                timeout=timeout,
-                cwd=os.path.expanduser(path="~"),
-                env=env,
-            )
-            # Handle both bytes and str output (subprocess behavior varies by environment)
-            stdout = result.stdout
-            stderr = result.stderr
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode("utf-8", errors="replace")
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode("utf-8", errors="replace")
-            output = stdout or stderr
-            # If the command failed with "Access is denied" and we aren't elevated, add a helpful hint
-            if result.returncode != 0 and "Access is denied" in output and not is_elevated():
-                output += (
-                    "\n\nHINT: This command may require an elevated (Administrator) terminal. "
-                    "The Windows-MCP server is currently running at a lower integrity level."
-                )
-            return output, result.returncode
-        except subprocess.TimeoutExpired:
-            return "Command execution timed out", 1
-        except Exception as e:
-            return f"Command execution failed: {type(e).__name__}: {e}", 1
+        result = execute(command, shell=shell or ("pwsh" if shutil.which("pwsh") else "powershell"),
+                         timeout=timeout, cancelled=get_runtime().current().cancelled)
+        output = result["stdout"]
+        if result["stderr"]:
+            output += ("\n" if output else "") + result["stderr"]
+        if result["output_truncated"]:
+            output += "\n[Output truncated at 256 KiB per stream]"
+        if result["timed_out"] or result["cancelled"]:
+            output += "\n[" + ("Timed out" if result["timed_out"] else "Cancelled") + "]"
+        return output, result["exit_code"]

@@ -130,7 +130,7 @@ class Preview(Detail):
             group.addWidget(label(CLIENT_NAMES.get(plan["target"], plan["target"]), size=16, bold=True))
             before, after = QWidget(), QWidget()
             fact(column(before, 0, 6), "当前 MCP 连接", "已配置" if plan["current_entry"] is not None else "未配置")
-            fact(column(after, 0, 6), "恢复后的 MCP 连接", "恢复为备份中的连接" if plan["restore_entry"] is not None else "移除 Windows-MCP 连接", role="warning" if plan["restore_entry"] is None else "success")
+            fact(column(after, 0, 6), "恢复后的 MCP 连接", "恢复为备份中的连接" if plan["restore_entry"] is not None else "移除 Actilo 连接", role="warning" if plan["restore_entry"] is None else "success")
             group.addWidget(row(before, label("→", size=22, role="secondary"), after))
             group.addWidget(label("保留当前 Skill 和其他软件配置", size=12, role="secondary"))
             content.addWidget(card)
@@ -299,7 +299,7 @@ class Diagnostics(Detail):
         QApplication.clipboard().setText(self.box.toPlainText())
 
     def export(self):
-        target, _ = QFileDialog.getSaveFileName(self, "导出已预览的脱敏内容", f"Windows-MCP-report-{datetime.now():%Y%m%d-%H%M%S}.json", "JSON (*.json)")
+        target, _ = QFileDialog.getSaveFileName(self, "导出已预览的脱敏内容", f"Actilo-report-{datetime.now():%Y%m%d-%H%M%S}.json", "JSON (*.json)")
         if target:
             from installer.backend import atomic_write
             from installer.storage import check_path

@@ -1,4 +1,4 @@
-# Windows-MCP 按需参考
+# Actilo 按需参考
 
 安装器的服务命令为 `%LOCALAPPDATA%\WindowsMCP\Windows-MCP.exe --serve`。1.2.2 打包版在请求审批时自动打开本机审批窗口；同一 EXE 的 `approve <request_id>` 也会打开窗口。由用户核对具体参数后批准一次或拒绝，AI 不得操作自己的审批界面。便携版完整解压后通过 `WindowsMCP.portable.json` 启用程序旁 `data`，服务配置位于 `data/config/config.toml`，默认文件范围为 `data/config/workspace`；安装版仍使用用户目录。下文的 `windows-mcp` 示例适用于独立控制台服务。
 
@@ -329,3 +329,12 @@ exclude = ["PowerShell", "Registry"]
 - **本次未实测**的环境：多显示器（尤其是位于主屏左侧或上方、坐标为负的副屏）、150%/200% 缩放、Windows 10。坐标计算已按虚拟桌面处理并有单元测试，但还没在真机上验证。
 - 已发出的 COM 调用不能强制撤回；慢提供者虽然不会阻塞 MCP 主事件循环，仍可能占用桌面工作线程。取消会拦截尚未执行的调用与下一批输入，并允许释放已经按下的鼠标/修饰键。
 - 客户端空闲 15 分钟后回收会话和浏览器，断线后不保证立即回收。浏览器能力仅验证本机已安装 Edge；Chrome/Chromium 通道及 Office COM/模型适配仍待单独验收。
+
+
+## Actilo 1.9.10 安装与执行权限
+
+正式安装包为 `Actilo_1.9.10_setup.exe`。旧于 1.7.0 的已分发客户端无法被追溯修改，请从 Releases 手动下载；新版更新模块可显示手动升级引导。安装器优先 D:\Actilo，不可用时回退到用户本地 Programs\Actilo。内部 windows-mcp、Windows-MCP.exe、.windows-mcp 和旧 AppId 保留兼容。受管接入按收据校验、备份、迁移与握手；未知和个人修改的内容不得清理。
+
+AI 只能运行在非提升的普通用户 token，完全访问不放行 Administrator、SYSTEM、TrustedInstaller、UIAccess 或高完整性目标窗口。提升的客户端会收到 NON_ELEVATED_RUNTIME_REQUIRED；正常重新启动，禁止自动 runas、计划任务、服务、COM 提权或点击 UAC。Terminal 的 execute/start/write/read/cancel/close 返回客户端独立会话、有界输出、退出码、超时与取消；Windows Terminal 前端通过 App/Observe/Execute 操作。Job Object 是进程生命周期措施，不是完整 OS 沙箱。
+
+启动诊断在用户 .windows-mcp/startup.jsonl，按阶段记录 PID、时间和异常码，不记录原始命令及令牌。重大更新仅在管理面板实际可见后按用户与版本原子记录展示；关于页面可手动查看。

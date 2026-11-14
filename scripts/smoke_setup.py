@@ -28,9 +28,6 @@ def main():
         assert integration["install_and_uninstall"] == "PASS" and integration["isolated"]
         stdio = asyncio.run(check_service(executable, home=Path(temporary) / "stdio-home"))
         if args.require_native_components:
-            native = stdio.get("native_components") or {}
-            assert native.get("wgc", {}).get("available"), "Frozen WGC dependency was not detected"
-            assert native.get("windows_ocr", {}).get("dependencies_installed"), "Frozen WinRT OCR bindings were not detected"
             # Exercise the exact hidden streaming command in the shipped EXE, rather
             # than assuming that source-only protocol tests cover the bootloader.
             messages = "".join(json.dumps({"id": i, "request": {"operation": "probe"}}) + "\n" for i in (1, 2))
@@ -40,7 +37,9 @@ def main():
             responses = [json.loads(line) for line in streamed.stdout.splitlines()]
             assert [item["id"] for item in responses] == [1, 2]
             assert all(not item.get("error") and item["result"]["wgc"]["available"] for item in responses)
+            assert responses[0]["result"]["windows_ocr"]["dependencies_installed"], "Frozen WinRT OCR bindings were not detected"
             stdio["native_stream_two_requests"] = True
+            stdio["native_maintenance_probe"] = responses[0]["result"]
     result = {"version": json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))["version"], "executable": executable.name, "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "size_bytes": executable.stat().st_size, "client_installation": integration, "stdio": stdio}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

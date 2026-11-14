@@ -23,6 +23,9 @@ def main():
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Windows EXE must be built on Windows")
+    import struct
+    if struct.calcsize("P") != 8:
+        parser.error("The x64 installer requires a 64-bit Python build interpreter")
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["version"] == version
@@ -44,8 +47,22 @@ def main():
     contents = "_runtime-" + hashlib.sha256(identity.encode()).hexdigest()[:20]
 
     args.work.mkdir(parents=True, exist_ok=True)
+    from PyInstaller.utils.win32.versioninfo import VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct, VarFileInfo, VarStruct
+    from windows_mcp.product import NAME, EXECUTABLE, release_version
+    assert release_version() == version, "Installed build metadata differs from pyproject.toml"
+    number = tuple(map(int, version.split("."))) + (0,)
+    info = VSVersionInfo(ffi=FixedFileInfo(filevers=number, prodvers=number, mask=0x3f, flags=0, OS=0x40004, fileType=1, subtype=0, date=(0, 0)), kids=[
+        StringFileInfo([StringTable("040904B0", [StringStruct(key, value) for key, value in {
+            "CompanyName": "CyanQX", "FileDescription": NAME, "FileVersion": version,
+            "InternalName": NAME, "OriginalFilename": EXECUTABLE, "ProductName": NAME,
+            "ProductVersion": version, "LegalCopyright": "MIT; upstream and third-party notices retained"}.items()])]),
+        VarFileInfo([VarStruct("Translation", [1033, 1200])])])
+    version_file = args.work / "product-version.txt"
+    version_file.write_text(str(info), encoding="utf-8")
     options = [str(ROOT / "installer" / "app.py"), "--onedir", "--contents-directory", contents, "--windowed", "--clean", "--noconfirm", "--name", "Windows-MCP", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
     options += ["--collect-submodules", "installer"]
+    options += ["--version-file", str(version_file)]
+    options += ["--icon", str(ROOT / "installer/resources/actilo.ico")]
     for module in ("windows_mcp", "fastmcp", "playwright", "comtypes"):
         options += ["--collect-all", module]
     for enabled, modules in ((args.with_capture, ("windows_capture",)),

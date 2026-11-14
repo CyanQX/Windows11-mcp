@@ -34,7 +34,7 @@ def test_real_printwindow_roi_and_unchanged_image_suppression(app, call):
     assert "available" in newer["ocr"]
 
 
-@pytest.mark.parametrize("profile,count", [("full", 31), ("ui-core", 12), ("browser", 5)])
+@pytest.mark.parametrize("profile,count", [("full", 32), ("ui-core", 12), ("browser", 5)])
 async def test_real_stdio_health_checks_complete_profile_contract(tmp_path, profile, count):
     """Launch actual source service in isolated home; initialize/list/Session only."""
     import sys

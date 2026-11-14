@@ -304,6 +304,18 @@ class Installer:
             receipt["mcp"] = True
             receipt["entry"] = expected
         if skill:
+            supplied = {path.relative_to(self.skill).as_posix() for path in self.skill.rglob("*") if path.is_file()}
+            for relative in set(receipt["files"]) - supplied:
+                from installer.storage import check_path
+                destination = check_path(profile.skill_root / SERVER / relative, profile.skill_root / SERVER)
+                record = receipt["files"][relative]
+                before = read_file(destination)
+                if before is not None and digest(before) != record["hash"]:
+                    raise ValueError("旧受管文件已被修改，未清理：" + relative)
+                backup = record.get("backup")
+                restored = check_path(Path(backup), self.data / "backups").read_bytes() if backup else None
+                changes.append((destination, before, restored))
+                receipt["files"].pop(relative)
             for source in self.skill.rglob("*"):
                 if not source.is_file():
                     continue
@@ -314,6 +326,8 @@ class Installer:
                 content = source.read_bytes()
                 before = read_file(destination)
                 if relative not in receipt["files"]:
+                    if previous and before is not None and before != content:
+                        raise ValueError("新版文件与未受管的个人文件冲突：" + relative)
                     backup = transaction / "skill" / relative
                     if before is not None:
                         backup.parent.mkdir(parents=True, exist_ok=True)

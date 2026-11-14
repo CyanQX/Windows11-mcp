@@ -161,7 +161,9 @@ class PolicyGate:
                     raise PolicyBlocked("Recursive copying is disabled; copy individual scope-checked files")
                 return 2 if self.check_path(destination).exists() else 1
             raise PolicyBlocked("Unsupported native/file operation")
-        if tool == "PowerShell":
+        if tool in {"PowerShell", "Terminal"}:
+            if tool == "Terminal" and args.get("operation") in {"read", "cancel", "close"}:
+                return 0
             return 3
         if tool == "Registry":
             return 0 if args.get("mode") in {"get", "list"} else 3
@@ -194,9 +196,9 @@ class PolicyGate:
         risk = self.risk(tool, args, scope)
         for target in self.network_origins(tool, args):
             self.check_network(session_id, target)
-        if tool in {"Click", "Type", "Shortcut", "MultiSelect", "MultiEdit", "Act", "Execute", "Move", "Scroll", "App", "PowerShell"}:
+        if tool in {"Click", "Type", "Shortcut", "MultiSelect", "MultiEdit", "Act", "Execute", "Move", "Scroll", "App", "PowerShell", "Terminal"}:
             from windows_mcp.infrastructure.operator_ui import operator_review_active
-            if operator_review_active():
+            if operator_review_active() and not (tool == "Terminal" and args.get("operation") in {"read", "cancel", "close"}):
                 raise PolicyBlocked("The local human approval window is open; MCP input is paused until the operator decides and closes it")
         trusted = risk >= 2 and self.trusted(session_id, tool, args, scope or {})
         capability_one_use = risk == 3 and not self.allow_r3

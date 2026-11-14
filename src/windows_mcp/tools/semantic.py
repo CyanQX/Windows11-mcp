@@ -126,11 +126,14 @@ def register(mcp, *, get_desktop, get_analytics):
         if trust and trust.get("scope") != "installation" and trust.get("session_id") != session.session_id:
             trust = None
         from windows_mcp.vision.native_bridge import capabilities
-        native = await asyncio.to_thread(capabilities) if operation == "status" else {"probe": "skipped_for_control_operation"}
+        from windows_mcp.infrastructure.execution_security import runtime_status
+        privilege = runtime_status()
+        native = await asyncio.to_thread(capabilities) if operation == "status" and privilege["allowed"] else {"probe": "skipped", "reason": privilege.get("code", "control_operation")}
         from windows_mcp.desktop.coordination import status as desktop_status
         from windows_mcp.vision.capture_worker import worker
 
         return {"status": Status.CANCELLED.value if session.cancelled.is_set() else "READY",
+                "execution_privilege": privilege,
                 "desktop_coordination": desktop_status(), "capture_worker": worker.status(),
                 "native_components": native,
                 "session_id": session.session_id, "revision": session.revision,

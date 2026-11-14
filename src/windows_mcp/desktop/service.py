@@ -572,6 +572,28 @@ class Desktop:
     @staticmethod
     def _shell_execute(target: str) -> tuple[str, int, int]:
         """Launch through ShellExecuteEx on an STA helper thread (shell extensions need STA)."""
+        from windows_mcp.infrastructure.execution_security import require_standard
+        from windows_mcp.terminal import reject_elevation
+        require_standard()
+        reject_elevation(target)
+        from pathlib import Path
+        if Path(target).is_file():
+            # CreateProcess never invokes the UAC ShellExecute elevation broker;
+            # requireAdministrator manifests fail with ERROR_ELEVATION_REQUIRED.
+            import subprocess
+            try:
+                args, cwd = [target], None
+                if Path(target).suffix.casefold() == ".lnk":
+                    from windows_mcp.infrastructure.app_launch import shortcut_command
+                    args, cwd = shortcut_command(target)
+                reject_elevation(subprocess.list2cmdline(args))
+                child = subprocess.Popen(args, cwd=cwd, close_fds=True, stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return (f"started {target}", 0, child.pid)
+            except OSError as exc:
+                return (f"Launch denied or failed: {exc}", 1, 0)
+        if not target.startswith("shell:AppsFolder\\") or "!" not in target:
+            return ("Unverifiable shell launch rejected; use an exact non-elevated executable path", 1, 0)
         import threading
 
         from win32com.shell import shell, shellcon
@@ -610,11 +632,20 @@ class Desktop:
         return (f"started {target}", 0, int(box.get("pid", 0) or 0))
 
     def launch_app(self, name: str) -> tuple[str, int, int]:
+        from windows_mcp.terminal import reject_elevation
+        import shutil
+        reject_elevation(name)
+        executable = shutil.which(name) or shutil.which(name + ".exe")
+        if executable:
+            return self._shell_execute(executable)
         apps_map = self.get_apps_from_start_menu()
+        matched_name = name.lower()
         appid = apps_map.get(name.lower())
         if appid is None:
             matched_app = process.extractOne(name, apps_map.keys(), score_cutoff=70)
             appid = apps_map.get(matched_app[0]) if matched_app else None
+            if matched_app:
+                matched_name = matched_app[0]
         if appid is None:
             # Not in the Start menu: fall back to executables on PATH (notepad, calc, mspaint...).
             import shutil
@@ -625,6 +656,11 @@ class Desktop:
             return (f"{name.title()} not found in the Start menu or on PATH.", 1, 0)
         if os.path.exists(appid) or "\\" in appid:
             return self._shell_execute(resolve_known_folder_guid_path(appid))
+        if "!" not in appid:
+            from windows_mcp.infrastructure.app_launch import find_start_shortcut
+            shortcut = find_start_shortcut(matched_name)
+            if shortcut:
+                return self._shell_execute(str(shortcut))
         return self._shell_execute(f"shell:AppsFolder\\{appid}")
 
     def switch_app(self, name: str | None, handle: int | None = None):

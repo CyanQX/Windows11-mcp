@@ -37,7 +37,7 @@ def main():
         record = json.loads(target.with_suffix(".json").read_text(encoding="utf-8"))
         assert record["case"] == case and record["isolated"]
         if case in {"status", "status-details", "installed", "selection", "selection-bottom", "verify", "repair", "progress", "progress-hidden", "backups", "restore-preview", "upgrade-preview", "undo-preview"}:
-            assert record["health"]["codex"]["ok"] and record["health"]["codex"]["tool_count"] == 31
+            assert record["health"]["codex"]["ok"] and record["health"]["codex"]["tool_count"] == 32
         if case in {"undo", "cancel-install"}:
             assert not record["health"]
             assert any(event["phase"] == "undo" and event["level"] == "SUCCESS" for event in record["events"])

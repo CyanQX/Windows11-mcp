@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout, QHBoxLa
 
 FONT = "Microsoft YaHei UI"
 PALETTES = {
-    "light": dict(bg="#F7F8FA", end="#FFFFFF", text="#203747", secondary="#4C6577", accent="#41667F", border="#CCD2D8", success="#087645", warning="#8E5A13", error="#B52B48", glass="#FCFCFD"),
+    "light": dict(bg="#F7F8FA", end="#FFFFFF", text="#203747", secondary="#4C6577", accent="#1266ED", border="#CCD2D8", success="#087645", warning="#8E5A13", error="#B52B48", glass="#FCFCFD"),
     "warm": dict(bg="#ECE7D9", end="#FAF5E9", text="#3C4238", secondary="#656D59", accent="#446D58", border="#CECEB9", success="#256341", warning="#805523", error="#AD3744", glass="#FFFBEF"),
     "dark": dict(bg="#131F33", end="#243852", text="#ECF3FF", secondary="#B1C3D9", accent="#86B5FF", border="#48617E", success="#76DEB1", warning="#F5CE8B", error="#FF9DB2", glass="#233751"),
 }
@@ -147,6 +147,7 @@ def label(text, *, size=13, bold=False, role=None, wrap=False):
 def button(text, callback=None, *, icon=None, primary=False, compact=False):
     from installer.ui.tactile_button import TactileGlassButton
     item = TactileGlassButton(text, tone="primary" if primary else "neutral")
+    item.setProperty("actiloModern", True)
     item.setProperty("primary", primary)
     item.setProperty("compact", compact)
     item.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -194,6 +195,6 @@ def backdrop(window, dark=False):
 def application():
     app = QApplication.instance() or QApplication([])
     app.setStyle("Fusion")
-    app.setApplicationName("Windows-MCP")
+    app.setApplicationName("Actilo")
     app.setOrganizationName("CyanQX")
     return app

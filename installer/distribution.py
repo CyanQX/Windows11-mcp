@@ -14,7 +14,8 @@ MAX_PAYLOAD = 600 * 1024 * 1024
 
 
 def setup_name(version):
-    return f"Windows-MCP-Setup-v{version}-x64.exe"
+    from windows_mcp.product import installer_name
+    return installer_name(version)
 
 
 def portable_name(version):

@@ -100,7 +100,7 @@ def kill_process(
         except psutil.NoSuchProcess:
             return f"No process with PID {pid} found."
         except psutil.AccessDenied:
-            return f"Access denied to kill PID {pid}. Try running as administrator."
+            return f"Access denied to kill PID {pid}. Actilo will not elevate; this operation exceeds normal user permissions."
     else:
         for p in psutil.process_iter(["pid", "name"]):
             try:

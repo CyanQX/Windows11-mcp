@@ -80,6 +80,7 @@ class EngineRuntime:
         self.pending = PendingActions()
         self.scope_resolver = None
         self.browser = None
+        self.terminals = None
         self.watchdog = None
 
     def owner(self, context) -> str:
@@ -138,6 +139,8 @@ class EngineRuntime:
             state.cancelled.set()
         if self.browser:
             await self.browser.close_all()
+        if self.terminals:
+            await asyncio.to_thread(self.terminals.close_owner, None)
         from windows_mcp.desktop.pointer_monitor import monitor
 
         await asyncio.to_thread(monitor.stop)
@@ -168,6 +171,8 @@ class EngineRuntime:
             state.cancelled.set()
             if self.browser:
                 await self.browser.close_session(state.session_id)
+            if self.terminals:
+                await asyncio.to_thread(self.terminals.close_owner, state.session_id)
             await run_on_desktop(self._release, state)
             with self._lock:
                 self.sessions.pop(owner, None)

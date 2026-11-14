@@ -36,7 +36,7 @@ async def test_catalog_contains_complete_schema_and_matches_its_profile(profile)
     responses = manifest["_meta"]["com.microsoft.windows"]["static_responses"]
     validate_snapshot(manifest, await snapshot(profile), profile=profile)
     names = {tool["name"] for tool in responses["tools/list"]["tools"]}
-    assert len(names) == 31 if profile == "full" else names == PROFILES[profile]
+    assert len(names) == 32 if profile == "full" else names == PROFILES[profile]
     assert all("inputSchema" in tool and "annotations" in tool for tool in responses["tools/list"]["tools"])
     assert responses["initialize"]["serverInfo"]["name"] == manifest["name"]
     changed = copy.deepcopy(responses)

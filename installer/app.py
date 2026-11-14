@@ -127,23 +127,49 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
             setattr(sys, name, open(os.devnull, mode, encoding="utf-8"))
     from installer.backend import atomic_write
     from installer.settings import SettingsService
-    from installer.storage import ProcessLock, private_directory
+    from installer.storage import private_directory
+    from installer.instance import ManagerInstance
+    from installer.startup import StartupTrace
     from installer.models import ManagerError
     from windows_mcp.infrastructure.approvals import ApprovalStore
 
-    settings = SettingsService(Path.home())
-    private_directory(settings.path.parent)
-    wake = settings.path.parent / "manager-wake.json"
+    initial_root = Path.home() / ".windows-mcp"
+    private_directory(initial_root)
+    trace = StartupTrace(initial_root)
+    trace.record("starting")
     try:
-        with ProcessLock(settings.path.parent / "manager-ui.lock"):
+        settings = SettingsService(Path.home())
+    except Exception as exc:
+        trace.record("settings-failed", status="failed", error=exc)
+        raise
+    private_directory(settings.path.parent)
+    instance_root = settings.home / ".windows-mcp"
+    private_directory(instance_root)
+    trace.record("settings-ready")
+    wake = instance_root / "manager-wake.json"
+    try:
+        with ManagerInstance(settings.home):
+            trace.record("instance-acquired")
+            from windows_mcp.infrastructure.execution_security import require_runtime_available, InstallationInProgress
+            try:
+                require_runtime_available(instance_root)
+            except InstallationInProgress as exc:
+                trace.record("installation-in-progress", status="waiting")
+                ctypes.windll.user32.MessageBoxW(None, str(exc), "Actilo · 安装与恢复", 64)
+                return
             # Claim the instance before loading Qt. Repeated clicks can wake
             # this process without starting several expensive UI imports.
             from installer.ui.main_window import MainWindow
             from installer.ui.theme import application
             from PySide6.QtCore import QTimer
             app = application()
+            trace.record("qt-ready")
             window = MainWindow(resources(), settings, Path(sys.executable), approval_store=ApprovalStore(settings.path.parent / "approvals"), wake_path=wake, auto_scan=finish_plan is None and not installer_update)
             window.show()
+            QTimer.singleShot(0, lambda: trace.record("window-visible"))
+            if not review_request and not finish_plan and not installer_update:
+                from installer.release_notes import show_release_notes
+                QTimer.singleShot(0, lambda: show_release_notes(window, automatic=True))
             if review_request:
                 QTimer.singleShot(400, lambda: window.open_operator(review_request))
             if finish_plan:
@@ -167,15 +193,27 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
                             atomic_write(finish_plan.parent / "result.json", b'{"ok":false}')
                             return False
                         raise
-                QTimer.singleShot(500, lambda: window.run(finish, lambda ok: window.close() if finish_plan and ok is False else None, title="正在完成版本更新"))
+                def finished(ok):
+                    if finish_plan and ok is False:
+                        window.close()
+                    elif ok and not review_request:
+                        from installer.release_notes import show_release_notes
+                        show_release_notes(window, automatic=True)
+                QTimer.singleShot(500, lambda: window.run(finish, finished, title="正在完成版本更新"))
                 QTimer.singleShot(3000, window.check_update_hint)
             app.exec()
+            trace.record("closed")
     except ManagerError as exc:
         if exc.code != "INSTALLER_BUSY":
+            trace.record("startup-failed", status="failed", error=exc)
             raise
         atomic_write(wake, json.dumps({"request_id": review_request}).encode())
+        trace.record("existing-instance-activated")
         if finish_plan:
             atomic_write(finish_plan.parent / "result.json", b'{"ok":false}')
+    except Exception as exc:
+        trace.record("startup-failed", status="failed", error=exc)
+        raise
 
 
 def main():
@@ -207,6 +245,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", type=Path)
     parser.add_argument("--sync-installed", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--installer-prepare", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--installer-commit", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--installer-rollback", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--installer-result", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--portable-check", type=Path)
     parser.add_argument("--review-request")
     parser.add_argument("--apply-update", type=Path)
@@ -225,7 +267,25 @@ def main():
     parser.add_argument("--ui-smoke-case", choices=SMOKE_CASES, default="ready")
     parser.add_argument("--ui-smoke-scale", type=float, default=1.0)
     args = parser.parse_args()
-    if args.sync_installed:
+    if args.installer_prepare or args.installer_commit or args.installer_rollback:
+        from installer.settings import SettingsService
+        from installer.operations import InstallerService
+        from installer import migration
+        settings = SettingsService(Path.home())
+        service = InstallerService(settings.backend(resources() / "skills/windows-mcp", Path(sys.executable)), json.loads((resources() / "manifest.json").read_text(encoding="utf-8")))
+        if args.installer_prepare:
+            result = migration.prepare(service, args.installer_prepare, Path(sys.executable))
+            if not args.installer_result:
+                raise ValueError("Missing installer result path")
+            from installer.backend import atomic_write
+            atomic_write(args.installer_result, str(result).encode("utf-8"))
+        elif args.installer_commit:
+            migration.commit(service, args.installer_commit)
+        else:
+            conflicts = migration.rollback(service, args.installer_rollback)
+            if conflicts:
+                raise RuntimeError("Installation recovery requires manual review: " + ", ".join(conflicts))
+    elif args.sync_installed:
         from installer.settings import SettingsService
         from installer.operations import InstallerService
         settings = SettingsService(Path.home())
@@ -265,6 +325,8 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         if getattr(sys, "frozen", False):
+            if any(arg.split("=", 1)[0] in {"--installer-prepare", "--installer-commit", "--installer-rollback"} for arg in sys.argv[1:]):
+                raise SystemExit(1) from exc
             if report_update_failure(sys.argv[1:], exc):
                 raise SystemExit(1) from exc
             # A windowed PyInstaller bootloader shows an error dialog for an
@@ -282,6 +344,6 @@ if __name__ == "__main__":
                     destination.write_text(json.dumps({"error": type(exc).__name__, "message": str(exc)}, ensure_ascii=True), encoding="utf-8")
                     raise SystemExit(1) from exc
         if getattr(sys, "frozen", False) and not any(arg.split("=", 1)[0] in {"--serve", "serve", "auth", "doctor", "connectors", "manifest", "native-helper", "trust", "network", "--self-test", "--portable-check", "--apply-update", "--ui-smoke", "--sync-installed"} for arg in sys.argv[1:]):
-            ctypes.windll.user32.MessageBoxW(None, f"管理器未能启动：{exc}\n原配置与文件已保留。", "Windows MCP", 16)
+            ctypes.windll.user32.MessageBoxW(None, f"管理器未能启动：{exc}\n原配置与文件已保留。", "Actilo", 16)
             raise SystemExit(1) from exc
         raise

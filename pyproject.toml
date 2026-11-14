@@ -1,7 +1,7 @@
 [project]
 name = "windows-mcp"
-version = "1.8.0"
-description = "MCP server that operates the real Windows desktop: genuine mouse/keyboard input and UI Automation actions, verified after every step."
+version = "1.9.10"
+description = "Actilo: MCP server that operates the real Windows desktop: genuine mouse/keyboard input and UI Automation actions, verified after every step."
 authors = [
     { name = "Jeomon George", email = "jeogeoalukka@gmail.com" }
 ]
@@ -68,6 +68,7 @@ Issues = "https://github.com/CyanQX/Windows11-mcp/issues"
 Upstream = "https://github.com/CursorTouch/Windows-MCP"
 
 [project.scripts]
+actilo = "windows_mcp.__main__:main"
 windows-mcp = "windows_mcp.__main__:main"
 
 [build-system]

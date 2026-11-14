@@ -35,7 +35,7 @@ def verify(dist: Path, tag: str | None = None) -> dict:
     locked = next(item for item in lock["package"] if item["name"] == project["name"])
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert manifest["version"] == locked["version"] == version, "Release versions disagree"
-    assert f"<h1>Windows-MCP {version}</h1>" in readme, "README version disagrees"
+    assert f"<h1>Actilo {version}</h1>" in readme, "README version disagrees"
     if tag is not None:
         assert tag == f"v{version}", "Git tag disagrees with package version"
     tools = [tool["name"] for tool in manifest["tools"]]
@@ -71,7 +71,7 @@ def verify(dist: Path, tag: str | None = None) -> dict:
             assert path in members, f"Source distribution is missing: {path}"
             assert archive.extractfile(members[path]).read() == content, f"Source distribution differs: {path}"
         required = ["README.md", "CHANGELOG.md", "LICENSE.md", "CLAUDE.md", "pyproject.toml", "manifest.json", "uv.lock", "MANIFEST.in"]
-        required.extend(path.relative_to(ROOT).as_posix() for folder in ("assets", "tests", "scripts", ".github", ".claude", "installer", "skills") for path in (ROOT / folder).rglob("*") if path.is_file() and path.suffix in {".py", ".png", ".svg", ".txt", ".json", ".yml", ".md", ".iss", ".isl", ".html", ".cs", ".manifest"} and "__pycache__" not in path.parts)
+        required.extend(path.relative_to(ROOT).as_posix() for folder in ("assets", "tests", "scripts", ".github", ".claude", "installer", "skills") for path in (ROOT / folder).rglob("*") if path.is_file() and path.suffix in {".py", ".png", ".svg", ".ico", ".txt", ".json", ".yml", ".md", ".iss", ".isl", ".html", ".cs", ".manifest"} and "__pycache__" not in path.parts)
         for name in required:
             assert name in members, f"Source distribution is missing release file: {name}"
             assert archive.extractfile(members[name]).read() == (ROOT / name).read_bytes(), f"Source distribution differs: {name}"
@@ -82,8 +82,10 @@ def verify(dist: Path, tag: str | None = None) -> dict:
         # This runs on Linux without server/GUI dependencies. Windows has
         # already exercised both packages; independently verify their bytes
         # and fixed ZIP structure here using only the standard library.
-        setup = dist / f"Windows-MCP-Setup-v{version}-x64.exe"
+        setup = dist / f"Actilo_{version}_setup.exe"
         assert setup.is_file(), "Real installation wizard is missing"
+        alias = dist / f"Windows-MCP-Setup-v{version}-x64.exe"
+        assert alias.is_file() and hashlib.sha256(alias.read_bytes()).digest() == hashlib.sha256(setup.read_bytes()).digest(), "Legacy setup alias differs from Actilo"
         legacy_path = dist / f"Windows-MCP-Portable-v{version}-x64.zip"
         portable_path = dist / f"Windows-MCP-PortableBundle-v{version}-x64.zip"
         import sys

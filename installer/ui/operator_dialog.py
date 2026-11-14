@@ -22,7 +22,7 @@ class OperatorCenter(Detail):
         card = GlassFrame()
         content = column(card, 18, 8)
         self.auto_approve = QCheckBox("持续全自动 · 完全访问")
-        self.auto_approve.setAccessibleDescription("点击立即保存。允许 AI 访问本机文件和互联网，使用高风险操作；直到手动关闭。")
+        self.auto_approve.setAccessibleDescription("点击立即保存。在当前用户非提升权限内访问文件、网络和已开放操作，直到手动关闭；不能提权。")
         content.addWidget(self.auto_approve)
         self.trust_hint = label("", role="secondary", wrap=True)
         content.addWidget(self.trust_hint)
@@ -88,7 +88,7 @@ class OperatorCenter(Detail):
         self.selector.blockSignals(False)
         full = self.trust.full_access()
         self.auto_approve.setChecked(full)
-        self.trust_hint.setText("允许 AI 访问本机文件与互联网，并执行高风险操作。点击即生效，重连、重启后仍有效；再次点击即可关闭。")
+        self.trust_hint.setText("允许 AI 在普通用户权限内持续访问文件、网络与已开放操作。点击即生效，重连、重启后仍有效；不能提权。")
         self.state.setText("完全访问已开启" if full else "等待你批准" if self.rows else "暂无待审请求")
         if not full and self.trust.automatic():
             self.state.setText("旧版自动审批已保留 · 开启上方开关可切换为完全访问")

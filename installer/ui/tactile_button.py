@@ -99,7 +99,7 @@ class TactileGlassButton(QPushButton):
         self.update()
 
     def hitButton(self, point):
-        return rounded_path(QRectF(self.rect()), min(self.width(), self.height()) / 2).contains(point)
+        return rounded_path(QRectF(self.rect()), 10 if self.property("actiloModern") else min(self.width(), self.height()) / 2).contains(point)
 
     def enterEvent(self, event):
         if self.isEnabled():
@@ -258,6 +258,7 @@ class TactileGlassButton(QPushButton):
 
     def paintEvent(self, event):
         current = manager_theme()
+        modern = bool(self.property("actiloModern")) and current is not None and self.material is None
         native = self.material is None and current and not current.appearance["glass_strength"]
         aligned_left = bool(self.content_alignment & Qt.AlignmentFlag.AlignLeft)
         if native and not aligned_left:
@@ -272,6 +273,8 @@ class TactileGlassButton(QPushButton):
             hover = press = 0.0
         physical_press = 0.0 if self.reduced_motion else press
         rect = QRectF(self.rect()).adjusted(6, 5, -6, -7)
+        if modern:
+            rect = QRectF(self.rect()).adjusted(3, 3, -3, -3)
         if self.variant == "circle":
             side = min(rect.width(), rect.height())
             rect = QRectF(rect.center().x() - side / 2, rect.center().y() - side / 2, side, side)
@@ -280,11 +283,30 @@ class TactileGlassButton(QPushButton):
             self.initStyleOption(option)
             option.text, option.icon = "", QIcon()
             self.style().drawControl(QStyle.ControlElement.CE_PushButton, option, painter, self)
+        elif modern:
+            active = self.isEnabled() or self._loading
+            primary = self.tone == "primary" and active
+            fill = QColor(current.colors["accent" if primary else "glass"])
+            if not active:
+                fill = QColor(current.colors["bg"])
+            elif press:
+                fill = fill.darker(round(100 + press * 8))
+            elif hover:
+                fill = fill.lighter(round(100 + hover * 3))
+            painter.setBrush(fill)
+            painter.setPen(QPen(QColor(current.colors["accent" if primary else "border"]), 1))
+            painter.drawRoundedRect(rect.translated(0, physical_press), 10, 10)
+            if focus:
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(QColor(current.colors["accent"]), 2))
+                painter.drawRoundedRect(rect.adjusted(-2, -2, 2, 2), 12, 12)
         else:
             paint_glass(painter, rect, min(rect.width(), rect.height()) / 2, tokens, hover=hover, press=press, enabled=self.isEnabled() or self._loading, focus=focus, motion_scale=0.0 if self.reduced_motion else 1.0)
         content = rect.translated(0, tokens.press_distance * physical_press)
         if native:
             color = QColor(current.colors["text" if self.isEnabled() else "secondary"])
+        elif modern:
+            color = QColor(("#14283C" if current.mode == "dark" else "#FFFFFF") if primary else current.colors["text" if active else "secondary"])
         else:
             color = QColor(tokens.text if self.isEnabled() or self._loading else "#344852")
         painter.setFont(self.font())
@@ -307,7 +329,8 @@ class TactileGlassButton(QPushButton):
             x += icon_size + (8 if text else 0)
         if text:
             text_rect = QRectF(x, content.top(), self.fontMetrics().horizontalAdvance(text) + 1, content.height())
-            painter.setPen(QColor(26, 43, 53, 90))
-            painter.drawText(text_rect.translated(.2, .8), Qt.AlignmentFlag.AlignCenter, text)
+            if not modern:
+                painter.setPen(QColor(26, 43, 53, 90))
+                painter.drawText(text_rect.translated(.2, .8), Qt.AlignmentFlag.AlignCenter, text)
             painter.setPen(color)
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, text)

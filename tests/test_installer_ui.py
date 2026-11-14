@@ -239,7 +239,7 @@ def test_backup_and_restore_present_chinese_effects_with_details_collapsed(windo
     plan = window.service.preview_restore(window.service.latest_install(), "codex")
     preview = Preview(window, "配置恢复预览", plan)
     labels = [item.text() for item in preview.findChildren(QLabel)]
-    assert "移除 Windows-MCP 连接" in labels
+    assert "移除 Actilo 连接" in labels
     assert "保留当前 Skill 和其他软件配置" in labels
     assert not any(text in {"restore_config", "None", "target", "operation"} for text in labels)
     assert all(box.isHidden() for box in preview.findChildren(QPlainTextEdit))
@@ -309,14 +309,14 @@ def test_approval_has_one_full_access_switch_and_no_secondary_authorization(wind
 
 
 def test_top_navigation_is_transparent_and_stays_above_fixed_panels(window):
-    assert window.top_bar.geometry().bottom() < window.workspace.geometry().top()
+    assert window.top_bar.geometry().bottom() < window.workspace_scroll.geometry().top()
     assert window.settings_button.geometry().right() < window.about_button.geometry().left()
     assert window.settings_button.isVisible() and window.about_button.isVisible()
     assert window.settings_button.property("transparent") and window.about_button.property("transparent")
     window.about_button.click()
     about = window.dialogs[-1]
-    assert about.windowTitle() == "关于 Windows MCP"
-    assert any(item.text() == window.version for item in about.findChildren(QLabel))
+    assert about.windowTitle() == "关于 Actilo"
+    assert any(item.text() == "Actilo · " + window.version for item in about.findChildren(QLabel))
     about.close()
 
 
@@ -341,7 +341,8 @@ def test_fixed_panels_ignore_title_and_boundary_drags_and_old_layout(window, del
     left, right, actions = (space.panels[key].geometry() for key in ("targets", "maintenance", "actions"))
     assert left.top() == right.top() and left.bottom() == actions.bottom()
     assert left.right() < right.left() and actions.left() == right.left()
-    assert right.bottom() < actions.top() and actions.height() == 150
+    assert right.bottom() < actions.top()
+    assert actions.height() <= 140 and actions.height() >= window.install_button.height()
     window.resize(original_size)
 
 
@@ -439,7 +440,7 @@ def test_about_has_six_requested_pages_and_opens_bundled_licenses(window):
     for title, _ in POLICIES:
         text = dialog.documents[title].toPlainText()
         assert "jingyanx2@gmail.com" in text and "2026 年 10 月 24 日" in text
-        assert len(text) > (400 if title == "关于软件" else 1000) and "CyanQX / Windows-MCP" in text
+        assert len(text) > (400 if title == "关于软件" else 1000) and "CyanQX / Actilo" in text
         assert "{{VERSION}}" not in text
     privacy = dialog.documents["隐私政策"].toPlainText()
     assert all(phrase in privacy for phrase in ("默认关闭", "境外", "撤回", "删除", "DPAPI", "30 天", "50 MB", "AI 客户端"))

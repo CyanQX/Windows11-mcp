@@ -2104,7 +2104,7 @@ wheels = [
 
 [[package]]
 name = "windows-mcp"
-version = "1.8.0"
+version = "1.9.10"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

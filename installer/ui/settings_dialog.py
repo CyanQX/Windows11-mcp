@@ -384,7 +384,7 @@ class Updates(Detail):
         self.body.setSpacing(16)
         card = GlassFrame()
         status = column(card, 20, 10)
-        status.addWidget(label(f"Windows MCP  ·  {owner.version}", size=12, role="secondary"))
+        status.addWidget(label(f"Actilo  ·  {owner.version}", size=12, role="secondary"))
         self.notice = label("正在检查更新…", size=17, bold=True, wrap=True)
         status.addWidget(self.notice)
         status.addWidget(label("安装新版时，已安装的 Skill 与 MCP 会自动同步。", role="secondary", wrap=True))
@@ -420,6 +420,7 @@ class Updates(Detail):
             self.bar.hide()
         self.download_button.setVisible(bool(self.release and self.release["available"]))
         self.download_button.setEnabled(bool(self.release and self.release["available"]) and not self.owner.busy)
+        self.download_button.setText("前往 GitHub 下载" if self.release and self.release.get("kind") == "manual" else "更新并同步")
 
     def checked(self, release):
         if not isValid(self):
@@ -443,6 +444,10 @@ class Updates(Detail):
 
     def download(self):
         if not self.release or not self.release.get("available") or self.owner.busy:
+            return
+        if self.release.get("kind") == "manual":
+            from windows_mcp.product import RELEASES
+            webbrowser.open(RELEASES)
             return
         self.pending_release = copy.deepcopy(self.release)
         release = self.pending_release
@@ -478,8 +483,10 @@ POLICIES = (
 
 class About(Detail):
     def __init__(self, owner):
-        super().__init__(owner, "关于 Windows MCP", (980, 760))
-        self.body.addWidget(label(owner.version, role="secondary"))
+        super().__init__(owner, "关于 Actilo", (980, 760))
+        self.body.addWidget(label("Actilo · " + owner.version, role="secondary"))
+        from installer.release_notes import show_release_notes
+        self.body.addWidget(button("本次重大更新 / 更新日志", lambda: show_release_notes(owner)))
         self.tabs = QTabWidget()
         self.body.addWidget(self.tabs, 1)
         self.documents = {}

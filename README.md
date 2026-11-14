@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Windows-MCP 1.8.0</h1>
+  <h1>Actilo 1.9.10</h1>
   <p>让已连接的 AI 观察、操作并核对真实 Windows 应用</p>
 </div>
 
@@ -12,21 +12,21 @@
 
 ## 工具用途
 
-Windows-MCP 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude Code、Codex 桌面端、DeepSeek Harness、Gemini CLI、Zcode 或 Trae 后，AI 可以读取真实窗口和控件、操作应用和网页，并通过状态或文件结果核对任务。模型与 AI 客户端由你选择，本项目不提供模型账号或云端算力。
+Actilo 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude Code、Codex 桌面端、DeepSeek Harness、Gemini CLI、Zcode 或 Trae 后，AI 可以读取真实窗口和控件、操作应用和网页，并通过状态或文件结果核对任务。模型与 AI 客户端由你选择，本项目不提供模型账号或云端算力。
 
-**本次发布：v1.8.0，文档更新于 2026-11-14。** 管理器改用随安装部署的运行目录，修复更新进程继承临时 Python 目录导致的 DLL 加载错误；已安装的受管 Skill 与 MCP 随程序自动同步，移除独立组件升级入口。提前占用单实例锁、延迟加载服务依赖、后台检查审批、减少空闲轮询和重复校验，提升启动与交互响应。持续全自动授权、自然鼠标及视觉复核能力继续保留。正式安装包、验证记录与校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整变化见 [CHANGELOG](CHANGELOG.md)。
+**本次发布目标：v1.9.10，文档更新于 2026-11-14。** 管理器改用随安装部署的运行目录，修复更新进程继承临时 Python 目录导致的 DLL 加载错误；已安装的受管 Skill 与 MCP 随程序自动同步，移除独立组件升级入口。提前占用单实例锁、延迟加载服务依赖、后台检查审批、减少空闲轮询和重复校验，提升启动与交互响应。持续全自动授权、自然鼠标及视觉复核能力继续保留。正式安装包、验证记录与校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整变化见 [CHANGELOG](CHANGELOG.md)。
 
 | 组成 | 负责什么 |
 |---|---|
-| MCP 服务 | 提供 31 个工具，执行 UI Automation、真实鼠标键盘、受管浏览器、授权范围内文件操作与验证 |
+| MCP 服务 | 提供 32 个工具，执行 UI Automation、真实鼠标键盘、受管浏览器、授权范围内文件操作与验证 |
 | Skill | 告诉客户端如何选择工具、使用观察引用、处理审批和核对结果；Skill 本身不提供桌面执行能力 |
 | 安装与维护管理器 | 检测客户端，接入 Skill + MCP，验证连接、修复、备份恢复、撤销安装与安全卸载 |
 
 适合窗口控件操作、表单填写、应用内文本编辑、重复桌面流程和结果检查。网页聊天或云端模型需要能够连接本机 MCP 的客户端，打开本仓库网页不会自动获得桌面控制能力。
 
-![Windows-MCP 1.5.0 安装与维护管理器历史实拍](assets/manager-v1.5.0.png)
+![Actilo 1.9.10 管理面板隔离验收截图](assets/actilo-v1.9.10.png)
 
-以上为 v1.5.0 在隔离验收环境中的真实界面截图（管理器布局沿用）；客户端检测状态为测试夹具数据。
+以上为 Actilo 1.9.10 的真实 Qt 界面验收截图；客户端检测状态来自隔离测试夹具，展示不代表你的本机安装状态。窄窗口采用上下布局和固定底部操作区，短屏内容可滚动。
 
 本项目基于 [CursorTouch/Windows-MCP](https://github.com/CursorTouch/Windows-MCP) 二次开发，遵循 [MIT 许可证](LICENSE.md)，保留上游及第三方组件的许可声明。
 
@@ -121,7 +121,7 @@ Verify(expected={"kind":"element_state", "target":"目标 ID", "state":{"value":
 
 | Profile | 工具数 | 适合的任务 |
 |---|---|---|
-| `full`（默认） | 31 | 完整桌面与兼容工具，适合现有接入 |
+| `full`（默认） | 32 | 完整桌面与兼容工具，适合现有接入 |
 | `ui-core` | 12 | Observe、Execute、Verify、Watch、Session、RequestApproval、Visual、DisplayInventory、App、Wait、WaitFor、Find |
 | `browser` | 5 | Browser、Observe、Session、RequestApproval、Wait；适合受管网页会话 |
 
@@ -137,7 +137,7 @@ profile 只决定公布哪些工具，不授予额外权限。精简 profile 的
 
 ### 操作授权与升级迁移
 
-**1.8.0：一个“持续全自动 · 完全访问”开关，点击即生效。** 打开“设置 → 操作审批”并点击开关，无需额外保存、二次授权或待审请求。开启后 AI 可在当前 Windows 账户权限内访问本机文件与 HTTP(S) 互联网，并使用 PowerShell、注册表修改、进程管理等高风险操作；不再受项目工作目录和 `allow_r3` 开关限制。覆盖此安装实例所有连接客户端与应用，跨重连、重启持续生效，直到再次点击关闭。Windows 账户权限、UAC、操作员审批窗口保护、输入接管和取消机制仍有效；MCP 文件工具不能直接篡改签名审批存储。
+**1.9.10：一个“持续全自动 · 完全访问”开关，点击即生效。** 打开“设置 → 操作审批”并点击开关，无需额外保存、二次授权或待审请求。开启后 AI 可在当前 Windows 账户权限内访问本机文件与 HTTP(S) 互联网，并使用 PowerShell、注册表修改、进程管理等高风险操作；不再受项目工作目录和 `allow_r3` 开关限制。覆盖此安装实例所有连接客户端与应用，跨重连、重启持续生效，直到再次点击关闭。Windows 账户权限、UAC、操作员审批窗口保护、输入接管和取消机制仍有效；MCP 文件工具不能直接篡改签名审批存储。
 
 关闭时，待审请求显示操作摘要，具体参数可以展开，点击“批准一次”只放行精确的一次操作；高风险请求也可逐次批准。旧版 schema 2/3 授权不会在更新时自动变成完全访问，操作员需在新版点击一次新开关。旧 schema 3 和 CLI `trust --mode automatic` 仍保留原有能力与文件范围限制。`Session.full_access` 和 `trust_scope` 可检查实际授权。
 
@@ -170,21 +170,30 @@ OCR 实际识别尚未在当前验收机通过：该机无包标识、无 Tesser
 
 ## 安装指南
 
+**旧版重大升级**：当前版本低于 **1.7.0** 的用户，请从 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 手动下载 `Actilo_1.9.10_setup.exe`。已分发的旧二进制不会因仓库更新而自动获得新弹窗；旧更新器不支持消息或跳转时，以这里及 Release 公告为准。1.7.0 及以上使用统一校验、备份、安装、组件同步与验证链路。
+
+安装器只处理同一项目 AppId、有效收据及确定目标的旧快捷方式和启动项，逐文件备份并校验；未知或已被个人修改的接入会中止迁移。MCP、Skill 和启动器随新版统一同步，失败不标记成功。恢复资料保存在管理器数据目录 `setup/transactions`，与原有配置/接入事务备份分开保留。
+
+安装完成默认勾选“安装完成后启动 Actilo”和“创建桌面快捷方式”。首次成功显示管理面板后自动打开“本次重大更新”；按 Windows 用户和版本记录可见结果，之后不会再自动出现，“关于”仍可手动查看。
+
+显示品牌和快捷方式统一为 **Actilo**。为兼容既有客户端命令、收据和便携更新协议，暂保留内部 `windows-mcp` MCP 名称／Skill 目录、`Windows-MCP.exe`、`WindowsMCP.bundle.json`、`.windows-mcp` 与旧 AppId；这些是兼容标识，不能据此把其他同名安装视为可删除对象。新增 `actilo` 控制台入口，原 `windows-mcp` 命令保留。仓库 Release 另提供与正式安装包字节完全一致的旧文件名别名，供已分发的 1.7 客户端识别；正式下载仍选择 `Actilo_1.9.10_setup.exe`。兼容便携桥读取旧包内版本，低于 1.7.0 或版本不明时只给出手动安装引导，不替换原程序。
+
+
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.8.0/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.8.0；请在发布页核对所下载资产的版本。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.10/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.9.10；请在发布页核对所下载资产的版本。
 
 | 格式 | 文件与使用方法 | 数据位置 |
 |---|---|---|
-| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.8.0/Windows-MCP-Setup-v1.8.0-x64.exe) | `Windows-MCP-Setup-v1.8.0-x64.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.8.0/Windows-MCP-PortableBundle-v1.8.0-x64.zip) | `Windows-MCP-PortableBundle-v1.8.0-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
+| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.10/Actilo_1.9.10_setup.exe) | `Actilo_1.9.10_setup.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.10/Windows-MCP-PortableBundle-v1.9.10-x64.zip) | `Windows-MCP-PortableBundle-v1.9.10-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
 
 **安装与接入同步：** 安装新版时会自动同步此实例已经管理的 Skill、MCP 配置与共享服务，并验证真实 stdio 连接；直接打开新版管理器也会检查并补齐版本同步。首次接入新的编程端仍在主界面选择安装。自行修改过的 Skill、外部 MCP 条目或无法确认的引用会保留，并提示使用“智能修复”核对；失败的接入更新按事务快照回滚。正在运行的旧 MCP 连接请重启对应客户端以加载新版。
 
 **运行文件：** 请保留程序旁的 `WindowsMCP.bundle.json` 和 `_runtime-…` 目录，不要只复制小 EXE。安装版由安装包部署完整运行目录；正常启动无需重复解压。`PortableBundle` 是推荐便携包；旧名称 `Portable` 仅供旧版更新器兼容迁移，使用 Windows .NET Framework 的透明启动器，首次运行离线展开并核验完整目录，以后直接启动；兼容包不使用 Python 单文件自解压壳。历史版本的运行目录暂时保留，供仍在运行的进程和回滚使用。
 
 
-安装版默认路径为 `%LOCALAPPDATA%\Programs\Windows-MCP`，按用户安装，无需管理员权限；系统卸载入口位于 Windows“设置 → 应用”。**卸载管理器会保留已接入的 Skill/MCP 和个人数据，对应接入须在管理器中单独卸载。**
+安装版优先使用可写且空间充足的 `D:\Actilo`，否则回退至 `%LOCALAPPDATA%\Programs\Actilo`；已有受支持安装优先沿用原路径，始终可自定义合法中文、空格及 Unicode 路径，按用户安装，无需管理员权限；系统卸载入口位于 Windows“设置 → 应用”。**卸载管理器会保留已接入的 Skill/MCP 和个人数据，对应接入须在管理器中单独卸载。**
 
 便携版请保留 WindowsMCP.portable.json 和整个目录，不在 ZIP 内运行。接入后保持目录位置，移动或删除前先卸载接入；加密审批数据仅供原 Windows 用户使用。
 
@@ -192,7 +201,7 @@ OCR 实际识别尚未在当前验收机通过：该机无包标识、无 Tesser
 
 1. 打开管理器，在左侧选择检测到、尚未接入的客户端，可多选。已安装项带圆点并禁用重复安装。
 2. 点击“安装 Skill + MCP”，核对真实路径与操作预览，再执行安装。
-3. 等待版本、31 个工具、完整模式和 Session READY 验证通过。重启目标客户端或新建会话。
+3. 等待版本、32 个工具、完整模式和 Session READY 验证通过。重启目标客户端或新建会话。
 4. 在目标客户端确认工具已出现，先读取一个明确窗口，再执行具有授权的操作。
 5. 若需要指定客户端程序目录，进入“设置 → 高级设置”，添加真实文件夹并点击“检测”，保存后应用。
 
@@ -270,7 +279,7 @@ allowed_network_origins = ['https://github.com']
 | 现象 | 检查和处理 |
 |---|---|
 | 安装后客户端没有工具 | 重启客户端/新会话；管理器验证接入版本与 READY；确认客户端实际读取的用户配置 |
-| 更新后 Python DLL 无法加载 | 下载 1.8.0 或更新版安装包覆盖安装，保留完整运行目录；新版更新、审批与原生辅助进程均隔离旧打包器环境 |
+| 更新后 Python DLL 无法加载 | 下载 1.9.10 或更新版安装包覆盖安装，保留完整运行目录；新版更新、审批与原生辅助进程均隔离旧打包器环境 |
 | 已安装接入显示版本不同 | 安装新版或重新打开新版管理器会自动同步；如提示冲突，查看安装日志并用智能修复核对个人改动 |
 | 已勾选仍反复弹审批 | 更新到 1.7.0 后，在设置中点击“持续全自动 · 完全访问”，确认 Session 的 automatic/installation 状态；旧 EXE 和旧范围授权仍有会话/时限约束 |
 | 返回 TARGET_STALE / FOCUS_MISMATCH | 重新观察准确窗口；确认前台、窗口位置、进程及控件仍对应目标，避免重放旧坐标 |
@@ -286,7 +295,14 @@ Windows 11 是当前本地验收平台。Win32 与 WPF 专用夹具、浏览器�
 
 ## 工具一览
 
-共 31 个工具：11 个只读、20 个会改变系统状态。只读标记描述工具的效果，具体调用仍受服务权限策略约束。
+**AI 权限上限**：持续全自动仅减少本产品审批，不能取得 Administrator、SYSTEM、TrustedInstaller 或 UIAccess。运行时检查真实 Windows token、提升状态和完整性级别；若客户端或服务被以管理员身份启动，AI 执行会被拒绝，请正常重新启动。终端先暂停创建，加入禁止脱离、退出即清理的 Windows Job，验证子进程为非提升用户后再运行。已提升窗口不可操作，维护安装通道不提供 AI 提权 API。
+
+`Terminal` 支持 `execute/start/write/read/cancel/close`；输出每个流最多 256 KiB，超时和取消回收所属 Job 中的进程。`powershell` 始终可选，`pwsh` 需要已安装。`cmd` 内置输出采用 UTF-16LE；原生第三方程序可能使用不同编码，应核对各流的 `output_encoding`，必要时指定 `encoding="oem"` / `"utf-8"` 等；`include_raw=true` 返回受同一上限约束的原始字节 Base64，避免猜测混合编码。`wt.exe` 是 GUI 宿主，使用 App 正常启动，再用 Observe/Execute 交互；宿主不是输出捕获或权限沙箱。
+
+真实 token 和 Job 是权限/生命周期措施，**不等于完整 OS 安全沙箱**。显式提权请求另行拒绝，不能据此声称可以安全执行任意恶意本机代码或防御所有外部提权漏洞；对不可信程序还需要独立账户、AppContainer/WDAC 或虚拟机等额外隔离。工具不会自动点击 UAC 或操作审批控件。
+
+
+共 32 个工具：11 个只读、21 个会改变系统状态。只读标记描述工具的效果，具体调用仍受服务权限策略约束。
 
 | 工具 | 作用 | 类型 |
 |---|---|---|
@@ -306,6 +322,7 @@ Windows 11 是当前本地验收平台。Win32 与 WPF 专用夹具、浏览器�
 | `MultiEdit` | 一次填写多个输入框 | 写入 |
 | `Clipboard` | 读取或设置剪贴板文本 | 写入 |
 | `PowerShell` | 执行 PowerShell 命令 | 写入 |
+| `Terminal` | 普通权限 PowerShell / pwsh / CMD 执行及客户端独立交互式会话；有界 stdout/stderr、退出码、取消和超时 |
 | `FileSystem` | 读、写、复制、移动、删除、列目录、搜索、查看文件信息 | 写入 |
 | `Registry` | 读、写、删、列注册表 | 写入 |
 | `Process` | 列出进程或结束进程（系统关键进程和服务器自身受保护） | 写入 |
@@ -321,3 +338,12 @@ Windows 11 是当前本地验收平台。Win32 与 WPF 专用夹具、浏览器�
 | `Session` | 会话状态、取消和显式恢复 | 写入 |
 | `RequestApproval` | 生成待审请求；不能自行批准 | 写入 |
 | `Visual` | HWND 捕获与回退、ROI/缩放、图片变化提示、可选 OCR、窗口身份与坐标校验 | 只读 |
+
+
+## 验收与可复核数据
+
+`pytest` 覆盖权限令牌、签名迁移事务、旧版本分流、全自动开关、单实例、首次更新弹窗和个人文件冲突保护。Windows 构建工作流保存 `setup-validation.json`、`installer-validation.json`、`runtime-validation.json`、`legacy-installer-validation.json`、`startup-validation.json` 和原生界面截图。真实旧安装器矩阵只允许在可丢弃的 GitHub runner 上执行，禁止直接在开发电脑覆盖同一 AppId。
+
+本地启动对比使用 `scripts/benchmark_manager.py <候选 EXE> --baseline <旧 EXE> --output <报告.json>`，每版三次，记录可见 HWND、两秒空闲 CPU/RSS 和连续八次启动；不会改真实用户配置，也不清空 Windows 缓存。重启后的测试可在重启后再次执行该脚本；当前会话不通过重启电脑或改变系统内存限制制造测量结果。实际结果以 Release 所附报告为准。
+
+旧版本自动安装若被识别为低于 1.7.0 会中止并提供 GitHub 引导。经明确授权的部署／CI 可直接运行手动下载的新安装包并传入 `/ACTILOMANUALMIGRATION=1` 进行无界面迁移；这不是旧更新器的新权限，也不提供系统提升。
