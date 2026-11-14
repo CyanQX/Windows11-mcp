@@ -37,7 +37,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
 [Files]
+#if FileExists(ExtractFileDir(PayloadPath) + "\WindowsMCP.bundle.json")
+Source: "{#ExtractFileDir(PayloadPath)}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#else
 Source: "{#PayloadPath}"; DestDir: "{app}"; DestName: "Windows-MCP.exe"; Flags: ignoreversion
+#endif
 Source: "{#RepositoryRoot}\LICENSE.md"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "{#RepositoryRoot}\installer\resources\third-party-licenses.txt"; DestDir: "{app}"; DestName: "THIRD-PARTY-LICENSES.txt"; Flags: ignoreversion
 
@@ -51,6 +55,9 @@ Filename: "{app}\Windows-MCP.exe"; Description: "{cm:LaunchProgram,Windows-MCP}"
 Filename: "{app}\Windows-MCP.exe"; Parameters: "--finish-installer-update"; Flags: nowait; Check: ShouldLaunchUpdate
 
 [Code]
+function SetEnvironmentVariable(lpName, lpValue: String): Boolean;
+  external 'SetEnvironmentVariableW@kernel32.dll stdcall';
+
 var
   ManagerUpdate: Boolean;
   PreviousDirectory: String;
@@ -69,6 +76,9 @@ function InitializeSetup: Boolean;
 var
   UninstallKey: String;
 begin
+  { Also repairs launches from pre-1.8 managers whose environment refers to an
+    extraction directory that disappears when the old manager exits. }
+  SetEnvironmentVariable('PYINSTALLER_RESET_ENVIRONMENT', '1');
   ManagerUpdate := ExpandConstant('{param:WMCPUPDATE|0}') = '1';
   Result := True;
   UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B52D94AA-CB15-4BC1-BE81-8AD6A19A0C99}_is1';
@@ -91,6 +101,20 @@ begin
     WizardForm.Caption := 'Windows-MCP 更新';
     if PreviousDirectory <> '' then
       WizardForm.DirEdit.Text := RemoveBackslashUnlessRoot(PreviousDirectory);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Code: Integer;
+begin
+  if (CurStep = ssPostInstall) and (ExpandConstant('{param:WMCPNOSYNC|0}') <> '1') then
+  begin
+    WizardForm.StatusLabel.Caption := '正在同步已安装的 Skill 与 MCP…';
+    if (not Exec(ExpandConstant('{app}\Windows-MCP.exe'), '--sync-installed',
+        ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+      RaiseException('程序已安装，但已有接入同步未完成。请打开管理器查看状态和智能修复；原配置与回滚副本已保留。');
+    Log('WMCP_INSTALLED_INTEGRATIONS_SYNC=PASS');
   end;
 end;
 

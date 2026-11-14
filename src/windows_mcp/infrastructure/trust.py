@@ -5,7 +5,8 @@ record is HMAC-signed with the approval authority key and stored beside the
 approvals, outside the tool-accessible workspace, so no MCP tool can create,
 extend or tamper with it. Revoking the grant restores per-call approvals.
 
-Schema 3 explicitly enables installation-wide automatic execution until revoked;
+Schema 4 explicitly permits full access under the Windows account until revoked.
+Schema 3 enables installation-wide automatic execution with configured limits;
 schema 2 retains its exact session/application/tool/action scope and lifetime.
 Unsigned or schema 1 global records do not enable either mode. Trust never enables
 disabled capabilities: R3 tools still require local ``policy.allow_r3`` configuration.
@@ -46,10 +47,12 @@ class TrustStore:
         payload = read_signed_record(self.directory, self.path)
         if not isinstance(payload, dict):
             return None
-        if payload.get("schema") == 3:
+        if payload.get("schema") in {3, 4}:
             if (payload.get("mode") != "automatic" or payload.get("scope") != "installation"
                     or payload.get("expires_at") is not None or payload.get("max_risk") != 3
                     or payload.get("network") is not True or payload.get("tools") != ["*"]):
+                return None
+            if payload["schema"] == 4 and payload.get("access") != "full":
                 return None
             return payload
         if payload.get("schema") != 2:
@@ -73,21 +76,27 @@ class TrustStore:
 
     def automatic(self) -> bool:
         payload = self.status()
-        return bool(payload and payload.get("schema") == 3)
+        return bool(payload and payload.get("schema") in {3, 4})
+
+    def full_access(self) -> bool:
+        payload = self.status()
+        return bool(payload and payload.get("schema") == 4 and payload.get("access") == "full")
 
     def allows_network(self) -> bool:
         return self.automatic()
 
-    def grant_automatic(self, *, operator: str = "local-ui") -> dict:
-        """Local operator preference; configured capability/path limits still apply.
+    def grant_automatic(self, *, operator: str = "local-ui", full_access: bool = False) -> dict:
+        """Local operator preference; full access requires an explicit opt-in.
 
         Distinct from legacy scoped grants: no session id, application lifetime or
-        eight-hour expiry is used. Only explicit local UI/CLI activation mints it.
+        eight-hour expiry is used. Legacy schema 3 never silently becomes full.
         """
         payload = {"schema": 3, "mode": "automatic", "scope": "installation",
             "granted_at": time.time(), "expires_at": None, "operator": operator,
             "session_id": None, "applications": ["*"], "tools": ["*"],
             "actions": [], "max_risk": 3, "network": True}
+        if full_access:
+            payload.update(schema=4, access="full")
         self._save(payload)
         return payload
 
@@ -108,7 +117,7 @@ class TrustStore:
             return False
         if session_id is None:
             return True  # Local UI status only; authorization always supplies all scopes.
-        if payload.get("schema") == 3:
+        if payload.get("schema") in {3, 4}:
             return bool(session_id) and tool in self.automatic_tools()
         return (payload.get("schema") == 2 and payload.get("session_id") == session_id
                 and application is not None and application.casefold() in payload.get("applications", [])

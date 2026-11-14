@@ -1,4 +1,4 @@
-"""The operator trust grant: minted locally, signed, revocable and never wider than R2."""
+"""Explicit full access, legacy scoped trust, signature checks and immediate revocation."""
 
 import json
 
@@ -65,3 +65,49 @@ def test_trust_file_cannot_be_written_through_the_tool_workspace(tmp_path):
     gate.trust.grant("forever", session_id="owner", applications=["notepad.exe"])
     with pytest.raises(PolicyBlocked):
         gate.check_path(gate.trust.path)
+
+
+def test_full_access_opens_files_network_and_r3_until_revoked(tmp_path, monkeypatch):
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.operator_review_active", lambda: False)
+    gate = PolicyGate(roots=[tmp_path / "workspace"], approvals=ApprovalStore(tmp_path / "authority"))
+    outside = tmp_path / "outside/report.txt"
+    with pytest.raises(PolicyBlocked):
+        gate.check_path(outside)
+    gate.trust.grant_automatic(full_access=True)
+    assert gate.trust.status()["schema"] == 4
+    assert gate.check_path(outside) == outside.resolve()
+    assert gate.authorize("fresh-client", "PowerShell", {"command": "Get-Process"}) == 3
+    gate.check_network("fresh-client", "https://example.com")
+    restarted = PolicyGate(roots=[tmp_path / "workspace"], approvals=gate.approvals)
+    assert restarted.allow_r3 and restarted.trust.full_access()
+    with pytest.raises(PolicyBlocked):
+        restarted.check_path(gate.trust.path)
+    restarted.trust.revoke()
+    assert not gate.allow_r3
+    with pytest.raises(PolicyBlocked):
+        gate.check_path(outside)
+    with pytest.raises(PolicyBlocked):
+        gate.check_network("fresh-client", "https://example.com")
+
+
+def test_legacy_automatic_does_not_silently_expand_or_accept_tampered_full_access(tmp_path):
+    trust = TrustStore(tmp_path / "authority")
+    trust.grant_automatic()
+    assert trust.automatic() and not trust.full_access()
+    record = json.loads(trust.path.read_text(encoding="utf-8"))
+    record["payload"].update(schema=4, access="full")
+    trust.path.write_text(json.dumps(record), encoding="utf-8")
+    assert not TrustStore(trust.directory).full_access()
+
+
+def test_disabled_r3_can_be_approved_exactly_once_without_enabling_it_globally(tmp_path, monkeypatch):
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.operator_review_active", lambda: False)
+    gate = PolicyGate(approvals=ApprovalStore(tmp_path / "authority"))
+    arguments = {"command": "Get-Process"}
+    request = gate.approvals.request("session", "PowerShell", arguments, 3, "exact local decision")
+    gate.approvals.approve(request["request_id"])
+    decision = gate.authorize("session", "PowerShell", arguments, request["request_id"])
+    assert decision == 3 and decision.capability_one_use and not decision.trusted
+    assert not gate.allow_r3 and not gate.trust.automatic()
+    with pytest.raises(PolicyBlocked):
+        gate.authorize("session", "PowerShell", arguments, request["request_id"])

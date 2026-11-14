@@ -73,6 +73,7 @@ def test_local_approval_consumed_once_across_instances(tmp_path):
 def test_notification_never_auto_approves(tmp_path, monkeypatch):
     import sys
     import subprocess
+    monkeypatch.setattr("windows_mcp.infrastructure.config.CONFIG_DIR", tmp_path)
     store = ApprovalStore(tmp_path / "approvals")
     row = store.request("s", "Files", {"operation": "write"}, 2, "fixture")
     calls = []

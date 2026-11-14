@@ -20,6 +20,7 @@ class Theme:
     def __init__(self, settings, base):
         self.settings, self.base = settings, base
         self.mode, self.colors = "light", PALETTES["light"]
+        self._icons = {}
 
     def apply(self):
         mode = self.settings.value["theme"]
@@ -91,7 +92,10 @@ QPushButton[detailToggle='true'] {{ min-height: 44px; padding-top: 0px; padding-
 
     def icon(self, name):
         variant = "dark" if self.mode == "dark" else "light"
-        return QIcon(str(self.base / "installer/resources/icons" / f"{name}-{variant}.png"))
+        key = (name, variant)
+        if key not in self._icons:
+            self._icons[key] = QIcon(str(self.base / "installer/resources/icons" / f"{name}-{variant}.png"))
+        return self._icons[key]
 
     @property
     def appearance(self):

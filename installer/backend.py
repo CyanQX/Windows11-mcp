@@ -12,10 +12,6 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-import json5
-import tomlkit
-from ruamel.yaml import YAML
-
 SERVER = "windows-mcp"
 ROW = "windows-mcp-setup"
 
@@ -89,19 +85,22 @@ def read_file(path: Path) -> bytes | None:
 class Configuration:
     def __init__(self, profile: Profile, content: bytes | None):
         self.profile = profile
-        self.yaml = YAML(typ="rt")
-        self.yaml.preserve_quotes = True
         text = (content or b"").decode("utf-8-sig")
         self.original_text = text
         self.had_bom = bool(content and content.startswith(b"\xef\xbb\xbf"))
         try:
             if profile.kind == "toml":
+                import tomlkit
                 self.document = tomlkit.parse(text)
             elif profile.kind == "yaml":
+                from ruamel.yaml import YAML
+                self.yaml = YAML(typ="rt")
+                self.yaml.preserve_quotes = True
                 self.document = self.yaml.load(text) if text.strip() else []
                 if not isinstance(self.document, list):
                     raise ValueError("Cordis patch must be a list")
             else:
+                import json5
                 self.document = json5.loads(text, allow_duplicate_keys=False) if text.strip() else {}
                 if not isinstance(self.document, dict):
                     raise ValueError("Client configuration must be an object")
@@ -161,12 +160,14 @@ class Configuration:
 
     def encode(self) -> bytes:
         if self.profile.kind == "toml":
+            import tomlkit
             return tomlkit.dumps(self.document).encode("utf-8")
         if self.profile.kind == "yaml":
             stream = io.StringIO()
             self.yaml.dump(self.document, stream)
             return stream.getvalue().encode("utf-8")
         from installer.jsonpatch import patch_member
+        import json5
 
         text = patch_member(self.original_text, [*self.section_path, SERVER], self.get())
         if json5.loads(text, allow_duplicate_keys=False) != self.document:
@@ -229,16 +230,28 @@ class Installer:
         return {"skill_installed": skill_file.is_file(), "mcp_configured": configured, "skill_path": str(skill_file.parent), "config_path": str(profile.config)}
 
     def _runtime(self) -> None:
+        from installer.bundle import BUNDLE_FILE, load, verify, stage_support
+        from installer.storage import file_hash
+
         if not self.source_executable.is_file():
             raise ValueError("服务程序不存在，请使用构建好的 Windows EXE 安装器。")
         self.data.mkdir(parents=True, exist_ok=True)
-        if self.executable.exists() and digest(self.executable.read_bytes()) == digest(self.source_executable.read_bytes()):
+        bundle = load(self.source_executable.parent)
+        if bundle:
+            verify(self.source_executable.parent, bundle)
+            stage_support(self.source_executable.parent, self.data, bundle)
+        manifest_bytes = (self.source_executable.parent / BUNDLE_FILE).read_bytes() if bundle else None
+        def publish_manifest():
+            if read_file(self.data / BUNDLE_FILE) != manifest_bytes:
+                self._write(self.data / BUNDLE_FILE, manifest_bytes)
+        if file_hash(self.executable) == file_hash(self.source_executable):
+            publish_manifest()
             return
         temporary = self.data / (".runtime-" + uuid.uuid4().hex + ".exe")
         try:
             shutil.copyfile(self.source_executable, temporary)
-            expected = digest(self.source_executable.read_bytes())
-            if digest(temporary.read_bytes()) != expected:
+            expected = file_hash(self.source_executable)
+            if file_hash(temporary) != expected:
                 raise ValueError("运行时复制校验失败")
             if self.on_write:
                 self.on_write(self.executable, expected)
@@ -258,6 +271,7 @@ class Installer:
                     os.rename(previous, self.executable)
                     raise
             self._event("runtime", "MCP 运行时已复制并校验")
+            publish_manifest()
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -318,7 +332,13 @@ class Installer:
                 if read_file(path) != after:
                     raise ValueError("落盘校验失败")
             if self.version:
-                receipt.update(schema=2, version=self.version, runtime_sha256=digest(self.executable.read_bytes()))
+                from installer.bundle import BUNDLE_FILE
+                from installer.storage import file_hash
+                receipt.update(schema=2, version=self.version, runtime_sha256=file_hash(self.executable))
+                if (self.data / BUNDLE_FILE).is_file():
+                    receipt["bundle_sha256"] = file_hash(self.data / BUNDLE_FILE)
+                else:
+                    receipt.pop("bundle_sha256", None)
             self._write(self.receipt_path(profile), json.dumps(receipt, ensure_ascii=False, indent=2).encode("utf-8"))
         except Exception:
             for path, before, after in reversed(applied):

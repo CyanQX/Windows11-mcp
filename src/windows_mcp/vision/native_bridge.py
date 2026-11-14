@@ -18,6 +18,7 @@ def request(payload: dict, *, timeout: float = 12) -> dict:
     import win32api
     import win32job
     import pywintypes
+    from windows_mcp.infrastructure.process_env import independent_environment
 
     job, process = None, None
     try:
@@ -26,7 +27,7 @@ def request(payload: dict, *, timeout: float = 12) -> dict:
         limits["BasicLimitInformation"]["LimitFlags"] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, limits)
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW)
+                                   text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW, env=independent_environment())
         win32job.AssignProcessToJobObject(job, int(process._handle))
         stdout, _ = process.communicate(json.dumps(payload), timeout=timeout)
     except pywintypes.error as exc:

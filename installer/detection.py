@@ -268,6 +268,11 @@ class TargetDetector:
                     status = Status.BROKEN
                     problems.append("RUNTIME_HASH_MISMATCH")
                 else:
+                    if receipt.get("bundle_sha256"):
+                        from installer.bundle import BUNDLE_FILE, verify
+                        if file_hash(self.backend.data / BUNDLE_FILE) != receipt["bundle_sha256"]:
+                            raise ManagerError("RUNTIME_BUNDLE_MISMATCH", "服务运行目录清单校验不一致")
+                        verify(self.backend.data)
                     status = Status.INSTALLED_MANAGED
                     if not version:
                         problems.append("LEGACY_RECEIPT")

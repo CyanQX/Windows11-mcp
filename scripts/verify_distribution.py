@@ -71,7 +71,7 @@ def verify(dist: Path, tag: str | None = None) -> dict:
             assert path in members, f"Source distribution is missing: {path}"
             assert archive.extractfile(members[path]).read() == content, f"Source distribution differs: {path}"
         required = ["README.md", "CHANGELOG.md", "LICENSE.md", "CLAUDE.md", "pyproject.toml", "manifest.json", "uv.lock", "MANIFEST.in"]
-        required.extend(path.relative_to(ROOT).as_posix() for folder in ("assets", "tests", "scripts", ".github", ".claude", "installer", "skills") for path in (ROOT / folder).rglob("*") if path.is_file() and path.suffix in {".py", ".png", ".svg", ".txt", ".json", ".yml", ".md", ".iss", ".isl", ".html"} and "__pycache__" not in path.parts)
+        required.extend(path.relative_to(ROOT).as_posix() for folder in ("assets", "tests", "scripts", ".github", ".claude", "installer", "skills") for path in (ROOT / folder).rglob("*") if path.is_file() and path.suffix in {".py", ".png", ".svg", ".txt", ".json", ".yml", ".md", ".iss", ".isl", ".html", ".cs", ".manifest"} and "__pycache__" not in path.parts)
         for name in required:
             assert name in members, f"Source distribution is missing release file: {name}"
             assert archive.extractfile(members[name]).read() == (ROOT / name).read_bytes(), f"Source distribution differs: {name}"
@@ -84,14 +84,20 @@ def verify(dist: Path, tag: str | None = None) -> dict:
         # and fixed ZIP structure here using only the standard library.
         setup = dist / f"Windows-MCP-Setup-v{version}-x64.exe"
         assert setup.is_file(), "Real installation wizard is missing"
-        portable_path = dist / f"Windows-MCP-Portable-v{version}-x64.zip"
+        legacy_path = dist / f"Windows-MCP-Portable-v{version}-x64.zip"
+        portable_path = dist / f"Windows-MCP-PortableBundle-v{version}-x64.zip"
+        import sys
+        sys.path.insert(0, str(ROOT))
+        from installer.distribution import verify_portable
+        portable = verify_portable(portable_path, version)
         prefix = f"Windows-MCP-Portable-v{version}-x64"
         expected = {f"{prefix}/{name}" for name in ("Windows-MCP.exe", "WindowsMCP.portable.json", "README.txt", "LICENSE.txt", "THIRD-PARTY-LICENSES.txt", "data/")}
-        with zipfile.ZipFile(portable_path) as archive:
+        with zipfile.ZipFile(legacy_path) as archive:
             assert len(archive.namelist()) == len(expected) and set(archive.namelist()) == expected
             assert archive.testzip() is None
             assert json.loads(archive.read(f"{prefix}/WindowsMCP.portable.json")) == {"schema": 1, "mode": "portable"}
-            payload_hash = hashlib.sha256(archive.read(f"{prefix}/Windows-MCP.exe")).hexdigest()
+            assert archive.read(f"{prefix}/Windows-MCP.exe")[:2] == b"MZ"
+        payload_hash = portable["payload_sha256"]
         frozen = json.loads((dist / "setup-source-verification.json").read_text(encoding="utf-8"))
         build = json.loads((dist / "installer-build.json").read_text(encoding="utf-8"))
         assert payload_hash == frozen["sha256"] == build["payload_sha256"], "Installer and portable payload differ"

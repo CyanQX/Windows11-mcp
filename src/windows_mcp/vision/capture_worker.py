@@ -27,6 +27,7 @@ class CaptureWorker:
         self.last_elapsed_ms = None
 
     def _start(self):
+        from windows_mcp.infrastructure.process_env import independent_environment
         command = ([sys.executable, "native-helper", "--stream"] if getattr(sys, "frozen", False)
                    else [sys.executable, "-m", "windows_mcp.vision.native_worker", "--stream"])
         try:
@@ -35,7 +36,7 @@ class CaptureWorker:
             limits["BasicLimitInformation"]["LimitFlags"] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             win32job.SetInformationJobObject(self.job, win32job.JobObjectExtendedLimitInformation, limits)
             self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW)
+                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW, env=independent_environment())
             win32job.AssignProcessToJobObject(self.job, int(self.process._handle))
             self.responses = queue.Queue(maxsize=1)
             self.reader = threading.Thread(target=self._read, args=(self.process.stdout, self.responses),

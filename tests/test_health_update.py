@@ -166,7 +166,7 @@ def test_failed_global_upgrade_restores_every_target(tmp_path, monkeypatch):
     service = make_service(tmp_path)
     service.install_targets(["codex", "claude"])
     paths = set(service.paths("codex") + service.paths("claude"))
-    before = {path: path.read_bytes() for path in paths}
+    before = {path: path.read_bytes() if path.exists() else None for path in paths}
     service.backend.source_executable.write_bytes(b"MZ new release")
     original = service.backend.install
 
@@ -178,7 +178,7 @@ def test_failed_global_upgrade_restores_every_target(tmp_path, monkeypatch):
     plan = service.preview("upgrade", ["codex", "claude"])
     with pytest.raises(ManagerError, match="UPGRADE_ROLLED_BACK"):
         service.apply_plan("upgrade", ["codex", "claude"], plan["digest"])
-    assert all(path.read_bytes() == content for path, content in before.items())
+    assert all((path.read_bytes() if path.exists() else None) == content for path, content in before.items())
 
 
 def test_global_upgrade_snapshot_can_restore_each_client_entry(tmp_path):

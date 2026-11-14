@@ -136,6 +136,7 @@ class DispatchAuthorization:
     risk: int
     trusted: bool
     generation: int | None = None
+    capability_one_use: bool = False
 
     def check(self) -> None:
         from windows_mcp.engine.sessions import get_runtime
@@ -152,7 +153,7 @@ class DispatchAuthorization:
 
         if self.tool in DESKTOP_TOOLS and operator_review_active():
             raise PolicyBlocked("Local operator review is open; input is paused")
-        if self.risk == 3 and not self.policy.allow_r3:
+        if self.risk == 3 and not self.policy.allow_r3 and not self.capability_one_use:
             raise PolicyBlocked("R3 was disabled after authorization")
         if self.trusted and not self.policy.trusted(self.session_id, self.tool, self.arguments, self.scope):
             raise PolicyBlocked("Scoped automatic authorization expired or was revoked")

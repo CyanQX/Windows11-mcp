@@ -53,6 +53,7 @@ def window(native_window, tmp_path, monkeypatch):
     service = make_service(tmp_path)
     service.install_targets(["codex"])
     native_window.service = service
+    native_window.undo_transaction = service.latest_install()
     from windows_mcp.infrastructure.approvals import ApprovalStore
     native_window.approval_store = ApprovalStore(tmp_path / "manager-approvals")
     native_window.known_requests = set()
@@ -298,28 +299,13 @@ def test_settings_order_and_no_external_adoption_menu(window):
     popup.close()
 
 
-def test_trust_center_reflects_grant_and_revoke(window, tmp_path):
-    from installer.ui.operator_dialog import TrustCenter
-    from windows_mcp.infrastructure.approvals import ApprovalStore
-
-    window.approval_store = ApprovalStore(tmp_path / "approvals")
-    try:
-        dialog = TrustCenter(window)
-        QTest.qWait(30)
-        assert "每次操作都需要批准" in dialog.state.text()
-        dialog.confirm.setChecked(False)
-        dialog.grant()
-        assert "勾选" in dialog.notice.text()
-
-        dialog.store.grant("forever", session_id="fixture-session", applications=["notepad.exe"])
-        dialog.refresh()
-        assert "范围授权" in dialog.state.text() and dialog.revoke_button.isEnabled()
-        dialog.store.revoke()
-        dialog.refresh()
-        assert "每次操作都需要批准" in dialog.state.text()
-        dialog.close()
-    finally:
-        window.approval_store = None
+def test_approval_has_one_full_access_switch_and_no_secondary_authorization(window):
+    from installer.ui.operator_dialog import OperatorCenter
+    dialog = OperatorCenter(window, window.approval_store)
+    assert not any("操作授权" in button.text() or "保存默认审批" in button.text() for button in dialog.findChildren(QPushButton))
+    assert dialog.auto_approve.isEnabled()
+    assert not dialog.approve_button.isEnabled()
+    dialog.close()
 
 
 def test_top_navigation_is_transparent_and_stays_above_fixed_panels(window):
@@ -494,7 +480,7 @@ def test_settings_approval_entry_opens_defaults_before_any_request(window, monke
     popup.controls["操作审批"].click()
     dialog = window.operator_window
     assert dialog is not None and dialog.isVisible()
-    assert dialog.defaults_row.isVisible() and dialog.auto_approve.isEnabled()
+    assert dialog.auto_approve.isVisible() and dialog.auto_approve.isEnabled()
     assert not dialog.auto_approve.isChecked()
     assert window.approval_store.pending() == [] and not dialog.trust.allows()
     dialog.close()
@@ -518,56 +504,37 @@ def test_plain_settings_keep_left_alignment_and_update_dot(window):
         window.apply_appearance()
 
 
-def test_default_automatic_persists_without_a_request_and_can_be_disabled(window, monkeypatch):
+def test_full_access_switch_immediately_persists_and_revokes_without_another_click(window, monkeypatch):
     from installer.ui.operator_dialog import OperatorCenter
-    from PySide6.QtWidgets import QMessageBox
     from windows_mcp.infrastructure.policy import PolicyBlocked, PolicyGate
-
     monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
     monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.operator_review_active", lambda: False)
-    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
     store = window.approval_store
     dialog = OperatorCenter(window, store)
-    assert dialog.auto_approve.isEnabled() and dialog.save_default_button.isEnabled()
-    dialog.auto_approve.setChecked(True)
-    assert not dialog.trust.allows()
-    scope = {"application": "notepad.exe"}
-    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click", authorization_scope=scope)
-    dialog.save_default_button.click()
+    assert not dialog.trust.full_access()
+    QTest.mouseClick(dialog.auto_approve, Qt.MouseButton.LeftButton)
     gate = PolicyGate(approvals=store)
-    assert gate.trust.status()["operator"] == "approval-settings"
-    assert store.pending() == [] and not dialog.isVisible()
-    assert not store.consume("fixture-session", "Click", {"loc": [100, 200]}, request["request_id"])
-    assert gate.authorize("fixture-session", "Click", {"loc": [100, 200]}, scope=scope) == 2
-    assert gate.authorize("fixture-session", "Type", {"text": "next"}, scope=scope) == 2
-    assert gate.authorize("future-session", "Click", {"loc": [100, 200]}, scope={"application": "other.exe"}) == 2
+    assert gate.trust.full_access() and dialog.isVisible()
+    assert gate.authorize("future-session", "PowerShell", {"command": "Get-Process"}) == 3
+    dialog.close()
     reopened = OperatorCenter(window, store)
     assert reopened.auto_approve.isChecked()
-    assert reopened.auto_approve.isEnabled() and reopened.save_default_button.isEnabled()
     QTest.mouseClick(reopened.auto_approve, Qt.MouseButton.LeftButton)
-    reopened.refresh()
-    assert not reopened.auto_approve.isChecked() and gate.trust.automatic()
-    reopened.save_default_button.click()
-    assert not gate.trust.allows()
+    assert not gate.trust.allows() and not reopened.auto_approve.isChecked()
     with pytest.raises(PolicyBlocked):
         gate.authorize("future-session", "Click", {"loc": [100, 200]})
-
-
-def test_closing_unsaved_default_does_not_grant_or_approve_pending(window, monkeypatch):
-    from installer.ui.operator_dialog import OperatorCenter
-
-    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
-    store = window.approval_store
-    request = store.request("fixture-session", "Click", {"loc": [100, 200]}, 2, "isolated click", authorization_scope={"application": "notepad.exe"})
-    dialog = OperatorCenter(window, store)
-    dialog.auto_approve.setChecked(True)
-    dialog.refresh()
-    dialog.close()
-    assert not dialog.trust.allows()
-    assert not store.read(request["request_id"])["approved"]
-    reopened = OperatorCenter(window, store)
-    assert not reopened.auto_approve.isChecked()
     reopened.close()
+
+
+def test_programmatic_checkbox_restore_or_refresh_never_grants_access(window, monkeypatch):
+    from installer.ui.operator_dialog import OperatorCenter
+    monkeypatch.setattr("windows_mcp.infrastructure.operator_ui.mark_operator_window", lambda _: None)
+    dialog = OperatorCenter(window, window.approval_store)
+    dialog.auto_approve.setChecked(True)
+    assert not dialog.trust.full_access()
+    dialog.refresh()
+    assert not dialog.auto_approve.isChecked() and not dialog.trust.allows()
+    dialog.close()
 
 
 def test_manager_drops_late_review_notifications_when_automatic_is_active(window, monkeypatch, tmp_path):
@@ -588,7 +555,14 @@ def test_manager_drops_late_review_notifications_when_automatic_is_active(window
     assert not wake.exists() and store.pending() == []
     assert window.pending_approvals == 0 and window.operator_window is None
     store.request("old-server", "Click", {"loc": [5, 6]}, 2, "late poll")
+    deadline = time.monotonic() + 3
+    while window.operator_checking and time.monotonic() < deadline:
+        QTest.qWait(10)
+        window.poll()
     window.poll_operator()
+    while window.operator_checking and time.monotonic() < deadline:
+        QTest.qWait(10)
+        window.poll()
     assert store.pending() == [] and window.operator_window is None
 
 
@@ -625,113 +599,35 @@ def test_operator_unchecked_approval_is_single_use(operator_dialog, monkeypatch)
         gate.authorize("fixture-session", "Click", {"loc": [100, 200]})
 
 
-def test_operator_automatic_approval_survives_clients_and_application_changes(operator_dialog, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-    from windows_mcp.infrastructure.policy import PolicyBlocked, PolicyGate
-
+def test_operator_full_access_immediately_covers_clients_and_restarts(operator_dialog):
+    from windows_mcp.infrastructure.policy import PolicyGate
     dialog, gate, _ = operator_dialog
-    dialog.auto_approve.setChecked(True)
-    assert dialog.approve_button.text() == "批准并开启持续全自动"
-    assert not gate.trust.allows()  # Selection alone never grants access.
-    prompts = []
-
-    def confirm(*args):
-        prompts.append(args[2])
-        return QMessageBox.StandardButton.Yes
-
-    monkeypatch.setattr(QMessageBox, "question", confirm)
-    dialog.approve_button.click()
-    assert len(prompts) == 1 and "直到手动关闭" in prompts[0]
-    assert gate.trust.status()["mode"] == "automatic"
-    scope = {"application": "notepad.exe"}
-    assert gate.authorize("fixture-session", "Click", {"loc": [100, 200]}, scope=scope) == 2
+    QTest.mouseClick(dialog.auto_approve, Qt.MouseButton.LeftButton)
+    assert gate.trust.full_access() and gate.approvals.pending() == []
+    assert not dialog.approve_button.isEnabled()
     assert gate.authorize("next-session", "Type", {"text": "next action"}, scope={"application": "other.exe"}) == 2
     restarted = PolicyGate(approvals=gate.approvals)
-    assert restarted.authorize("fixture-session", "Shortcut", {"shortcut": "down"}, scope=scope) == 2
-    assert restarted.authorize("reconnected", "Shortcut", {"shortcut": "down"}, scope=scope) == 2
-    with pytest.raises(PolicyBlocked, match="R3"):
-        restarted.authorize("reconnected", "PowerShell", {"command": "Get-Process"})
-    restarted.trust.revoke()
-    with pytest.raises(PolicyBlocked):
-        gate.authorize("fixture-session", "Type", {"text": "after revocation"})
-
-
-@pytest.mark.parametrize("decision,answer", [(True, False), (False, True)])
-def test_operator_cancel_or_reject_never_enables_automatic(operator_dialog, monkeypatch, decision, answer):
-    from PySide6.QtWidgets import QMessageBox
-
-    dialog, gate, _ = operator_dialog
-    dialog.auto_approve.setChecked(True)
-    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes if answer else QMessageBox.StandardButton.No)
-    dialog.decide(decision)
-    assert not gate.trust.allows()
-    assert not gate.approvals.consume("fixture-session", "Click", {"loc": [100, 200]})
-
-
-def test_operator_refresh_preserves_checkbox_without_granting(operator_dialog):
-    dialog, gate, _ = operator_dialog
-    dialog.auto_approve.setChecked(True)
-    dialog.refresh()
-    assert dialog.auto_approve.isChecked()
-    assert dialog.approve_button.text() == "批准并开启持续全自动"
-    assert not gate.trust.allows()
-    dialog.auto_approve.setChecked(False)
-    dialog.refresh()
-    assert not dialog.auto_approve.isChecked()
-    assert dialog.approve_button.text() == "批准一次"
-
-
-def test_operator_active_default_stays_enabled_until_unchecked_and_saved(operator_dialog):
-    dialog, gate, _ = operator_dialog
-    gate.trust.grant_automatic()
-    dialog.enable_defaults()
-    assert dialog.auto_approve.isChecked() and dialog.auto_approve.isEnabled()
-    assert not dialog.approve_button.isEnabled()  # Old pending requests are retired.
+    assert restarted.authorize("reconnected", "PowerShell", {"command": "Get-Process"}) == 3
     QTest.mouseClick(dialog.auto_approve, Qt.MouseButton.LeftButton)
-    dialog.refresh()
-    assert not dialog.auto_approve.isChecked() and gate.trust.automatic()
-    dialog.save_default_button.click()
-    assert not gate.trust.automatic()
-    assert not gate.approvals.consume("fixture-session", "Click", {"loc": [100, 200]})
+    assert not restarted.trust.automatic() and not restarted.allow_r3
 
 
-def test_operator_expiry_during_confirmation_never_grants_trust(operator_dialog, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-
-    dialog, gate, request = operator_dialog
-    dialog.auto_approve.setChecked(True)
-    errors = []
-    monkeypatch.setattr(dialog.owner, "error", lambda *args: errors.append(args))
-
-    def confirm(*args):
-        monkeypatch.setattr("windows_mcp.infrastructure.approvals.time.time", lambda: request["expires_at"] + 1)
-        return QMessageBox.StandardButton.Yes
-
-    monkeypatch.setattr(QMessageBox, "question", confirm)
-    dialog.decide(True)
-    assert errors and not gate.trust.allows()
-    assert not dialog.auto_approve.isEnabled()
-    assert not dialog.approve_button.isEnabled()
-
-
-def test_operator_automatic_keeps_r3_capability_switch(operator_dialog, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-    from windows_mcp.infrastructure.policy import PolicyBlocked
-
+def test_failed_full_access_save_restores_switch_and_reports_inline(operator_dialog, monkeypatch):
     dialog, gate, _ = operator_dialog
-    request = gate.approvals.request("fixture-session", "PowerShell", {"command": "Get-Process"}, 3, "isolated R3")
-    dialog.request_id = request["request_id"]
-    dialog.refresh()
-    assert dialog.auto_approve.isEnabled()
-    dialog.auto_approve.setChecked(True)
-    assert dialog.approve_button.text() == "批准并开启持续全自动"
-    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    def fail(**kwargs):
+        raise OSError("disk unavailable")
+    monkeypatch.setattr(dialog.trust, "grant_automatic", fail)
+    QTest.mouseClick(dialog.auto_approve, Qt.MouseButton.LeftButton)
+    assert not dialog.auto_approve.isChecked() and not gate.trust.allows()
+    assert "disk unavailable" in dialog.default_notice.text()
+
+
+def test_operator_request_expiry_never_approves(operator_dialog, monkeypatch):
+    dialog, gate, request = operator_dialog
+    monkeypatch.setattr("windows_mcp.infrastructure.approvals.time.time", lambda: request["expires_at"] + 1)
     dialog.decide(True)
-    assert gate.trust.automatic()
-    with pytest.raises(PolicyBlocked, match="R3"):
-        gate.authorize("new-session", "PowerShell", {"command": "Get-Process"})
-    gate.allow_r3 = True
-    assert gate.authorize("new-session", "PowerShell", {"command": "Get-Process"}) == 3
+    assert not gate.approvals.consume("fixture-session", "Click", {"loc": [100, 200]})
+    assert not gate.trust.allows()
 
 
 def test_empty_or_automatic_review_does_not_pause_but_remains_protected(window, monkeypatch):
@@ -968,6 +864,9 @@ def test_user_requested_update_launches_without_another_wizard_preview(window, m
     monkeypatch.setattr(dialog.updater, "prepare", lambda *args: (tmp_path / "plan.json", "nonce"))
     monkeypatch.setattr(settings_dialog, "start_update", lambda *args: calls.append("portable"))
     dialog.downloaded(path)
+    deadline = time.monotonic() + 3
+    while window.busy and time.monotonic() < deadline:
+        QTest.qWait(30)
     assert calls == [kind, "close"]
     assert not any(isinstance(item, Preview) for item in window.dialogs)
     dialog.close()

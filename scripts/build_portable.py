@@ -13,13 +13,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 def package(executable: Path, output: Path, version: str):
-    from installer.distribution import portable_name, portable_root, verify_portable
+    from installer.distribution import portable_name, portable_bundle_name, portable_root, verify_portable
+    from installer.bundle import BUNDLE_FILE, load, verify
     from installer.storage import check_path
     from windows_mcp.infrastructure.runtime_paths import PORTABLE_MARKER, PORTABLE_MODE
 
     executable, output = check_path(executable), check_path(output)
     output.mkdir(parents=True, exist_ok=True)
-    target = output / portable_name(version)
+    bundle = load(executable.parent)
+    if bundle:
+        verify(executable.parent, bundle)
+    target = output / (portable_bundle_name(version) if bundle else portable_name(version))
     root = portable_root(version)
     readme = f"""Windows-MCP {version} x64 便携版
 
@@ -36,13 +40,20 @@ Skill 与 MCP 接入仍写入 Codex 桌面端等编程工具的官方用户目�
 """
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         archive.write(executable, f"{root}/Windows-MCP.exe")
+        if bundle:
+            archive.write(executable.parent / BUNDLE_FILE, f"{root}/{BUNDLE_FILE}")
+            for name in bundle["files"]:
+                if name != "Windows-MCP.exe":
+                    archive.write(executable.parent / name, f"{root}/{name}")
         archive.writestr(f"{root}/{PORTABLE_MARKER}", json.dumps(PORTABLE_MODE) + "\n")
         archive.writestr(f"{root}/README.txt", readme.encode("utf-8-sig"))
         archive.write(ROOT / "LICENSE.md", f"{root}/LICENSE.txt")
         archive.write(ROOT / "installer/resources/third-party-licenses.txt", f"{root}/THIRD-PARTY-LICENSES.txt")
         archive.writestr(f"{root}/data/", b"")
     result = verify_portable(target, version)
-    (output / "portable-structure-verification.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    result.pop("bundle", None)
+    record = "portable-structure-verification.json" if bundle else "legacy-portable-structure-verification.json"
+    (output / record).write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
 
 

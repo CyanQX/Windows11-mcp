@@ -99,8 +99,9 @@ def notify_operator(request_id: str) -> bool:
 
     if TrustStore(CONFIG_DIR / "approvals").automatic():
         return False
+    from windows_mcp.infrastructure.process_env import independent_environment
     try:
-        subprocess.Popen([sys.executable, "--review-request", request_id], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        subprocess.Popen([sys.executable, "--review-request", request_id], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, creationflags=subprocess.CREATE_NO_WINDOW, env=independent_environment())
         return True
     except OSError:
         return False

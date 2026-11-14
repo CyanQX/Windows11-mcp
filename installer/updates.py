@@ -21,7 +21,8 @@ from packaging.version import Version
 
 from installer.backend import atomic_write
 from installer.models import ManagerError
-from installer.distribution import portable_name, setup_name, verify_portable
+from installer.distribution import portable_name, portable_bundle_name, setup_name, verify_portable
+from installer.bundle import BUNDLE_FILE, load as load_bundle, verify as verify_bundle, stage_support
 from installer.storage import ProcessLock, check_path, file_hash, private_directory
 
 REPOSITORY = "CyanQX/Windows11-mcp"
@@ -57,8 +58,11 @@ class UpdateService:
                 progress(0.55, "稳定版本信息已核对")
             if Version(version) <= Version(self.version):
                 return {"available": False, "current": self.version, "latest": version}
-            name = portable_name(version) if self.portable else setup_name(version)
+            name = portable_bundle_name(version) if self.portable else setup_name(version)
             asset = next((a for a in row["assets"] if a["name"] == name), None)
+            if not asset and self.portable:
+                name = portable_name(version)
+                asset = next((a for a in row["assets"] if a["name"] == name), None)
             kind = "portable" if self.portable else "installer"
             if not asset:
                 # Earlier releases published the manager itself as this EXE.
@@ -130,6 +134,15 @@ class UpdateService:
                 with zipfile.ZipFile(partial) as archive:
                     with archive.open(verified["payload_entry"]) as source, target.open("wb") as destination:
                         shutil.copyfileobj(source, destination)
+                    bundle = verified.get("bundle")
+                    if bundle:
+                        prefix = verified["payload_entry"].removesuffix("Windows-MCP.exe")
+                        for name in [BUNDLE_FILE, *bundle["files"]]:
+                            destination = check_path(root / name, root)
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            with archive.open(prefix + name) as source, destination.open("wb") as stream:
+                                shutil.copyfileobj(source, stream)
+                        verify_bundle(root, bundle)
                 if file_hash(target) != verified["payload_sha256"]:
                     target.unlink(missing_ok=True)
                     raise ValueError("Portable payload hash mismatch")
@@ -151,6 +164,10 @@ class UpdateService:
             raise ManagerError("UPDATE_PLAN_INVALID", "更新计划与已校验文件不一致")
         row = {"schema": 1, "nonce": nonce or uuid.uuid4().hex, "staged": str(staged), "target": str(target), "backup": str(staged.parent / "previous.exe"), "sha256": release["sha256"], "old_sha256": file_hash(target), "parent_pid": os.getpid(), "parent_created": psutil.Process().create_time(), "created": time.time(), "data": str(self.data), "version": release["latest"], "state": "prepared"}
         row["parents"] = [{"pid": row["parent_pid"], "created": row["parent_created"]}]
+        bundle = load_bundle(staged.parent)
+        if bundle:
+            verify_bundle(staged.parent, bundle)
+            row["bundle_sha256"] = file_hash(staged.parent / BUNDLE_FILE)
         try:
             parent = psutil.Process().parent()
             if parent and Path(parent.exe()).resolve() == target.resolve():
@@ -186,11 +203,17 @@ def load_plan(path: Path, nonce: str):
         raise ManagerError("UPDATE_PLAN_INVALID", "更新程序名称或目标类型无效")
     if Path(row["target"]).is_relative_to(root):
         raise ManagerError("UPDATE_PLAN_INVALID", "更新目标不能位于更新缓存中")
+    if row.get("bundle_sha256"):
+        if file_hash(path.parent / BUNDLE_FILE) != row["bundle_sha256"]:
+            raise ManagerError("UPDATE_PLAN_INVALID", "更新运行目录清单发生变化")
+        verify_bundle(path.parent)
     return row
 
 
 def background_args():
-    return {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "close_fds": True, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    from windows_mcp.infrastructure.process_env import independent_environment
+
+    return {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "close_fds": True, "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0), "env": independent_environment()}
 
 
 def start_update(path: Path, nonce: str):
@@ -230,11 +253,23 @@ def apply_update(path: Path, nonce: str):
             time.sleep(0.2)
         if file_hash(target) != row["old_sha256"] or backup.exists():
             raise ManagerError("UPDATE_TARGET_CHANGED", "旧程序或回滚位置发生变化，已停止更新")
+        bundle = load_bundle(staged.parent) if row.get("bundle_sha256") else None
+        manifest = check_path(target.parent / BUNDLE_FILE, target.parent)
+        old_manifest = manifest.read_bytes() if manifest.exists() else None
+        if bundle:
+            stage_support(staged.parent, target.parent, bundle)
+            if old_manifest is not None:
+                manifest_backup = check_path(path.parent / "previous.bundle.json", path.parent)
+                if manifest_backup.exists():
+                    raise ManagerError("UPDATE_TARGET_CHANGED", "运行目录回滚清单位置已被占用")
+                atomic_write(manifest_backup, old_manifest)
         os.replace(target, backup)
         try:
             shutil.copyfile(staged, target)
             if file_hash(target) != row["sha256"]:
                 raise ManagerError("UPDATE_VERIFY_FAILED", "替换后的文件校验失败")
+            if bundle:
+                atomic_write(manifest, (staged.parent / BUNDLE_FILE).read_bytes())
             child = subprocess.Popen([str(target), f"--finish-update={plan_argument}", f"--update-nonce={nonce}"], **background_args())
             deadline = time.monotonic() + 240
             while time.monotonic() < deadline and child.poll() is None and not result_path.exists():
@@ -256,10 +291,17 @@ def apply_update(path: Path, nonce: str):
                 raise ManagerError("UPDATE_POSTCHECK_FAILED", "新版启动或服务验证未完成")
             row["state"] = "committed"
         except Exception as exc:
+            if bundle and file_hash(manifest) not in {None, row["bundle_sha256"], hashlib.sha256(old_manifest).hexdigest() if old_manifest is not None else None}:
+                raise ManagerError("UPDATE_ROLLBACK_CONFLICT", "运行目录清单又被修改，回滚副本已保留") from exc
             if file_hash(target) not in {None, row["sha256"]}:
                 raise ManagerError("UPDATE_ROLLBACK_CONFLICT", "替换目标又被修改，回滚副本已保留") from exc
             target.unlink(missing_ok=True)
             os.replace(backup, target)
+            if bundle:
+                if old_manifest is None:
+                    manifest.unlink(missing_ok=True)
+                else:
+                    atomic_write(manifest, old_manifest)
             row.update(state="rolled_back", error=str(exc))
             atomic_write(path, json.dumps(row).encode())
             subprocess.Popen([str(target)], **background_args())

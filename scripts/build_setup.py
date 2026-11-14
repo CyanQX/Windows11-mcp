@@ -6,6 +6,8 @@ import os
 import sys
 import tomllib
 import importlib.util
+import hashlib
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +19,7 @@ def main():
     parser.add_argument("--work", type=Path, default=ROOT / "build" / "setup")
     parser.add_argument("--with-capture", action="store_true", help="Bundle the optional HWND WGC component")
     parser.add_argument("--with-ocr", action="store_true", help="Bundle optional OCR bindings; an engine/package identity is still required")
+    parser.add_argument("--compat-out", type=Path, help="Also build the one-time bridge used by older portable updaters")
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Windows EXE must be built on Windows")
@@ -32,9 +35,17 @@ def main():
     windows = Path(os.environ.get("WINDIR", "C:/Windows"))
     os.environ["PATH"] = os.pathsep.join(map(str, [Path(sys.executable).parent, Path(sys.base_prefix), windows / "System32", windows]))
     import PyInstaller.__main__
+    sys.path.insert(0, str(ROOT))
+    from installer.bundle import source_id, create
+
+    # Two builds of identical source may collect different OS-provided DLLs.
+    # Never reuse an immutable support directory across distinct build outputs.
+    identity = source_id(ROOT, version, sys.version) + uuid.uuid4().hex
+    contents = "_runtime-" + hashlib.sha256(identity.encode()).hexdigest()[:20]
 
     args.work.mkdir(parents=True, exist_ok=True)
-    options = [str(ROOT / "installer" / "app.py"), "--onefile", "--windowed", "--clean", "--noconfirm", "--name", "Windows-MCP", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
+    options = [str(ROOT / "installer" / "app.py"), "--onedir", "--contents-directory", contents, "--windowed", "--clean", "--noconfirm", "--name", "Windows-MCP", "--distpath", str(args.out), "--workpath", str(args.work / "analysis"), "--specpath", str(args.work), "--paths", str(ROOT)]
+    options += ["--collect-submodules", "installer"]
     for module in ("windows_mcp", "fastmcp", "playwright", "comtypes"):
         options += ["--collect-all", module]
     for enabled, modules in ((args.with_capture, ("windows_capture",)),
@@ -56,12 +67,17 @@ def main():
     for source, destination in ((ROOT / "manifest.json", "."), (ROOT / "LICENSE.md", "."), (ROOT / "installer" / "resources", "installer/resources"), (ROOT / "skills" / "windows-mcp", "skills/windows-mcp")):
         options += ["--add-data", f"{source}{os.pathsep}{destination}"]
     PyInstaller.__main__.run(options)
+    bundle_root = args.out / "Windows-MCP"
+    create(bundle_root, contents, version)
     # Verify actual packed code, including installer modules omitted by the wheel.
     # A version label alone cannot detect stale PyInstaller module caches.
     sys.path.insert(0, str(ROOT))
     from scripts.verify_setup_source import verify
-    result = verify(args.out / "Windows-MCP.exe")
+    result = verify(bundle_root / "Windows-MCP.exe")
     (args.out / "setup-source-verification.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    if args.compat_out:
+        from scripts.build_compat import build
+        build(bundle_root, args.compat_out, args.work / "compat-native")
 
 
 if __name__ == "__main__":

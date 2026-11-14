@@ -6,12 +6,14 @@ import argparse
 import hashlib
 import json
 import marshal
+import sys
 import types
 from pathlib import Path
 
 from PyInstaller.archive.readers import CArchiveReader
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 def canonical(value):
@@ -60,15 +62,22 @@ def verify(executable: Path):
     if mismatch:
         raise AssertionError("Frozen bytecode differs from current source: " + ", ".join(mismatch))
     entries = {name.replace("\\", "/"): name for name in reader.toc}
+    from installer.bundle import load, verify as verify_bundle
+    bundle = load(executable.parent)
+    support = executable.parent / bundle["contents"] if bundle else None
+    if bundle:
+        verify_bundle(executable.parent, bundle)
     legal = list((ROOT / "installer/resources/legal").glob("*.html"))
     required = [ROOT / "manifest.json", ROOT / "LICENSE.md", ROOT / "installer/resources/Qt-LICENSES.txt", ROOT / "installer/resources/third-party-licenses.txt", *legal]
     expected_legal = {path.relative_to(ROOT).as_posix() for path in legal}
-    bundled_legal = {name for name in entries if name.startswith("installer/resources/legal/") and name.endswith(".html")}
+    bundled_legal = ({path.relative_to(support).as_posix() for path in (support / "installer/resources/legal").glob("*.html")}
+                     if support else {name for name in entries if name.startswith("installer/resources/legal/") and name.endswith(".html")})
     if bundled_legal != expected_legal:
         raise AssertionError("Bundled policy page list differs from current source")
     for path in required:
         name = path.relative_to(ROOT).as_posix()
-        if name not in entries or reader.extract(entries[name]) != path.read_bytes():
+        actual = (support / name).read_bytes() if support else reader.extract(entries[name]) if name in entries else None
+        if actual != path.read_bytes():
             raise AssertionError("Bundled resource differs from current source: " + name)
     return {"executable": executable.name, "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "owned_modules_checked": len(checked), "frozen_bytecode_matches_source": True, "policy_pages_checked": len(legal), "bundled_resources_match_source": True}
 

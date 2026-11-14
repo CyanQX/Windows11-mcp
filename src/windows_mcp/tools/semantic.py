@@ -140,12 +140,13 @@ def register(mcp, *, get_desktop, get_analytics):
                 "pointer_interruption": session.pointer_interruption,
                 "last_pointer_motion": session.last_pointer_motion,
                 "workspace_roots": [str(root) for root in runtime.policy.roots],
+                "full_access": runtime.policy.trust.full_access(),
                 "r3_enabled": runtime.policy.allow_r3, "pending_action": runtime.pending.status(),
                 "trust_mode": (trust or {}).get("mode"), "trust_scope": trust,
                 "network_grants": runtime.policy.network.status(session.session_id),
                 "allowed_network_origins": sorted(runtime.policy.allowed_network_origins)}
 
-    @mcp.tool(name="RequestApproval", description="Request local human approval for exact tool arguments and a server-derived application/window scope. If persistent automatic mode is enabled locally, returns TRUSTED without a prompt: all connected clients/apps and HTTP(S) origins remain authorized across reconnects/restarts until manually disabled. Capability switches and workspace/protected paths still apply; disabled R3 remains blocked. Otherwise use one-use approval or matching legacy scoped R2 trust. New HTTP origins need local approval outside persistent mode. Checking and saving 持续全自动 is a human-only settings action; this tool cannot approve or enable it. Inspect Session.trust_scope and execute the original call directly after TRUSTED.", annotations=_WRITE)
+    @mcp.tool(name="RequestApproval", description="Request local human approval for exact tool arguments and a server-derived application/window scope. If persistent automatic mode is enabled locally, returns TRUSTED without a prompt: all connected clients/apps and HTTP(S) origins remain authorized across reconnects/restarts until manually disabled. Full access (Session.full_access) permits high-risk tools and files outside configured roots under the Windows account; signed approval storage and input-takeover checks remain protected. Legacy automatic grants retain configured limits. Otherwise use one-use approval or matching legacy scoped R2 trust. New HTTP origins need local approval outside persistent mode. Clicking 持续全自动 is a human-only settings action; this tool cannot approve or enable it. Inspect Session.trust_scope and execute the original call directly after TRUSTED.", annotations=_WRITE)
     @with_analytics(get_analytics(), "RequestApproval-Tool", offload="background")
     def request_approval_tool(tool: str, arguments: dict, description: str, ctx: Context = None) -> dict:
         runtime = get_runtime()
@@ -153,12 +154,10 @@ def register(mcp, *, get_desktop, get_analytics):
         scope = call_on_desktop(runtime.scope_resolver, tool, normalized, runtime.current())
         risk = runtime.policy.risk(tool, normalized, scope)
         network_origins = runtime.policy.network_origins(tool, normalized)
-        if risk == 3 and not runtime.policy.allow_r3:
-            raise PermissionError("BLOCKED_BY_POLICY: R3 is disabled by the local operator")
-        if runtime.policy.trust and runtime.policy.trust.automatic():
+        if runtime.policy.trust and runtime.policy.trust.automatic() and (risk < 3 or runtime.policy.allow_r3):
             return {"status": "TRUSTED", "risk": risk, "approval_required": False,
                     "authorization_scope": runtime.policy.trust.status(),
-                    "operator_guidance": "本机持续全自动已开启：当前启用能力无需逐次审批，跨会话、跨应用和 HTTP(S) 出网持续生效，直到操作员手动关闭；本机能力开关和文件范围仍然有效。"}
+                    "operator_guidance": "本机持续全自动已开启，可直接执行；Session.full_access 表示是否已开启完全访问。重连、重启后持续有效，直到操作员手动关闭。"}
         if risk == 2 and runtime.policy.trusted(runtime.current().session_id, tool, normalized, scope) and not network_origins:
             return {"status": "TRUSTED", "risk": risk, "approval_required": False,
                     "authorization_scope": scope,
@@ -171,7 +170,7 @@ def register(mcp, *, get_desktop, get_analytics):
                 "expires_at": request["expires_at"], "scope": request["scope"],
                 "authorization_scope": scope, "network_origins": network_origins,
                 "operator_ui_opened": notified,
-                "operator_guidance": "由本机操作员核对本次请求后批准一次；也可勾选并保存「持续全自动」，覆盖本机所有连接客户端、应用和 HTTP(S) 出网，直到手动关闭。能力开关与文件范围仍有效。AI不能代为批准或操作审批设置。",
+                "operator_guidance": "由本机操作员点击「批准一次」；或点击「持续全自动」立即开启完全访问，直到手动关闭。AI不能代为批准或操作审批设置。",
                 "operator_command": f"windows-mcp approve {request['request_id']}"}
 
     @mcp.tool(name="Visual", description="Window-bound image fallback. auto tries HWND Windows.Graphics.Capture, isolated PrintWindow, then foreground desktop crop. A serialized native capture process is reused, with job-wide timeout cleanup. Window capture may observe covered/background windows; physical clicks require foreground, hit-testing and local pixel-patch revalidation before pressing. Changed content requires a new observation; no automatic relocation/replay. region is an unscaled image ROI; max_width bounds transfer. Optional local OCR returns image-pixel word boxes and availability diagnostics. previous_target/only_if_changed omit duplicate image encoding/transfer, not fresh capture. Pixel agreement is not control identity or business verification. Declare fallback_reason.", annotations=_READ)

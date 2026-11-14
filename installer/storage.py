@@ -8,11 +8,33 @@ import os
 import shutil
 import time
 import uuid
+import contextvars
+from contextlib import contextmanager
 from pathlib import Path
 
 from installer.backend import atomic_write
 from installer.models import ManagerError
 from windows_mcp.infrastructure.local_storage import private_directory, FileLock
+
+_hashes = contextvars.ContextVar("installer_operation_hashes", default=None)
+
+
+def snapshot_cache():
+    """Ephemeral observations shared only inside the current maintenance operation."""
+    return _hashes.get()
+
+
+@contextmanager
+def hash_snapshot():
+    """Share repeated reads within one operation; no persistent trust cache."""
+    if _hashes.get() is not None:
+        yield
+        return
+    token = _hashes.set({})
+    try:
+        yield
+    finally:
+        _hashes.reset(token)
 
 
 def file_hash(path: Path) -> str | None:
@@ -21,11 +43,22 @@ def file_hash(path: Path) -> str | None:
         return None
     if not path.is_file():
         raise ManagerError("NOT_A_FILE", "目标不是普通文件")
+    before = path.stat()
+    key = (str(path), before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_ino)
+    cache = _hashes.get()
+    if cache is not None and key in cache:
+        return cache[key]
     value = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(block)
-    return value.hexdigest()
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
+        raise ManagerError("FILE_CHANGED", "校验期间文件发生变化，请重新检查")
+    result = value.hexdigest()
+    if cache is not None and len(cache) < 4096:
+        cache[key] = result
+    return result
 
 
 def check_path(path: Path, root: Path | None = None) -> Path:

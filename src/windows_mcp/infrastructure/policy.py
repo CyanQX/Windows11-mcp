@@ -22,13 +22,22 @@ class PolicyBlocked(PermissionError):
         super().__init__(f"{self.code}: {message}")
 
 
+class AuthorizationDecision(int):
+    """Risk plus the exact evidence used by this authorization, without a reread race."""
+    def __new__(cls, risk, trusted, capability_one_use=False):
+        value = super().__new__(cls, risk)
+        value.trusted = trusted
+        value.capability_one_use = capability_one_use
+        return value
+
+
 class PolicyGate:
     def __init__(self, *, roots: list[Path] | None = None, allow_r3: bool = False,
                  allow_private_browser: bool = False, approvals: ApprovalStore | None = None,
                  trust: TrustStore | None = None, allowed_network_origins: list[str] | None = None) -> None:
         self.roots = [path.resolve() for path in (roots or [CONFIG_DIR / "workspace"])]
-        self.allow_r3 = allow_r3
-        self.allow_private_browser = allow_private_browser
+        self._allow_r3 = allow_r3
+        self._allow_private_browser = allow_private_browser
         self.approvals = approvals or ApprovalStore(CONFIG_DIR / "approvals")
         self.trust = trust if trust is not None else TrustStore(self.approvals.directory)
         self.network = NetworkGrants(self.approvals.directory)
@@ -51,6 +60,22 @@ class PolicyGate:
         except (ValueError, OSError, TypeError):
             pass
 
+    @property
+    def allow_r3(self):
+        return self._allow_r3 or self.trust.full_access()
+
+    @allow_r3.setter
+    def allow_r3(self, value):
+        self._allow_r3 = value
+
+    @property
+    def allow_private_browser(self):
+        return self._allow_private_browser or self.trust.full_access()
+
+    @allow_private_browser.setter
+    def allow_private_browser(self, value):
+        self._allow_private_browser = value
+
     def check_path(self, value: str | Path) -> Path:
         from platformdirs import user_desktop_dir
 
@@ -59,18 +84,19 @@ class PolicyGate:
             path = Path(user_desktop_dir()) / path
         # resolve follows symlinks/junctions and normalizes traversal before containment checks.
         path = path.resolve()
-        if not any(path.is_relative_to(root) for root in self.roots):
+        full = self.trust.full_access()
+        if not full and not any(path.is_relative_to(root) for root in self.roots):
             raise PolicyBlocked("Path lies outside the operator-configured workspace")
         # The dedicated workspace is the sole allowed subtree inside CONFIG_DIR.
-        for protected in self.protected:
+        for protected in ([self.approvals.directory] if full else self.protected):
             if path.is_relative_to(protected) and not (
                 protected in self.workspace_storage
                 and path.is_relative_to((CONFIG_DIR / "workspace").resolve())
             ):
                 raise PolicyBlocked("Credentials, server configuration and approval storage are protected")
-        if path.drive.startswith("\\\\") or ":" in path.name or any(
+        if ":" in path.name or (not full and (path.drive.startswith("\\\\") or any(
             part.lower() in {".git", ".ssh", ".codex", "browser-profiles"} for part in path.parts
-        ):
+        ))):
             raise PolicyBlocked("Network paths, alternate streams and protected metadata are not allowed")
         reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
         if any(part.endswith((" ", ".")) or part.split(".")[0].upper() in reserved for part in path.parts):
@@ -122,7 +148,8 @@ class PolicyGate:
             if operation in {"read", "list", "search", "info"}:
                 return 0
             if operation in {"delete", "move"}:
-                if any(protected.is_relative_to(path) for protected in self.protected):
+                protected_paths = [self.approvals.directory] if self.trust.full_access() else self.protected
+                if any(protected.is_relative_to(path) for protected in protected_paths):
                     raise PolicyBlocked("Cannot remove a directory containing protected configuration")
                 return 3
             if path.suffix.lower() in {".exe", ".dll", ".ps1", ".bat", ".cmd", ".py", ".js", ".lnk", ".reg", ".msi"}:
@@ -171,9 +198,10 @@ class PolicyGate:
             from windows_mcp.infrastructure.operator_ui import operator_review_active
             if operator_review_active():
                 raise PolicyBlocked("The local human approval window is open; MCP input is paused until the operator decides and closes it")
-        if risk == 3 and not self.allow_r3:
-            raise PolicyBlocked("R3 tools are disabled; an operator must enable policy.allow_r3 locally")
         trusted = risk >= 2 and self.trusted(session_id, tool, args, scope or {})
+        capability_one_use = risk == 3 and not self.allow_r3
+        if capability_one_use:
+            trusted = False  # Disabled capabilities require an exact local one-use decision.
         if risk >= 2 and not trusted and not self.approvals.consume(session_id, tool, args, approval_id, authorization_scope=scope):
             raise PolicyBlocked(f"R{risk} requires a one-use local operator approval. Call RequestApproval with this exact tool and arguments")
-        return risk
+        return AuthorizationDecision(risk, trusted, capability_one_use)

@@ -22,6 +22,7 @@ def main():
     args = parser.parse_args()
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     result = verify_portable(args.archive, version)
+    result.pop("bundle", None)
     with tempfile.TemporaryDirectory(prefix="windows-mcp-portable-check-") as temporary:
         with zipfile.ZipFile(args.archive) as archive:
             archive.extractall(temporary)  # Exact fixed entries already checked above.
@@ -32,6 +33,8 @@ def main():
         completed = subprocess.run([str(executable), "--portable-check", str(contract)], timeout=90)
         if completed.returncode:
             error = contract.with_suffix(".error.json")
+            if not error.exists() and (bundle / "migration-error.json").exists():
+                error = bundle / "migration-error.json"
             raise RuntimeError(error.read_text(encoding="utf-8") if error.is_file() else f"Portable acceptance exit {completed.returncode}")
         result["portable_contract"] = json.loads(contract.read_text())
         smoke = Path(temporary) / "stdio-validation.json"

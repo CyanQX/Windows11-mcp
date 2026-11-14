@@ -66,7 +66,9 @@ class HealthChecker:
 
         try:
             async with asyncio.timeout(self.timeout):
-                env = {"ANONYMIZED_TELEMETRY": "false", "WINDOWS_MCP_WATCHDOG": "off", "WINDOWS_MCP_DISABLE_FLASH": "1"}
+                from windows_mcp.infrastructure.process_env import independent_environment
+
+                env = independent_environment({"ANONYMIZED_TELEMETRY": "false", "WINDOWS_MCP_WATCHDOG": "off", "WINDOWS_MCP_DISABLE_FLASH": "1"})
                 if self.home:
                     # Acceptance probes isolate core config and audit files as well
                     # as client configs. Normal GUI verification keeps the real home.

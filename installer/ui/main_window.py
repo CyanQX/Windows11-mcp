@@ -25,6 +25,7 @@ from installer.ui.task_strip import TaskStrip
 class MainWindow(QMainWindow):
     release_checked = Signal(object)
     approvals_changed = Signal(int)
+    operation_changed = Signal(bool)
 
     def __init__(self, base, settings, executable, *, service=None, approval_store=None, wake_path=None, auto_scan=True):
         super().__init__()
@@ -40,6 +41,9 @@ class MainWindow(QMainWindow):
         self.pending_approvals = 0
         self.update_release = None
         self.install_cancel = None
+        self.undo_transaction = None
+        self.operator_checking = False
+        self.release_checking = False
         self.task_progress = TaskProgress()
         self.reload_service(initial=True)
         mode = "本地预览 · 3D 触感玻璃" if executable.name.lower() == "windows-mcp-preview.exe" else "便携版" if settings.portable_data else ""
@@ -109,13 +113,13 @@ class MainWindow(QMainWindow):
         self.progress_animation.valueChanged.connect(self._animate_progress)
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll)
-        self.poll_timer.start(30)
+        self.poll_timer.start(250)
         self.operator_timer = QTimer(self)
         self.operator_timer.timeout.connect(self.poll_operator)
         self.operator_timer.start(1500)
         self.scan_timer = QTimer(self)
         self.scan_timer.setSingleShot(True)
-        self.scan_timer.timeout.connect(lambda: self.scan(quiet=True))
+        self.scan_timer.timeout.connect(self.startup_sync)
         if auto_scan:
             self.scan_timer.start(150)
             if service is None:
@@ -159,6 +163,8 @@ class MainWindow(QMainWindow):
         if self.busy:
             return False
         self.busy = True
+        self.poll_timer.setInterval(30)
+        self.operation_changed.emit(True)
         self.task_strip.begin(show_progress)
         self.task_progress = TaskProgress(message=title)
         self.progress_animation.stop()
@@ -179,6 +185,7 @@ class MainWindow(QMainWindow):
                     report(0.9, "正在核对最终安装状态")
                     service.progress = segment(report, 0.9, 0.99)
                     states = service.inspect_all()
+                self.events.put(("history", service.latest_install()))
                 outcome = ("done", (value, states, done))
             except Exception as exc:
                 outcome = ("error", str(exc))
@@ -221,13 +228,29 @@ class MainWindow(QMainWindow):
             if kind == "log":
                 logs.append(value)
             elif kind == "update_hint":
+                self.release_checking = False
                 self.update_release = value
-                self.release_checked.emit(value)
+                if value:
+                    self.release_checked.emit(value)
+            elif kind == "history":
+                self.undo_transaction = value
+            elif kind == "operator":
+                self.operator_checking = False
+                pending = value
+                new = pending - self.known_requests
+                if new:
+                    self.open_operator(next(iter(new)))
+                self.known_requests = pending
+                if self.pending_approvals != len(pending):
+                    self.pending_approvals = len(pending)
+                    self.approvals_changed.emit(self.pending_approvals)
             elif kind == "progress":
                 self.task_progress.advance(*value)
                 progress_changed = True
             elif kind in {"done", "error"}:
                 self.busy = False
+                self.poll_timer.setInterval(250)
+                self.operation_changed.emit(False)
                 self.install_cancel = None
                 if kind == "error":
                     self.task_progress.complete(False)
@@ -273,17 +296,26 @@ class MainWindow(QMainWindow):
                 StatusDialog(self)
         return self.run(work, done, rescan=False, title="正在逐项检查客户端、Skill 和 MCP", show_progress=not quiet)
 
+    def startup_sync(self):
+        return self.run(self.service.synchronize_installed, rescan=True,
+                        title="正在核对并同步已安装接入", show_progress=False)
+
     def check_update_hint(self):
+        if self.release_checking or self.update_release is not None:
+            return
+        self.release_checking = True
         from installer.updates import UpdateService
         updater = UpdateService(self.service.backend.data, self.version, portable=self.settings.portable_data is not None)
         def check():
             try:
                 self.events.put(("update_hint", updater.check()))
             except Exception:
-                pass  # Optional hint never interferes with maintenance or reports success.
+                self.events.put(("update_hint", None))
         threading.Thread(target=check, daemon=True, name="release-hint").start()
 
     def accept_states(self, states):
+        if not any(state.receipt_valid for state in states.values()):
+            self.undo_transaction = None
         self.selection.refresh(states)
         self.selector.refresh()
         self.render_status()
@@ -302,7 +334,7 @@ class MainWindow(QMainWindow):
         self.update_controls()
 
     def update_controls(self):
-        self.undo_button.setEnabled((self.install_cancel is not None and not self.install_cancel.is_set()) if self.busy else self.service.latest_install() is not None)
+        self.undo_button.setEnabled((self.install_cancel is not None and not self.install_cancel.is_set()) if self.busy else self.undo_transaction is not None)
         self.undo_button.setText("正在撤回…" if self.install_cancel is not None and self.install_cancel.is_set() else "撤销")
         self.install_button.setEnabled(bool(self.selection.selected) and not self.busy)
         self.uninstall_button.setEnabled(not self.busy and any(state.receipt_valid for state in self.selection.states.values()))
@@ -342,7 +374,7 @@ class MainWindow(QMainWindow):
                 self.status_label.setText("正在停止安装并恢复快照…")
                 self.update_controls()
             return
-        transaction = self.service.latest_install()
+        transaction = self.undo_transaction
         if transaction is None:
             return
         from installer.ui.dialogs import Preview, Results
@@ -385,16 +417,17 @@ class MainWindow(QMainWindow):
                     self.showNormal()
                     self.raise_()
                     self.activateWindow()
-            if self.approval_store:
-                self.approval_store.dismiss_automatic()
-                pending = {item["request_id"] for item in self.approval_store.pending() if not item["approved"]}
-                new = pending - self.known_requests
-                if new:
-                    self.open_operator(next(iter(new)))
-                self.known_requests = pending
-                if self.pending_approvals != len(pending):
-                    self.pending_approvals = len(pending)
-                    self.approvals_changed.emit(self.pending_approvals)
+            if self.approval_store and not self.operator_checking:
+                self.operator_checking = True
+                store = self.approval_store
+                def read_pending():
+                    try:
+                        store.dismiss_automatic()
+                        pending = {item["request_id"] for item in store.pending() if not item["approved"]}
+                    except (OSError, ValueError, KeyError):
+                        pending = self.known_requests.copy()
+                    self.events.put(("operator", pending))
+                threading.Thread(target=read_pending, daemon=True, name="manager-approval-check").start()
         except (OSError, ValueError, KeyError):
             pass
 

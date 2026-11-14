@@ -20,7 +20,7 @@ from installer.storage import check_path
 from installer.ui.controls import GlassCheckBox as QCheckBox
 from installer.ui.controls import ChoiceBox as QComboBox
 from installer.ui.controls import StepValue
-from installer.ui.dialogs import CLIENT_NAMES, Detail, Diagnostics, Preview, Targets, disclosure, fact
+from installer.ui.dialogs import CLIENT_NAMES, Detail, Diagnostics, Preview, Targets
 from installer.ui.theme import GlassFrame, button, column, label, row
 from installer.updates import UpdateService, start_update
 
@@ -376,43 +376,49 @@ class Backups(Detail):
 
 class Updates(Detail):
     def __init__(self, owner):
-        super().__init__(owner, "检查更新", (790, 650))
+        super().__init__(owner, "检查更新", (700, 520))
         self.updater = UpdateService(owner.service.backend.data, owner.version, portable=owner.settings.portable_data is not None)
         self.release = None
         self.pending_release = None
-        body = self.scroll()
-        fact(body, "当前管理器版本", owner.version)
-        self.notice = label("尚未检查官方更新", size=14, bold=True, wrap=True)
-        body.addWidget(self.notice)
-        self.check_button = button("检查官方更新", self.check, icon="refresh")
-        self.download_button = button("更新安装", self.download, primary=True)
+        self.body.setContentsMargins(24, 22, 24, 22)
+        self.body.setSpacing(16)
+        card = GlassFrame()
+        status = column(card, 20, 10)
+        status.addWidget(label(f"Windows MCP  ·  {owner.version}", size=12, role="secondary"))
+        self.notice = label("正在检查更新…", size=17, bold=True, wrap=True)
+        status.addWidget(self.notice)
+        status.addWidget(label("安装新版时，已安装的 Skill 与 MCP 会自动同步。", role="secondary", wrap=True))
+        self.body.addWidget(card)
+        self.check_button = button("检查更新", self.check, icon="refresh")
+        self.download_button = button("更新并同步", self.download, primary=True)
         self.download_button.setEnabled(False)
-        body.addWidget(row(self.check_button, self.download_button, None))
+        self.body.addWidget(row(self.check_button, None, self.download_button))
         self.bar = QProgressBar()
         self.bar.setRange(0, 10000)
         self.bar.setTextVisible(False)
-        body.addWidget(self.bar)
+        self.bar.setFixedHeight(6)
+        self.bar.hide()
+        self.body.addWidget(self.bar)
         owner.progress.valueChanged.connect(self.bar.setValue)
         self.notes = QTextBrowser()
         self.notes.setOpenExternalLinks(False)
-        body.addWidget(self.notes, 1)
-        body.addWidget(label("版本与升级", size=16, bold=True))
-        managed = {key: {"version": state.detected_version or "旧版记录", "status": state.label} for key, state in owner.selection.states.items() if state.receipt_valid}
-        disclosure(body, f"查看受管接入版本 · {len(managed)} 个", managed)
-        body.addWidget(button("升级现有受管接入至此版本", lambda: Targets(owner, "upgrade"), icon="update"))
+        self.notes.setMinimumHeight(120)
+        self.notes.hide()
+        self.body.addWidget(self.notes, 1)
+        self.body.addStretch()
         self.body.addWidget(row(None, button("关闭", self.close)))
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.controls)
-        self.timer.start(150)
-        self.finished.connect(self.timer.stop)
+        owner.operation_changed.connect(self.controls)
         owner.release_checked.connect(self.checked)
         if owner.update_release:
             self.checked(owner.update_release)
         else:
             self.check()
 
-    def controls(self):
-        self.check_button.setEnabled(not self.owner.busy)
+    def controls(self, *_):
+        self.check_button.setEnabled(not self.owner.busy and not self.owner.release_checking)
+        if not self.owner.busy:
+            self.bar.hide()
+        self.download_button.setVisible(bool(self.release and self.release["available"]))
         self.download_button.setEnabled(bool(self.release and self.release["available"]) and not self.owner.busy)
 
     def checked(self, release):
@@ -420,21 +426,28 @@ class Updates(Detail):
             return
         self.release = release
         self.notice.setText(f"发现新版本 {release['latest']}" if release["available"] else f"当前已是最新版本 · 官方稳定版 {release['latest']}")
-        self.notes.setPlainText(release.get("notes", "暂无新版本。"))
+        self.notes.setPlainText(release.get("notes", ""))
+        self.notes.setVisible(bool(release["available"] and release.get("notes")))
         self.controls()
 
     def check(self):
+        if self.owner.release_checking:
+            self.notice.setText("正在读取官方更新信息…")
+            return
         def checked(release):
             self.owner.update_release = release
             self.owner.release_checked.emit(release)
-        self.owner.run(lambda: self.updater.check(progress=self.owner.service.report), checked, rescan=False, title="正在读取并校验官方版本信息")
+        self.notice.setText("正在读取并校验官方版本…")
+        if self.owner.run(lambda: self.updater.check(progress=self.owner.service.report), checked, rescan=False, title="正在读取并校验官方版本信息"):
+            self.bar.show()
 
     def download(self):
         if not self.release or not self.release.get("available") or self.owner.busy:
             return
         self.pending_release = copy.deepcopy(self.release)
         release = self.pending_release
-        self.owner.run(lambda: self.updater.download(release, progress=self.owner.service.report), self.downloaded, rescan=False, title="正在下载官方更新")
+        if self.owner.run(lambda: self.updater.download(release, progress=self.owner.service.report), self.downloaded, rescan=False, title="正在下载官方更新"):
+            self.bar.show()
 
     def downloaded(self, path):
         owner, release = self.owner, self.pending_release or self.release
@@ -444,12 +457,13 @@ class Updates(Detail):
         if owner.busy:
             return
         if release.get("kind") == "installer":
-            self.updater.launch_installer(path, release, Path(sys.executable))
-            owner.close()
+            def work():
+                return self.updater.launch_installer(path, release, Path(sys.executable))
         else:
-            location, nonce = self.updater.prepare(path, release, Path(sys.executable))
-            start_update(location, nonce)
-            owner.close()
+            def work():
+                location, nonce = self.updater.prepare(path, release, Path(sys.executable))
+                return start_update(location, nonce)
+        owner.run(work, lambda _: owner.close(), rescan=False, title="正在校验并启动更新")
 
 
 POLICIES = (

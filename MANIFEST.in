@@ -11,3 +11,6 @@ recursive-include installer *.py
 recursive-include installer *.iss
 recursive-include installer/resources *.png *.svg *.json *.txt *.isl *.html
 global-exclude __pycache__ *.py[cod]
+
+recursive-include installer *.cs
+recursive-include installer/compat *.manifest

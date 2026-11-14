@@ -14,7 +14,7 @@ from installer.detection import TargetDetector
 from installer.diagnostics import EventLog
 from installer.health import HealthChecker
 from installer.models import IntegrationStatus as Status, ManagerError
-from installer.storage import Journal, ProcessLock, check_path, file_hash, private_directory
+from installer.storage import Journal, ProcessLock, check_path, file_hash, private_directory, hash_snapshot
 
 
 def plan_hash(plan: dict) -> str:
@@ -39,12 +39,13 @@ class InstallerService:
             raise ManagerError("INSTALL_CANCELLED", "已请求撤销安装")
 
     def _rollback_install(self, journal):
+        from installer.bundle import BUNDLE_FILE
         keys = journal.record.get("profiles") or [journal.record["profile_id"]]
         # A configuration edited by another program may still need our runtime.
         configs = {row["path"]: row for row in journal.record["files"]}
         changing = {key for key in keys if file_hash(self.backend.clients[key].config) in {configs[str(self.backend.clients[key].config)]["before"], configs[str(self.backend.clients[key].config)]["after"]}}
         references, unknown = self._references()
-        protected = {self.backend.executable} if set(references) - changing or unknown else set()
+        protected = {self.backend.executable, self.backend.data / BUNDLE_FILE} if set(references) - changing or unknown else set()
         return journal.rollback(protected=protected)
 
     def report(self, fraction, message):
@@ -60,11 +61,13 @@ class InstallerService:
         # different data-directory preferences. Always acquire in this order.
         with ProcessLock(authority / "maintenance.lock"):
             with ProcessLock(self.backend.data / "locks" / "maintenance.lock"):
-                yield
+                with hash_snapshot():
+                    yield
 
     def paths(self, key: str) -> list[Path]:
+        from installer.bundle import BUNDLE_FILE
         profile = self.backend.clients[key]
-        paths = [profile.config, self.backend.receipt_path(profile), self.backend.executable]
+        paths = [profile.config, self.backend.receipt_path(profile), self.backend.executable, self.backend.data / BUNDLE_FILE]
         relative = {path.relative_to(self.backend.skill).as_posix() for path in self.backend.skill.rglob("*") if path.is_file()}
         receipt = self.detector.receipt(profile)
         if receipt:
@@ -76,10 +79,32 @@ class InstallerService:
         if hasattr(self.detector.discovery, "refresh"):
             self.detector.discovery.refresh()
         states = {}
-        for index, key in enumerate(self.backend.clients):
-            states[key] = self.detector.inspect(key)
-            self.report((index + 1) / len(self.backend.clients), f"已检查 {states[key].display_name}")
+        with hash_snapshot():
+            for index, key in enumerate(self.backend.clients):
+                states[key] = self.detector.inspect(key)
+                self.report((index + 1) / len(self.backend.clients), f"已检查 {states[key].display_name}")
         return states
+
+    def synchronize_installed(self):
+        """A new manager reconciles only intact, already-owned integrations.
+
+        First-time installs stay explicit. User-modified or external entries are
+        never silently adopted or overwritten, and a failed upgrade rolls back.
+        """
+        with self.lock(), hash_snapshot():
+            managed = [key for key, profile in self.backend.clients.items() if self.detector.receipt(profile) is not None]
+            if not managed:
+                return []
+            states = {key: self.detector.inspect(key) for key in managed}
+            required = any(state.detected_version != self.manifest["version"] for state in states.values())
+            required |= file_hash(self.backend.executable) != file_hash(self.backend.source_executable)
+            if not required:
+                return []
+            changed = [state.display_name for state in states.values() if state.status != Status.INSTALLED_MANAGED]
+            if changed:
+                raise ManagerError("AUTO_SYNC_CONFLICT", "已保留发生变化的接入，请通过智能修复核对：" + "、".join(changed))
+            self.report(0.05, "正在随程序同步已安装的 Skill 和 MCP")
+            return self._upgrade(self.upgrade_targets())
 
     def _guard(self, key: str, operation: str):
         state = self.detector.inspect(key)
@@ -96,7 +121,7 @@ class InstallerService:
         if operation in {"install", "repair", "adopt"} and self.backend.executable.exists() and file_hash(self.backend.executable) != file_hash(self.backend.source_executable):
             references, unknown = self._references()
             if set(references) - {key} or unknown:
-                raise ManagerError("SHARED_UPGRADE_REQUIRED", "共享运行时被其他接入引用，请先在「版本与升级」中统一升级受管接入")
+                raise ManagerError("SHARED_UPGRADE_REQUIRED", "共享运行时需要先随当前程序同步，请重新打开管理器完成自动同步")
         return state
 
     def preview(self, operation: str, ids: list[str]) -> dict:
@@ -139,7 +164,7 @@ class InstallerService:
 
     def verify(self, key: str, *, progress=None):
         state = self.detector.inspect(key)
-        if not state.receipt_valid or not state.runtime_present or "RUNTIME_HASH_MISMATCH" in state.problem_codes:
+        if not state.receipt_valid or not state.runtime_present or state.status != Status.INSTALLED_MANAGED:
             raise ManagerError("UNTRUSTED_RUNTIME", "请先检查或修复受管运行时，未启动外部程序")
         self.log.emit("verify", "正在执行真实 MCP stdio 握手", target_id=key)
         result = self._probe(progress or self.report)
@@ -333,6 +358,7 @@ class InstallerService:
         return references, unknown
 
     def _cleanup_runtime(self, journal):
+        from installer.bundle import BUNDLE_FILE
         references, unknown = self._references()
         if references or unknown:
             self.log.emit("cleanup", "共享运行时仍有引用或存在未知状态，已保留", level="INFO", references=references, unknown=unknown)
@@ -341,6 +367,9 @@ class InstallerService:
             journal.wrote(self.backend.executable, None)
             try:
                 self.backend.executable.unlink()
+                if (self.backend.data / BUNDLE_FILE).exists():
+                    journal.wrote(self.backend.data / BUNDLE_FILE, None)
+                    (self.backend.data / BUNDLE_FILE).unlink()
                 self.log.emit("cleanup", "无已知引用的共享运行时已清理", level="SUCCESS")
             except PermissionError:
                 atomic_write(self.backend.data / "cleanup-pending.json", json.dumps({"path": str(self.backend.executable), "hash": file_hash(self.backend.executable)}).encode())

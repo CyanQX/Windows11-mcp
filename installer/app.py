@@ -14,10 +14,6 @@ from pathlib import Path
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from installer.backend import Configuration, Installer, mcp_entry
-from installer.ui.scenarios import SMOKE_CASES
-
-
 def resources() -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
@@ -73,6 +69,7 @@ async def check_service(command: Path, *, home: Path | None = None) -> dict:
 
 
 def isolated_test(root: Path) -> None:
+    from installer.backend import Configuration, Installer, mcp_entry
     from installer.storage import check_path
     root = check_path(root, Path(tempfile.gettempdir()))
     if root.exists() and any(root.iterdir()):
@@ -117,15 +114,17 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
     from installer.storage import ProcessLock, private_directory
     from installer.models import ManagerError
     from windows_mcp.infrastructure.approvals import ApprovalStore
-    from installer.ui.main_window import MainWindow
-    from installer.ui.theme import application
-    from PySide6.QtCore import QTimer
 
     settings = SettingsService(Path.home())
     private_directory(settings.path.parent)
     wake = settings.path.parent / "manager-wake.json"
     try:
         with ProcessLock(settings.path.parent / "manager-ui.lock"):
+            # Claim the instance before loading Qt. Repeated clicks can wake
+            # this process without starting several expensive UI imports.
+            from installer.ui.main_window import MainWindow
+            from installer.ui.theme import application
+            from PySide6.QtCore import QTimer
             app = application()
             window = MainWindow(resources(), settings, Path(sys.executable), approval_store=ApprovalStore(settings.path.parent / "approvals"), wake_path=wake, auto_scan=finish_plan is None and not installer_update)
             window.show()
@@ -141,10 +140,7 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
                 def finish():
                     try:
                         window.service.report(0, "正在完成版本更新")
-                        ids = window.service.upgrade_targets()
-                        if ids:
-                            plan = window.service.preview("upgrade", ids)
-                            window.service.apply_plan("upgrade", ids, plan["digest"])
+                        window.service.synchronize_installed()
                         window.service.report(1, "版本更新完成")
                         window.service.log.emit("update", f"已更新至 {window.version}", level="SUCCESS")
                         if finish_plan:
@@ -167,6 +163,9 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].startswith("--migrate-legacy="):
+        from installer.legacy_migration import migrate
+        raise SystemExit(migrate(Path(sys.argv[1].split("=", 1)[1]), Path(sys.executable).parent, sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == "native-helper":
         # Native capture/probe children need neither the MCP SDK nor its UIA
         # client. Avoid those imports on each frozen helper's cold start.
@@ -191,6 +190,7 @@ def main():
         return
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", type=Path)
+    parser.add_argument("--sync-installed", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--portable-check", type=Path)
     parser.add_argument("--review-request")
     parser.add_argument("--apply-update", type=Path)
@@ -205,10 +205,22 @@ def main():
     parser.add_argument("--glass-background", choices=["cold", "dark"], default="cold", help=argparse.SUPPRESS)
     parser.add_argument("--ui-smoke-select", nargs="*", default=[])
     parser.add_argument("--ui-smoke-size", nargs=2, type=int)
+    from installer.ui.scenarios import SMOKE_CASES
     parser.add_argument("--ui-smoke-case", choices=SMOKE_CASES, default="ready")
     parser.add_argument("--ui-smoke-scale", type=float, default=1.0)
     args = parser.parse_args()
-    if args.glass_demo:
+    if args.sync_installed:
+        from installer.settings import SettingsService
+        from installer.operations import InstallerService
+        settings = SettingsService(Path.home())
+        backend = settings.backend(resources() / "skills" / "windows-mcp", Path(sys.executable))
+        service = InstallerService(backend, json.loads((resources() / "manifest.json").read_text(encoding="utf-8")))
+        try:
+            service.synchronize_installed()
+        except Exception as exc:
+            service.log.emit("update", "已安装接入未完成同步", level="ERROR", detail=str(exc))
+            raise SystemExit(1) from exc
+    elif args.glass_demo:
         from installer.ui.glass_demo import run
         run(resources(), capture_path=args.glass_capture, size=args.ui_smoke_size, scale=args.ui_smoke_scale, verify=args.glass_verify, dark=args.glass_background == "dark")
     elif args.self_test:
@@ -250,6 +262,6 @@ if __name__ == "__main__":
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_text(json.dumps({"error": type(exc).__name__, "message": str(exc)}, ensure_ascii=True), encoding="utf-8")
                     raise SystemExit(1) from exc
-        if getattr(sys, "frozen", False) and not any(arg.split("=", 1)[0] in {"--serve", "serve", "auth", "doctor", "connectors", "manifest", "native-helper", "trust", "network", "--self-test", "--portable-check", "--apply-update", "--ui-smoke"} for arg in sys.argv[1:]):
+        if getattr(sys, "frozen", False) and not any(arg.split("=", 1)[0] in {"--serve", "serve", "auth", "doctor", "connectors", "manifest", "native-helper", "trust", "network", "--self-test", "--portable-check", "--apply-update", "--ui-smoke", "--sync-installed"} for arg in sys.argv[1:]):
             ctypes.windll.user32.MessageBoxW(None, f"管理器未能启动：{exc}\n原配置与文件已保留。", "Windows MCP", 16)
         raise

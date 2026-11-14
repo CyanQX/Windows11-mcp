@@ -21,7 +21,7 @@ def main():
     expected = hashlib.sha256(args.payload.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix="windows-mcp-wizard-check-", ignore_cleanup_errors=True) as temporary:
         destination = Path(temporary) / "chosen-install-location"
-        subprocess.run([str(args.installer.resolve()), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOICONS", "/TASKS=", f"/DIR={destination}"], check=True, timeout=180)
+        subprocess.run([str(args.installer.resolve()), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/WMCPNOSYNC=1", "/NOICONS", "/TASKS=", f"/DIR={destination}"], check=True, timeout=180)
         executable = destination / "Windows-MCP.exe"
         assert hashlib.sha256(executable.read_bytes()).hexdigest() == expected
         uninstaller = destination / "unins000.exe"
@@ -37,7 +37,7 @@ def main():
         # registered installation must skip the guide and retain its path.
         executable.write_bytes(b"MZ isolated previous manager")
         update_log = Path(temporary) / "update-install.log"
-        bootstrap = subprocess.Popen([str(args.installer.resolve()), "/WMCPNOLAUNCH=1", f"/LOG={update_log}"])
+        bootstrap = subprocess.Popen([str(args.installer.resolve()), "/WMCPNOLAUNCH=1", "/WMCPNOSYNC=1", f"/LOG={update_log}"])
         try:
             bootstrap.wait(timeout=60)
         except subprocess.TimeoutExpired:
@@ -65,7 +65,7 @@ def main():
         for mode in ("/SILENT", "/VERYSILENT"):
             executable.write_bytes(b"MZ isolated previous manager")
             silent_log = Path(temporary) / (mode[1:].lower() + "-update.log")
-            subprocess.run([str(args.installer.resolve()), mode, "/SUPPRESSMSGBOXES", "/SP-", "/NORESTART", "/WMCPUPDATE=1", "/WMCPNOLAUNCH=1", f"/DIR={destination}", f"/LOG={silent_log}"], check=True, timeout=180)
+            subprocess.run([str(args.installer.resolve()), mode, "/SUPPRESSMSGBOXES", "/SP-", "/WMCPNOSYNC=1", "/NORESTART", "/WMCPUPDATE=1", "/WMCPNOLAUNCH=1", f"/DIR={destination}", f"/LOG={silent_log}"], check=True, timeout=180)
             assert hashlib.sha256(executable.read_bytes()).hexdigest() == expected
             raw = silent_log.read_bytes()
             content = raw.decode("utf-16" if raw.startswith(b"\xff\xfe") else "utf-8-sig", errors="replace")
