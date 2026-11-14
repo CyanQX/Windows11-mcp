@@ -10,10 +10,10 @@ from installer.models import ManagerError, IntegrationStatus
 from tests.installer_helpers import make_service
 
 
-def fixture(tmp_path, old_version):
+def fixture(tmp_path, old_version, keys=("codex", "claude")):
     service = make_service(tmp_path / "fixture")
     service.backend.version = service.manifest["version"] = old_version
-    service.install_targets(["codex", "claude"])
+    service.install_targets(list(keys))
     old = service.backend.executable.read_bytes()
     root = tmp_path / "new-payload"
     root.mkdir()
@@ -35,6 +35,7 @@ def test_migration_is_atomic_version_consistent_and_keeps_unknown_files(tmp_path
     target.mkdir()
     personal = target / "user-notes.txt"
     personal.write_text("keep")
+    original_configs = {key: service.backend.clients[key].config.read_bytes() for key in ("codex", "claude")}
     plan = prepare(service, target, payload / "Windows-MCP.exe", registered=False, stop=lambda _: [])
     record = SetupJournal.open(service, plan).record
     assert not service.backend.executable.exists(), "A reconnecting client could reopen the old runtime"
@@ -49,6 +50,7 @@ def test_migration_is_atomic_version_consistent_and_keeps_unknown_files(tmp_path
     for key in ("codex", "claude"):
         state = service.detector.inspect(key)
         assert state.status == IntegrationStatus.INSTALLED_MANAGED and state.detected_version == "1.9.10"
+        assert service.backend.clients[key].config.read_bytes() == original_configs[key]
     assert (plan.parent / "manifest.json").is_file()
     assert rollback(service, plan) == []  # Committed installs are never silently undone.
     assert old != service.backend.executable.read_bytes()
@@ -61,6 +63,29 @@ def test_preflight_conflict_does_not_delete_edited_skill(tmp_path):
     with pytest.raises(ManagerError, match="MIGRATION_CONFLICT"):
         prepare(service, tmp_path / "target", payload / "Windows-MCP.exe", registered=False, stop=lambda _: [])
     assert path.read_text() == "user-edited"
+
+
+def test_legacy_reinstall_preserves_client_comments_and_other_mcp_bytes(tmp_path):
+    service, payload, _ = fixture(tmp_path, "1.5.0")
+    profile = service.backend.clients["claude"]
+    raw = profile.config.read_bytes().replace(b'"windows-mcp": {', b'"personal-server": {"command": "my-own.exe"},\n    "windows-mcp": {\n      // operator note inside owned entry')
+    profile.config.write_bytes(b"// personal client settings\n" + raw)
+    before = profile.config.read_bytes()
+    plan = prepare(service, tmp_path / "target", payload / "Windows-MCP.exe", registered=False, stop=lambda _: [])
+    shutil.copytree(payload, tmp_path / "target")
+    assert commit(service, plan)["phase"] == "committed"
+    assert profile.config.read_bytes() == before
+
+
+def test_legacy_harness_keeps_patch_order_and_personal_plugins(tmp_path):
+    service, payload, _ = fixture(tmp_path, "1.5.0", keys=("deepseek",))
+    profile = service.backend.clients["deepseek"]
+    before = b"# operator comment\n" + profile.config.read_bytes() + b"\n# personal plugin\n- insert:\n  - id: personal-plugin\n    name: my-own-plugin\n"
+    profile.config.write_bytes(before)
+    plan = prepare(service, tmp_path / "target", payload / "Windows-MCP.exe", registered=False, stop=lambda _: [])
+    shutil.copytree(payload, tmp_path / "target")
+    assert commit(service, plan)["phase"] == "committed"
+    assert profile.config.read_bytes() == before
 
 
 def test_failed_component_verification_restores_old_clients_and_program(tmp_path):

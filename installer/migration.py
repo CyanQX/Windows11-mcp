@@ -368,6 +368,7 @@ def prepare(service, target, payload, *, registered=None, stop=stop_owned):
 
 def commit(service, path):
     from installer.bundle import verify
+    from installer.backend import Configuration, read_file
     journal = SetupJournal.open(service, path)
     if journal.record.get("phase") != "prepared" or journal.record["version"] != service.manifest["version"]:
         raise ManagerError("INVALID_SETUP_STATE", "安装事务版本或阶段不一致")
@@ -387,6 +388,31 @@ def commit(service, path):
             # the backend here keeps the global preflight rollback snapshots.
             for key in set(journal.record["managed"]) - set(journal.record["legacy"]):
                 service.backend.install(service.backend.clients[key])
+            # Removing/recreating an unchanged MCP entry can otherwise accumulate
+            # blank lines or discard comments inside it. Preserve the exact
+            # original client file when its complete semantic document is still
+            # identical; a legitimately changed entry or external edit is retained.
+            rows = {item["path"]: item for item in journal.record["files"]}
+            for key in journal.record["managed"]:
+                profile = service.backend.clients[key]
+                item = rows[str(profile.config.absolute())]
+                if item["before"] is None:
+                    continue
+                original = check_path(journal.root / item["slot"], journal.root).read_bytes()
+                import hashlib
+                if hashlib.sha256(original).hexdigest() != item["before"]:
+                    raise ManagerError("BACKUP_CORRUPT", "客户端配置备份校验失败")
+                current = read_file(profile.config)
+                if current is None or hashlib.sha256(current).hexdigest() != item["after"]:
+                    raise ManagerError("INSTALL_PLAN_CHANGED", "客户端配置在同步期间发生变化，未覆盖")
+                previous_config, updated_config = Configuration(profile, original), Configuration(profile, current)
+                same_entry = previous_config.get() == updated_config.get()
+                previous_config.set(None)
+                updated_config.set(None)
+                if original != current and same_entry and previous_config.document == updated_config.document:
+                    if read_file(profile.config) != current:
+                        raise ManagerError("INSTALL_PLAN_CHANGED", "客户端配置在同步期间发生变化，未覆盖")
+                    service.backend._write(profile.config, original)
             if journal.record["managed"]:
                 result = service._probe()
                 if not result.ok:

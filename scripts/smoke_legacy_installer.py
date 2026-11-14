@@ -129,7 +129,8 @@ def check(installer, payload, root, version):
                 "actual_legacy_payload": True, "receipt_fixture": "schema 2, actual legacy Skill and executable",
                 "managed_profiles": ["codex", "claude"], "old_server_was_running": old_server_was_running,
                 "stopped_owned_server": old_server_was_running, "owned_backup": True,
-                "user_file_preserved": True, "new_components_consistent": True, "uninstall": "PASS"}
+                "user_file_preserved": True, "new_components_consistent": True,
+                "client_configuration_bytes_preserved": True, "uninstall": "PASS"}
     finally:
         if old_server.poll() is None:
             old_server.kill()
