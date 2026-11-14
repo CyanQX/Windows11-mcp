@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to verify and publish
+        required: true
+        type: string
   push:
     tags:
       - 'v*'
@@ -12,6 +18,8 @@ jobs:
   tests:
     name: Verify Windows release source
     uses: ./.github/workflows/test.yml
+    with:
+      source_ref: ${{ inputs.tag || github.ref }}
     permissions:
       contents: read
 
@@ -24,6 +32,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -42,7 +52,8 @@ jobs:
 
       - name: Verify tag, package metadata and complete runtime source
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          PYTHONPATH: ${{ github.workspace }}/src
         run: |
           python scripts/verify_distribution.py --dist dist --tag "$RELEASE_TAG" > dist/distribution-verification.json
           python -c "from pathlib import Path; import re; text = Path('CHANGELOG.md').read_text(encoding='utf-8'); current = re.search(r'^## .+?(?=^## |\Z)', text, re.M | re.S).group(0); Path('release-notes.md').write_text(current, encoding='utf-8')"
@@ -50,7 +61,7 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Actilo $RELEASE_TAG" --notes-file release-notes.md --latest
 
   windows_setup:
@@ -65,18 +76,30 @@ jobs:
         id: verified
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_TAG: ${{ inputs.tag || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
           python - <<'PY'
-          import json, os, time, urllib.request
+          import json, os, re, time, urllib.request
+          from urllib.parse import quote
           base = "https://api.github.com/repos/" + os.environ["REPOSITORY"]
           def read(path):
               request = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
               with urllib.request.urlopen(request, timeout=30) as response:
                   return json.load(response)
+          tag = os.environ["SOURCE_TAG"]
+          if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
+              raise SystemExit("An existing stable release tag is required")
+          target = read("/git/ref/tags/" + quote(tag, safe=""))["object"]
+          for _ in range(5):
+              if target["type"] != "tag":
+                  break
+              target = read("/git/tags/" + target["sha"])["object"]
+          if target["type"] != "commit":
+              raise SystemExit("Release tag does not resolve to a commit")
+          source_sha = target["sha"]
           for attempt in range(60):
-              runs = read("/actions/workflows/setup.yml/runs?head_sha=" + os.environ["SOURCE_SHA"] + "&status=completed&per_page=100")["workflow_runs"]
+              runs = read("/actions/workflows/setup.yml/runs?head_sha=" + source_sha + "&status=completed&per_page=100")["workflow_runs"]
               for run in runs:
                   if run["conclusion"] != "success" or run["event"] not in {"push", "workflow_dispatch"} or run["head_repository"]["full_name"] != os.environ["REPOSITORY"]:
                       continue
@@ -84,7 +107,7 @@ jobs:
                   if any(item["name"] == "windows-mcp-setup" and not item["expired"] for item in artifacts):
                       with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                           output.write("run_id=" + str(run["id"]) + "\n")
-                      print("Using the binaries accepted for commit " + os.environ["SOURCE_SHA"] + ": " + run["html_url"])
+                      print("Using the binaries accepted for commit " + source_sha + ": " + run["html_url"])
                       raise SystemExit(0)
               time.sleep(20)
           raise SystemExit("No successful Windows installation/portable/UI acceptance exists for this exact commit; release has not been published.")
