@@ -326,6 +326,15 @@ if __name__ == "__main__":
     except Exception as exc:
         if getattr(sys, "frozen", False):
             if any(arg.split("=", 1)[0] in {"--installer-prepare", "--installer-commit", "--installer-rollback"} for arg in sys.argv[1:]):
+                result = argument_value(sys.argv[1:], "--installer-result")
+                if result:
+                    try:
+                        destination = Path(result).resolve()
+                        if destination.name == "actilo-transaction.txt" and destination.is_relative_to(Path(tempfile.gettempdir()).resolve()):
+                            from installer.backend import atomic_write
+                            atomic_write(destination.with_name(destination.name + ".error.json"), json.dumps({"code": getattr(exc, "code", type(exc).__name__), "message": str(exc)}, ensure_ascii=False).encode("utf-8"))
+                    except (OSError, ValueError):
+                        pass
                 raise SystemExit(1) from exc
             if report_update_failure(sys.argv[1:], exc):
                 raise SystemExit(1) from exc

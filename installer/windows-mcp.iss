@@ -202,6 +202,9 @@ begin
     if (not Exec(PreflightExecutable, '--installer-prepare="' + ExpandConstant('{app}') +
         '" --installer-result="' + ResultFile + '"', '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
     begin
+      Log('ACTILO_PREFLIGHT_EXIT=' + IntToStr(Code));
+      if LoadStringFromFile(ResultFile + '.error.json', Raw) then
+        Log('ACTILO_PREFLIGHT_ERROR=' + UTF8Decode(Raw));
       Result := 'Actilo 安装预检查失败，未继续安装。原文件与可恢复备份已保留。请查看安装日志。';
       Exit;
     end;
@@ -231,6 +234,16 @@ begin
     InstallationVerified := True;
     Log('WMCP_INSTALLED_INTEGRATIONS_SYNC=PASS');
     Log('ACTILO_INSTALL_VERIFIED=PASS');
+  end;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  Result := 0;
+  if not InstallationVerified then
+  begin
+    Log('ACTILO_INSTALL_VERIFIED=FAIL');
+    Result := 8;
   end;
 end;
 

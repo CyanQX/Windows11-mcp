@@ -104,3 +104,25 @@ def test_owned_old_bundle_is_retired_before_copy_and_rollback_restores_it(tmp_pa
     assert rollback(service, plan) == []
     assert dependency.read_bytes() == b"previous dependency"
     assert service.backend.executable.read_bytes() == old
+
+
+def test_reinstall_accepts_valid_stale_registration_without_missing_directory_failure(tmp_path, monkeypatch):
+    import winreg
+    from contextlib import nullcontext
+    from installer.migration import UNINSTALL_KEY
+
+    service, payload, _ = fixture(tmp_path, "1.7.0")
+    missing = tmp_path / "removed-old-program"
+    key = object()
+    rows = [(name, value, winreg.REG_SZ) for name, value in {
+        "DisplayName": "Windows-MCP 1.4.5", "DisplayVersion": "1.4.5", "Publisher": "CyanQX",
+        "InstallLocation": str(missing)}.items()]
+    open_key, query, enum = winreg.OpenKey, winreg.QueryInfoKey, winreg.EnumValue
+    monkeypatch.setattr(winreg, "OpenKey", lambda hive, name, *a, **kw: nullcontext(key) if name == UNINSTALL_KEY else open_key(hive, name, *a, **kw))
+    monkeypatch.setattr(winreg, "QueryInfoKey", lambda item: (0, len(rows), 0) if item is key else query(item))
+    monkeypatch.setattr(winreg, "EnumValue", lambda item, index: rows[index] if item is key else enum(item, index))
+    monkeypatch.setattr("installer.migration.restore_registration", lambda _: [])  # No real registry writes.
+    plan = prepare(service, tmp_path / "target", payload / "Windows-MCP.exe", stop=lambda _: [])
+    assert SetupJournal.open(service, plan).record["previous_install"]["root"] == str(missing)
+    assert rollback(service, plan) == []
+    assert not missing.exists()

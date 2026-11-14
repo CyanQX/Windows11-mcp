@@ -247,7 +247,9 @@ def prepare(service, target, payload, *, registered=None, stop=stop_owned):
     target = check_path(target)
     if target == Path(target.anchor):
         raise ManagerError("INVALID_DIRECTORY", "不能安装到磁盘根目录")
-    registered = registered_install() if registered is None else registered
+    # An interrupted uninstall can leave our valid AppId with no program folder.
+    # Keep the ownership metadata for backup/repair; do not make reinstall impossible.
+    registered = registered_install(allow_missing=True) if registered is None else registered
     bundle = verify(payload.parent)
     files = {target / name: row["sha256"] for name, row in bundle["files"].items()}
     files[target / BUNDLE_FILE] = file_hash(payload.parent / BUNDLE_FILE)
