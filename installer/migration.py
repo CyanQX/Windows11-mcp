@@ -272,9 +272,11 @@ def prepare(service, target, payload, *, registered=None, stop=stop_owned):
             service.upgrade_targets()  # Unknown shared-runtime references must be reviewed.
         paths = {path for key in managed for path in service.paths(key)} | set(files)
         old_files, old_values = legacy_artifacts(service, registered, target)
+        runtime_roots = set()
         data_bundle = load(service.backend.data) if managed else None
         if data_bundle:
             verify(service.backend.data)
+            runtime_roots.add(service.backend.data / data_bundle["contents"])
             old_files.extend(service.backend.data / name for name in data_bundle["files"] if name != EXECUTABLE)
             old_files.append(service.backend.data / BUNDLE_FILE)
         old_files = list(dict.fromkeys(old_files))
@@ -282,9 +284,13 @@ def prepare(service, target, payload, *, registered=None, stop=stop_owned):
         old = Path(registered["root"]) if registered else None
         if old:
             paths.add(check_path(old / EXECUTABLE))
-            if load(old):
+            old_bundle = load(old)
+            if old_bundle:
                 verify(old, executable=False)  # A registered broken core may be repaired.
+                runtime_roots.add(old / old_bundle["contents"])
                 paths.add(old / BUNDLE_FILE)
+        empty_directories = {directory for path in old_files for directory in path.parents
+                             if any(directory == root or directory.is_relative_to(root) for root in runtime_roots)}
         for path in files:
             if path.exists() and (old != target and path != service.backend.executable):
                 raise ManagerError("UNOWNED_DESTINATION_FILE", "目标文件已存在且无本项目安装归属，未覆盖：" + path.name)
@@ -331,6 +337,19 @@ def prepare(service, target, payload, *, registered=None, stop=stop_owned):
             journal.save()
             for path in old_files:
                 path.unlink(missing_ok=True)
+            # Same-bundle repair must not leave an empty immutable directory:
+            # stage_support correctly refuses to trust an incomplete existing one.
+            # Only parents of manifest-owned files are considered; rmdir never
+            # removes personal files or non-empty unknown subdirectories.
+            import errno
+            for directory in sorted(empty_directories, key=lambda value: len(value.parts), reverse=True):
+                try:
+                    directory.rmdir()
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    if exc.errno not in {errno.ENOTEMPTY, errno.EEXIST}:
+                        raise
             # Predict Inno's exact new bytes before it writes; rollback only
             # touches old bytes, these bytes, or a recorded owned mutation.
             for path, fingerprint in files.items():

@@ -106,6 +106,25 @@ def test_owned_old_bundle_is_retired_before_copy_and_rollback_restores_it(tmp_pa
     assert service.backend.executable.read_bytes() == old
 
 
+def test_reinstall_same_bundle_retires_empty_support_tree_before_synchronizing(tmp_path):
+    from installer.bundle import BUNDLE_FILE
+    from installer.storage import file_hash
+
+    service, payload, _ = fixture(tmp_path, "0.0.0")
+    shutil.copytree(payload, service.backend.data, dirs_exist_ok=True)
+    for key in ("codex", "claude"):
+        path = service.backend.receipt_path(service.backend.clients[key])
+        row = json.loads(path.read_text())
+        row.update(runtime_sha256=file_hash(service.backend.executable), bundle_sha256=file_hash(service.backend.data / BUNDLE_FILE))
+        path.write_text(json.dumps(row))
+    contents = json.loads((payload / BUNDLE_FILE).read_text())["contents"]
+    plan = prepare(service, tmp_path / "target", payload / "Windows-MCP.exe", registered=False, stop=lambda _: [])
+    assert not (service.backend.data / contents).exists()
+    shutil.copytree(payload, tmp_path / "target")
+    assert commit(service, plan)["phase"] == "committed"
+    assert all(service.detector.inspect(key).detected_version == "1.9.10" for key in ("codex", "claude"))
+
+
 def test_reinstall_accepts_valid_stale_registration_without_missing_directory_failure(tmp_path, monkeypatch):
     import winreg
     from contextlib import nullcontext

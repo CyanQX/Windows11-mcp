@@ -157,6 +157,8 @@ class Journal:
                     source = check_path(self.root / row["slot"], self.root)
                     if file_hash(source) != row["before"]:
                         raise ManagerError("BACKUP_CORRUPT", "备份散列不一致")
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    check_path(path)
                     staged = path.with_name(".mcp-restore-" + uuid.uuid4().hex)
                     shutil.copyfile(source, staged)
                     try:
