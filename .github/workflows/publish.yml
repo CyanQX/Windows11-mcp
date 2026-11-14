@@ -54,8 +54,50 @@ jobs:
         run: gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Windows-MCP $RELEASE_TAG" --notes-file release-notes.md --latest
 
   windows_setup:
-    name: Build and verify Windows manager
+    name: Reuse the verified Windows build for this commit
     needs: tests
-    uses: ./.github/workflows/setup.yml
+    runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
+    steps:
+      - name: Locate successful Windows acceptance for the exact tagged commit
+        id: verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import json, os, time, urllib.request
+          base = "https://api.github.com/repos/" + os.environ["REPOSITORY"]
+          def read(path):
+              request = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+          for attempt in range(60):
+              runs = read("/actions/workflows/setup.yml/runs?head_sha=" + os.environ["SOURCE_SHA"] + "&status=completed&per_page=100")["workflow_runs"]
+              for run in runs:
+                  if run["conclusion"] != "success" or run["event"] not in {"push", "workflow_dispatch"} or run["head_repository"]["full_name"] != os.environ["REPOSITORY"]:
+                      continue
+                  artifacts = read("/actions/runs/" + str(run["id"]) + "/artifacts")["artifacts"]
+                  if any(item["name"] == "windows-mcp-setup" and not item["expired"] for item in artifacts):
+                      with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                          output.write("run_id=" + str(run["id"]) + "\n")
+                      print("Using the binaries accepted for commit " + os.environ["SOURCE_SHA"] + ": " + run["html_url"])
+                      raise SystemExit(0)
+              time.sleep(20)
+          raise SystemExit("No successful Windows installation/portable/UI acceptance exists for this exact commit; release has not been published.")
+          PY
+      - name: Download the accepted Windows assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-mcp-setup
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: dist/setup
+      - name: Pass the same accepted bytes to release verification
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-mcp-setup
+          path: dist/setup/*
