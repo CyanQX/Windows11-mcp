@@ -38,6 +38,22 @@ def test_profile_alias_does_not_allow_nonowned_portable_directory(tmp_path, monk
         settings.validate(settings.value)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows token default owner")
+def test_token_default_owner_is_accepted_for_administrator_created_directory(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import win32security
+    home = tmp_path / "profile-alias"
+    home.mkdir()
+    portable = tmp_path / "portable"
+    portable.mkdir()
+    settings = SettingsService(home, env={"LOCALAPPDATA": str(home / "AppData")}, portable_data=portable)
+    administrator = win32security.ConvertStringSidToSid("S-1-5-32-544")
+    original = win32security.GetTokenInformation
+    monkeypatch.setattr(win32security, "GetTokenInformation", lambda token, kind: administrator if kind == win32security.TokenOwner else original(token, kind))
+    monkeypatch.setattr(win32security, "GetNamedSecurityInfo", lambda *args: SimpleNamespace(GetSecurityDescriptorOwner=lambda: administrator))
+    settings.validate(settings.value)
+
+
 def test_settings_roundtrip_and_unsupported_environment(tmp_path):
     home = tmp_path / "home"
     settings = SettingsService(home, env={"LOCALAPPDATA": str(home / "AppData")})

@@ -64,10 +64,13 @@ class SettingsService:
             token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
             try:
                 current = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+                default_owner = win32security.GetTokenInformation(token, win32security.TokenOwner)
             finally:
                 token.Close()
             owner = win32security.GetNamedSecurityInfo(str(parent), win32security.SE_FILE_OBJECT, win32security.OWNER_SECURITY_INFORMATION).GetSecurityDescriptorOwner()
-            if owner != current:
+            # Elevated Windows accounts may create folders owned by their
+            # token's default owner (Administrators), rather than TokenUser.
+            if owner not in (current, default_owner):
                 code = "OTHER_USER_PATH" if path.is_relative_to(users) else "DIRECTORY_OWNER_UNKNOWN"
                 raise ManagerError(code, "目录不属于当前 Windows 用户，请选择自己创建的文件夹")
 
