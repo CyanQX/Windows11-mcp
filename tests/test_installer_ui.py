@@ -1,6 +1,7 @@
 """Exercise fixed panels, real widget interactions and background work lifecycle."""
 from pathlib import Path
 import copy
+import sys
 import threading
 import time
 
@@ -565,6 +566,49 @@ def test_manager_drops_late_review_notifications_when_automatic_is_active(window
         QTest.qWait(10)
         window.poll()
     assert store.pending() == [] and window.operator_window is None
+
+
+def test_native_review_wake_reopens_known_pending_request_without_authorizing(window, monkeypatch):
+    from windows_mcp.infrastructure.trust import TrustStore
+
+    request = window.approval_store.request("session", "Click", {"loc": [1, 2]}, 2, "review wake")
+    request_id = request["request_id"]
+    monkeypatch.setattr(window, "known_requests", {request_id})
+    monkeypatch.setattr(window, "operator_checking", True)
+    monkeypatch.setattr(window, "wake_signal", lambda: "review")
+    opened = []
+    monkeypatch.setattr(window, "open_operator", opened.append)
+    window.poll_operator()
+    assert window.review_pending and opened == []
+    window.events.put(("operator", {request_id}))
+    window.poll()
+    assert opened == [request_id] and not window.review_pending
+    assert not TrustStore(window.approval_store.directory).full_access()
+    assert not window.approval_store.pending()[0]["approved"]
+
+
+def test_invalid_legacy_wake_does_not_block_signed_approval_poll(monkeypatch, tmp_path):
+    from windows_mcp.infrastructure.approvals import ApprovalStore
+
+    wake = tmp_path / "legacy-wake.json"
+    wake.write_text("partial legacy notification")
+    app = application()
+    settings = SettingsService(tmp_path / "home", env={"LOCALAPPDATA": str(tmp_path / "home/appdata")})
+    window = MainWindow(ROOT, settings, Path(sys.executable), service=make_service(tmp_path / "service"),
+                        approval_store=ApprovalStore(tmp_path / "approvals"), wake_path=wake, auto_scan=False)
+    request = window.approval_store.request("session", "Click", {"loc": [1, 2]}, 2, "legacy wake")
+    opened = []
+    monkeypatch.setattr(window, "open_operator", opened.append)
+    try:
+        window.poll_operator()
+        deadline = time.monotonic() + 3
+        while not opened and time.monotonic() < deadline:
+            QTest.qWait(10)
+            window.poll()
+        assert opened == [request["request_id"]] and window.pending_approvals == 1
+    finally:
+        window.close()
+        app.processEvents()
 
 
 @pytest.fixture

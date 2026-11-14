@@ -148,7 +148,7 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
     trace.record("settings-ready")
     wake = instance_root / "manager-wake.json"
     try:
-        with ManagerInstance(settings.home):
+        with ManagerInstance(settings.home, review=bool(review_request)) as instance:
             trace.record("instance-acquired")
             from windows_mcp.infrastructure.execution_security import require_runtime_available, InstallationInProgress
             try:
@@ -164,7 +164,7 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
             from PySide6.QtCore import QTimer
             app = application()
             trace.record("qt-ready")
-            window = MainWindow(resources(), settings, Path(sys.executable), approval_store=ApprovalStore(settings.path.parent / "approvals"), wake_path=wake, auto_scan=finish_plan is None and not installer_update)
+            window = MainWindow(resources(), settings, Path(sys.executable), approval_store=ApprovalStore(settings.path.parent / "approvals"), wake_path=wake, wake_signal=instance.consume_activation, auto_scan=finish_plan is None and not installer_update)
             window.show()
             QTimer.singleShot(0, lambda: trace.record("window-visible"))
             if not review_request and not finish_plan and not installer_update:
@@ -207,7 +207,6 @@ def gui(review_request=None, finish_plan=None, update_nonce=None, installer_upda
         if exc.code != "INSTALLER_BUSY":
             trace.record("startup-failed", status="failed", error=exc)
             raise
-        atomic_write(wake, json.dumps({"request_id": review_request}).encode())
         trace.record("existing-instance-activated")
         if finish_plan:
             atomic_write(finish_plan.parent / "result.json", b'{"ok":false}')

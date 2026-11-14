@@ -20,6 +20,50 @@ def test_real_mutex_excludes_child_and_releases_on_exit(tmp_path):
     assert subprocess.run([sys.executable, "-c", child, str(tmp_path)], capture_output=True, timeout=10).returncode == 0
 
 
+def test_concurrent_native_wakes_survive_locked_legacy_file_and_early_startup(tmp_path):
+    import win32con
+    import win32file
+
+    wake = tmp_path / "manager-wake.json"
+    wake.write_bytes(b'{"request_id":null}')
+    # Reproduce Windows' no-FILE_SHARE_DELETE reader that broke os.replace.
+    locked = win32file.CreateFile(str(wake), win32con.GENERIC_READ, win32con.FILE_SHARE_READ,
+                                 None, win32con.OPEN_EXISTING, 0, None)
+    child = """
+import sys
+from pathlib import Path
+from installer.instance import ManagerInstance
+from installer.models import ManagerError
+try:
+    with ManagerInstance(Path(sys.argv[1]), review=len(sys.argv) > 2):
+        raise SystemExit(5)
+except ManagerError as exc:
+    if exc.code != 'INSTALLER_BUSY':
+        raise
+"""
+    try:
+        with ManagerInstance(tmp_path) as owner:
+            assert owner.consume_activation() is None
+            children = [subprocess.Popen([sys.executable, "-c", child, str(tmp_path)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(8)]
+            for process in children:
+                _, error = process.communicate(timeout=15)
+                assert process.returncode == 0, error
+            # Poll only after every child exits, just as while Qt loads.
+            assert owner.consume_activation() == "activate"
+            assert owner.consume_activation() is None
+            assert subprocess.run([sys.executable, "-c", child, str(tmp_path), "review"],
+                                  capture_output=True, timeout=10).returncode == 0
+            assert owner.consume_activation() == "review"
+            with ManagerInstance(tmp_path / "other-home") as other:
+                assert other.consume_activation() is None
+            assert wake.read_bytes() == b'{"request_id":null}'
+    finally:
+        locked.Close()
+    with ManagerInstance(tmp_path) as restarted:
+        assert restarted.consume_activation() is None
+
+
 def test_release_notes_are_user_and_version_scoped_and_atomic(tmp_path):
     state = ReleaseNotesState(tmp_path / "user-A", "1.9.10")
     assert not state.shown() and not state.path.exists()

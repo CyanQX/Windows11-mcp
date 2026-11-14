@@ -29,7 +29,7 @@ class MainWindow(QMainWindow):
     approvals_changed = Signal(int)
     operation_changed = Signal(bool)
 
-    def __init__(self, base, settings, executable, *, service=None, approval_store=None, wake_path=None, auto_scan=True):
+    def __init__(self, base, settings, executable, *, service=None, approval_store=None, wake_path=None, wake_signal=None, auto_scan=True):
         super().__init__()
         self.base, self.settings, self.source_executable = base, settings, executable
         self.manifest = json.loads((base / "manifest.json").read_text(encoding="utf-8"))
@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
         self.events, self.busy, self.selection = queue.Queue(), False, SelectionModel()
         self.service = service
         self.approval_store, self.wake_path = approval_store, wake_path
+        self.wake_signal, self.review_pending = wake_signal, False
         self.operator_window, self.known_requests, self.dialogs = None, set(), []
         self.pending_approvals = 0
         self.update_release = None
@@ -230,6 +231,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(self.task_progress.message)
 
     def poll(self):
+        self.poll_activation()
         logs, progress_changed = [], False
         for _ in range(160):
             try:
@@ -249,8 +251,9 @@ class MainWindow(QMainWindow):
                 self.operator_checking = False
                 pending = value
                 new = pending - self.known_requests
-                if new:
-                    self.open_operator(next(iter(new)))
+                if new or self.review_pending and pending:
+                    self.open_operator(sorted(new or pending)[0])
+                self.review_pending = False
                 self.known_requests = pending
                 if self.pending_approvals != len(pending):
                     self.pending_approvals = len(pending)
@@ -417,8 +420,22 @@ class MainWindow(QMainWindow):
         else:
             self.operator_window = OperatorCenter(self, self.approval_store, request_id)
 
+    def poll_activation(self):
+        activation = self.wake_signal() if self.wake_signal else None
+        if activation:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+            if activation == "review":
+                # The signed approval store carries request details. Wake
+                # events carry no commands, paths or authorization grants.
+                self.review_pending = True
+
     def poll_operator(self):
+        self.poll_activation()
         try:
+            # Read a notification left by an older launcher, but new launches
+            # exclusively use native events and never contend on this file.
             if self.wake_path and self.wake_path.exists():
                 wake = json.loads(self.wake_path.read_text(encoding="utf-8"))
                 self.wake_path.unlink()
@@ -428,19 +445,20 @@ class MainWindow(QMainWindow):
                     self.showNormal()
                     self.raise_()
                     self.activateWindow()
-            if self.approval_store and not self.operator_checking:
-                self.operator_checking = True
-                store = self.approval_store
-                def read_pending():
-                    try:
-                        store.dismiss_automatic()
-                        pending = {item["request_id"] for item in store.pending() if not item["approved"]}
-                    except (OSError, ValueError, KeyError):
-                        pending = self.known_requests.copy()
-                    self.events.put(("operator", pending))
-                threading.Thread(target=read_pending, daemon=True, name="manager-approval-check").start()
         except (OSError, ValueError, KeyError):
             pass
+        # A stale or locked legacy notification cannot starve signed requests.
+        if self.approval_store and not self.operator_checking:
+            self.operator_checking = True
+            store = self.approval_store
+            def read_pending():
+                try:
+                    store.dismiss_automatic()
+                    pending = {item["request_id"] for item in store.pending() if not item["approved"]}
+                except (OSError, ValueError, KeyError):
+                    pending = self.known_requests.copy()
+                self.events.put(("operator", pending))
+            threading.Thread(target=read_pending, daemon=True, name="manager-approval-check").start()
 
     def error(self, title, message):
         from installer.ui.dialogs import Preview
