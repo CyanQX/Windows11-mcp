@@ -109,6 +109,7 @@ def check(installer, payload, root, version):
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
     try:
         time.sleep(2)
+        old_server_was_running = old_server.poll() is None
         run([installer, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOICONS", "/TASKS=", "/WMCPNOLAUNCH=1", "/ACTILOMANUALMIGRATION=1", "/DIR=" + str(new_dir)], env, timeout=420)
         old_server.wait(timeout=15)
         assert personal.read_text(encoding="utf-8") == "must survive project cleanup"
@@ -126,7 +127,8 @@ def check(installer, payload, root, version):
         run([new_dir / "unins000.exe", "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], env)
         return {"from_version": version, "to_version": "1.9.10", "actual_legacy_setup_sha256": fingerprint,
                 "actual_legacy_payload": True, "receipt_fixture": "schema 2, actual legacy Skill and executable",
-                "managed_profiles": ["codex", "claude"], "stopped_owned_server": True, "owned_backup": True,
+                "managed_profiles": ["codex", "claude"], "old_server_was_running": old_server_was_running,
+                "stopped_owned_server": old_server_was_running, "owned_backup": True,
                 "user_file_preserved": True, "new_components_consistent": True, "uninstall": "PASS"}
     finally:
         if old_server.poll() is None:

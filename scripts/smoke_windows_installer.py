@@ -58,7 +58,9 @@ def main():
         destination = Path(temporary) / "chosen-install-location"
         service, isolated_env = integration_fixture(Path(temporary), args.payload)
         first_log = Path(temporary) / "first-install.log"
+        first_started = time.monotonic()
         completed = subprocess.run([str(args.installer.resolve()), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOICONS", "/TASKS=", f"/DIR={destination}", f"/LOG={first_log}"], env=isolated_env, timeout=240)
+        first_elapsed = round(time.monotonic() - first_started, 2)
         states = {key: service.detector.inspect(key) for key in ("codex", "claude")}
         if completed.returncode or not all(state.detected_version == service.manifest["version"] for state in states.values()):
             print(json.dumps({"states": {key: state.to_dict() for key, state in states.items()}, "home": str(service.backend.home), "data": str(service.backend.data)}, ensure_ascii=True), flush=True)
@@ -81,8 +83,12 @@ def main():
         executable.write_bytes(b"MZ isolated previous manager")
         update_log = Path(temporary) / "update-install.log"
         bootstrap = subprocess.Popen([str(args.installer.resolve()), "/WMCPNOLAUNCH=1", f"/LOG={update_log}"], env=isolated_env)
+        update_started = time.monotonic()
         try:
-            bootstrap.wait(timeout=60)
+            # Includes verified backups of both full bundles and a real MCP
+            # postcheck. The former one-file 60-second bound cut off a healthy
+            # transaction after file copy, while verification was still running.
+            bootstrap.wait(timeout=240)
         except subprocess.TimeoutExpired:
             if update_log.exists():
                 raw = update_log.read_bytes()
@@ -102,6 +108,7 @@ def main():
             raise AssertionError("Existing installation did not complete its progress-only update")
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as entry:
             assert str(destination) in winreg.QueryValueEx(entry, "UninstallString")[0]
+        update_elapsed = round(time.monotonic() - update_started, 2)
         # Use the exact flags passed by UpdateService.launch_installer. Both
         # silent modes must complete without competing wizard Next messages.
         silent_updates = []
@@ -128,7 +135,7 @@ def main():
             pass
         else:
             raise AssertionError("System uninstall entry was not removed")
-    result = {"installer": args.installer.name, "sha256": hashlib.sha256(args.installer.read_bytes()).hexdigest(), "chosen_directory_installation": "PASS", "automatic_component_sync": "PASS", "no_manual_component_step": True, "stale_pyinstaller_parent_environment": "PASS", "system_uninstall_registration": "PASS", "existing_install_progress_only_update": "PASS", "silent_update_modes": silent_updates, "silent_updates": "PASS", "original_install_location_preserved": "PASS", "uninstall": "PASS", "payload_sha256": expected, "actual_executable_validation": validation}
+    result = {"installer": args.installer.name, "sha256": hashlib.sha256(args.installer.read_bytes()).hexdigest(), "chosen_directory_installation": "PASS", "automatic_component_sync": "PASS", "no_manual_component_step": True, "stale_pyinstaller_parent_environment": "PASS", "system_uninstall_registration": "PASS", "existing_install_progress_only_update": "PASS", "silent_update_modes": silent_updates, "silent_updates": "PASS", "original_install_location_preserved": "PASS", "uninstall": "PASS", "payload_sha256": expected, "actual_executable_validation": validation, "first_install_seconds": first_elapsed, "existing_install_update_seconds": update_elapsed}
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=True, indent=2))
 

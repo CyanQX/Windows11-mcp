@@ -25,7 +25,7 @@ def package(executable: Path, output: Path, version: str):
         verify(executable.parent, bundle)
     target = output / (portable_bundle_name(version) if bundle else portable_name(version))
     root = portable_root(version)
-    readme = f"""Windows-MCP {version} x64 便携版
+    readme = f"""Actilo {version} x64 便携版
 
 解压整个文件夹后，双击 Windows-MCP.exe 打开安装与维护管理器。
 无需安装管理器、无需另装 Python。不要在 ZIP 内直接运行。
