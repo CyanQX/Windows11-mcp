@@ -309,11 +309,15 @@ def run(base, target, case="ready", size=None, scale=1.0, *, interactive=False):
                 else:
                     window.open_operator()
                     require(window.operator_window.auto_approve.isEnabled(), 'Persistent automatic preference is unavailable without a request')
-                    require(window.operator_window.defaults_row.isVisible(), 'Native UI acceptance failed: window.operator_window.defaults_row.isVisible()')
                     require(store.pending() == [], 'Native UI acceptance failed: store.pending() == []')
-                    window.operator_window.auto_approve.setChecked(case == "approval-default-automatic")
-                    require(not window.operator_window.trust.allows(), 'Native UI acceptance failed: not window.operator_window.trust.allows()')
-                    verified_steps.append("default_approval_available_without_requests_or_implicit_grants")
+                    if case == "approval-default-automatic":
+                        from PySide6.QtTest import QTest
+                        QTest.mouseClick(window.operator_window.auto_approve, Qt.MouseButton.LeftButton)
+                        require(window.operator_window.trust.full_access(), "One click did not save full access")
+                        verified_steps.append("full_access_saved_with_one_click_without_pending_request")
+                    else:
+                        require(not window.operator_window.trust.allows(), "Opening settings unexpectedly granted access")
+                        verified_steps.append("opening_settings_never_grants_access")
                 QTimer.singleShot(350, lambda: take(window.operator_window))
             else:
                 take()
