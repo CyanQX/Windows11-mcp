@@ -59,8 +59,7 @@ Name: "{group}\卸载 Actilo"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Actilo"; Filename: "{app}\Windows-MCP.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Windows-MCP.exe"; Description: "安装完成后启动 Actilo"; Flags: nowait postinstall runasoriginaluser skipifsilent; Check: not IsManagerUpdate
-Filename: "{app}\Windows-MCP.exe"; Parameters: "--finish-installer-update"; Flags: nowait runasoriginaluser; Check: ShouldLaunchUpdate
+Filename: "{app}\Windows-MCP.exe"; Description: "安装完成后启动 Actilo"; Flags: nowait postinstall runasoriginaluser skipifsilent; Check: ShouldOfferLaunch
 
 [Code]
 function SetEnvironmentVariable(lpName, lpValue: String): Boolean;
@@ -79,14 +78,16 @@ var
   PreflightExecutable, TransactionPath: String;
   InstallationVerified: Boolean;
 
-function IsManagerUpdate: Boolean;
+function ShouldOfferLaunch: Boolean;
 begin
-  Result := ManagerUpdate;
+  Result := InstallationVerified and (not ManagerUpdate) and
+    (ExpandConstant('{param:WMCPNOLAUNCH|0}') <> '1');
 end;
 
 function ShouldLaunchUpdate: Boolean;
 begin
-  Result := ManagerUpdate and (ExpandConstant('{param:WMCPNOLAUNCH|0}') <> '1');
+  Result := InstallationVerified and ManagerUpdate and
+    (ExpandConstant('{param:WMCPNOLAUNCH|0}') <> '1');
 end;
 
 function IsLegacyVersion(Value: String): Boolean;
@@ -234,6 +235,17 @@ begin
     InstallationVerified := True;
     Log('WMCP_INSTALLED_INTEGRATIONS_SYNC=PASS');
     Log('ACTILO_INSTALL_VERIFIED=PASS');
+  end;
+  if (CurStep = ssDone) and ShouldLaunchUpdate then
+  begin
+    { Non-postinstall [Run] entries execute BEFORE ssPostInstall. Launching
+      there raced the signed setup marker and opened a blocking recovery
+      dialog. Commit already synchronized and verified every integration;
+      start the ordinary manager once, only after successful verification. }
+    Log('ACTILO_MANAGER_LAUNCH=after-verified-commit');
+    if not ExecAsOriginalUser(ExpandConstant('{app}\Windows-MCP.exe'), '', '',
+        SW_SHOWNORMAL, ewNoWait, Code) then
+      Log('ACTILO_MANAGER_LAUNCH_FAILED=' + IntToStr(Code));
   end;
 end;
 

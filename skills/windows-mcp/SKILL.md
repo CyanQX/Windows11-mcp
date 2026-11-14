@@ -5,7 +5,7 @@ description: Use the connected Windows-MCP server to operate real Windows applic
 
 # Actilo
 
-This skill supplies operating guidance for Actilo 1.9.10 (compatible windows-mcp service). Discover the client's connected tool catalog first; if the server is missing, ask the user to finish setup or reconnect the client before attempting desktop actions.
+This skill supplies operating guidance for Actilo 1.9.11 (compatible windows-mcp service). Discover the client's connected tool catalog first; if the server is missing, ask the user to finish setup or reconnect the client before attempting desktop actions.
 
 ## Choose the execution channel
 

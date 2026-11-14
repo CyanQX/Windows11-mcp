@@ -331,9 +331,9 @@ exclude = ["PowerShell", "Registry"]
 - 客户端空闲 15 分钟后回收会话和浏览器，断线后不保证立即回收。浏览器能力仅验证本机已安装 Edge；Chrome/Chromium 通道及 Office COM/模型适配仍待单独验收。
 
 
-## Actilo 1.9.10 安装与执行权限
+## Actilo 1.9.11 安装与执行权限
 
-正式安装包为 `Actilo_1.9.10_setup.exe`。旧于 1.7.0 的已分发客户端无法被追溯修改，请从 Releases 手动下载；新版更新模块可显示手动升级引导。安装器优先 D:\Actilo，不可用时回退到用户本地 Programs\Actilo。内部 windows-mcp、Windows-MCP.exe、.windows-mcp 和旧 AppId 保留兼容。受管接入按收据校验、备份、迁移与握手；未知和个人修改的内容不得清理。
+正式安装包为 `Actilo_1.9.11_setup.exe`。旧于 1.7.0 的已分发客户端无法被追溯修改，请从 Releases 手动下载；新版更新模块可显示手动升级引导。安装器优先 D:\Actilo，不可用时回退到用户本地 Programs\Actilo。内部 windows-mcp、Windows-MCP.exe、.windows-mcp 和旧 AppId 保留兼容。受管接入按收据校验、备份、迁移与握手；未知和个人修改的内容不得清理。
 
 AI 只能运行在非提升的普通用户 token，完全访问不放行 Administrator、SYSTEM、TrustedInstaller、UIAccess 或高完整性目标窗口。提升的客户端会收到 NON_ELEVATED_RUNTIME_REQUIRED；正常重新启动，禁止自动 runas、计划任务、服务、COM 提权或点击 UAC。Terminal 的 execute/start/write/read/cancel/close 返回客户端独立会话、有界输出、退出码、超时与取消；Windows Terminal 前端通过 App/Observe/Execute 操作。Job Object 是进程生命周期措施，不是完整 OS 沙箱。
 

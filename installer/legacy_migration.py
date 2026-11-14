@@ -72,8 +72,10 @@ def installed_version(executable):
 
 def manual_upgrade_guide():
     import ctypes
-    text = ("发现重大版本更新：Actilo v1.9.10\n当前版本低于 v1.7.0 或无法可靠识别。"
-            "为确保迁移稳定，不执行静默原地更新。请前往 GitHub 下载 Actilo_1.9.10_setup.exe 并手动安装。"
+    from windows_mcp.product import release_version, installer_name
+    version = release_version()
+    text = (f"发现重大版本更新：Actilo v{version}\n当前版本低于 v1.7.0 或无法可靠识别。"
+            f"为确保迁移稳定，不执行静默原地更新。请前往 GitHub 下载 {installer_name(version)} 并手动安装。"
             "\n选择“是”前往 GitHub 下载；选择“否”稍后再说。")
     if ctypes.windll.user32.MessageBoxW(None, text, "Actilo · 重大版本更新", 0x24) == 6:
         import webbrowser

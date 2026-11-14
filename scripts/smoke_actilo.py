@@ -30,6 +30,7 @@ async def check(executable, root):
     from windows_mcp.infrastructure.execution_security import require_standard, token_status, ExecutionDenied
     from windows_mcp.infrastructure.trust import TrustStore
     from windows_mcp.infrastructure.local_storage import private_directory
+    from windows_mcp.product import release_version
 
     home = root / "terminal-home"
     home.mkdir()
@@ -55,7 +56,7 @@ async def check(executable, root):
             state_report = data(await client.call_tool("Session", {"operation": "status"}))
             assert not state_report["execution_privilege"]["allowed"]
             assert state_report["execution_privilege"]["code"] == "NON_ELEVATED_RUNTIME_REQUIRED"
-            return {"version": "1.9.10", "tool_count": len(tools), "runtime_integrity": state["integrity"],
+            return {"version": release_version(), "tool_count": len(tools), "runtime_integrity": state["integrity"],
                     "privileged_parent_refused": True, "normal_terminal_tests": "not run: runner has a privileged token"}
         assert not result.is_error, result
         row = data(result)
@@ -71,7 +72,7 @@ async def check(executable, root):
         assert timeout["timed_out"] and not timeout["running"]
         denied = await client.call_tool("Terminal", {"command": "Start-Process cmd -Verb RunAs"}, raise_on_error=False)
         assert denied.is_error
-        return {"version": "1.9.10", "tool_count": len(tools), "runtime_integrity": state["integrity"],
+        return {"version": release_version(), "tool_count": len(tools), "runtime_integrity": state["integrity"],
                 "normal_powershell": "PASS", "cmd_exit_code": "PASS", "pwsh": extra,
                 "timeout_process_tree": "PASS", "explicit_elevation_refused": "PASS", "isolated_user_profile": True}
 

@@ -47,12 +47,64 @@ def integration_fixture(root, payload):
     return service, env
 
 
+def verify_manager_launch(service, executable, started, log):
+    """Exercise the default update launch, including its real native window."""
+    import psutil
+    import win32con
+    import win32gui
+    import win32process
+    from installer.migration import SetupJournal, active_path
+
+    trace = service.backend.home / ".windows-mcp/startup.jsonl"
+    process = None
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            rows = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()] if trace.exists() else []
+            rows = [row for row in rows if row["time"] >= started]
+            if rows and process is None:
+                process = psutil.Process(rows[0]["pid"])
+                assert Path(process.exe()).resolve() == executable.resolve()
+                assert process.create_time() >= started - 1
+            assert not any(row["stage"] in {"installation-in-progress", "startup-failed"} for row in rows), rows
+            visible = next((row for row in rows if row["stage"] == "window-visible"), None)
+            if visible:
+                assert len({row["pid"] for row in rows}) == 1, "Setup launched more than one manager"
+                assert not active_path(service).exists(), "Manager opened before installation committed"
+                plans = (service.backend.data / "setup/transactions").glob("*/manifest.json")
+                committed = [SetupJournal.open(service, path).record for path in plans]
+                latest = max(committed, key=lambda row: row.get("verified_at", 0))
+                assert latest["state"] == "committed" and latest["phase"] == "verified"
+                assert rows[0]["time"] >= latest["verified_at"]
+                raw = log.read_bytes()
+                content = raw.decode("utf-16" if raw.startswith(b"\xff\xfe") else "utf-8-sig")
+                assert content.index("ACTILO_INSTALL_VERIFIED=PASS") < content.index("ACTILO_MANAGER_LAUNCH=after-verified-commit")
+                return {"visible_after_verified_commit": True, "installation_dialog": False, "manager_processes": 1}
+            time.sleep(.1)
+        raise AssertionError("Updated manager did not display within 60 seconds")
+    finally:
+        if process is not None and process.is_running():
+            def close(hwnd, _):
+                if win32gui.IsWindowVisible(hwnd) and win32process.GetWindowThreadProcessId(hwnd)[1] == process.pid:
+                    win32gui.PostMessage(hwnd, win32con.WM_SYSCOMMAND, win32con.SC_CLOSE, 0)
+                return True
+            win32gui.EnumWindows(close, None)
+            try:
+                process.wait(30)
+            except psutil.TimeoutExpired:
+                process.kill()
+                process.wait(10)
+                raise AssertionError("Updated manager did not close cleanly")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("installer", type=Path)
     parser.add_argument("--payload", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        parser.error("Use only on a disposable GitHub runner; this test writes the real project AppId")
     expected = hashlib.sha256(args.payload.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix="windows-mcp-wizard-check-", ignore_cleanup_errors=True) as temporary:
         destination = Path(temporary) / "chosen-install-location"
@@ -82,7 +134,8 @@ def main():
         # registered installation must skip the guide and retain its path.
         executable.write_bytes(b"MZ isolated previous manager")
         update_log = Path(temporary) / "update-install.log"
-        bootstrap = subprocess.Popen([str(args.installer.resolve()), "/WMCPNOLAUNCH=1", f"/LOG={update_log}"], env=isolated_env)
+        launch_started = time.time()
+        bootstrap = subprocess.Popen([str(args.installer.resolve()), f"/LOG={update_log}"], env=isolated_env)
         update_started = time.monotonic()
         try:
             # Includes verified backups of both full bundles and a real MCP
@@ -109,13 +162,16 @@ def main():
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as entry:
             assert str(destination) in winreg.QueryValueEx(entry, "UninstallString")[0]
         update_elapsed = round(time.monotonic() - update_started, 2)
+        automatic_launches = [{"mode": "interactive-update", **verify_manager_launch(service, executable, launch_started, update_log)}]
         # Use the exact flags passed by UpdateService.launch_installer. Both
         # silent modes must complete without competing wizard Next messages.
         silent_updates = []
         for mode in ("/SILENT", "/VERYSILENT"):
             executable.write_bytes(b"MZ isolated previous manager")
             silent_log = Path(temporary) / (mode[1:].lower() + "-update.log")
-            subprocess.run([str(args.installer.resolve()), mode, "/SUPPRESSMSGBOXES", "/SP-", "/NORESTART", "/WMCPUPDATE=1", "/WMCPNOLAUNCH=1", f"/DIR={destination}", f"/LOG={silent_log}"], env=isolated_env, check=True, timeout=180)
+            launch_started = time.time()
+            subprocess.run([str(args.installer.resolve()), mode, "/SUPPRESSMSGBOXES", "/SP-", "/NORESTART", "/WMCPUPDATE=1", f"/DIR={destination}", f"/LOG={silent_log}"], env=isolated_env, check=True, timeout=240)
+            automatic_launches.append({"mode": mode, **verify_manager_launch(service, executable, launch_started, silent_log)})
             assert hashlib.sha256(executable.read_bytes()).hexdigest() == expected
             raw = silent_log.read_bytes()
             content = raw.decode("utf-16" if raw.startswith(b"\xff\xfe") else "utf-8-sig", errors="replace")
@@ -135,7 +191,7 @@ def main():
             pass
         else:
             raise AssertionError("System uninstall entry was not removed")
-    result = {"installer": args.installer.name, "sha256": hashlib.sha256(args.installer.read_bytes()).hexdigest(), "chosen_directory_installation": "PASS", "automatic_component_sync": "PASS", "no_manual_component_step": True, "stale_pyinstaller_parent_environment": "PASS", "system_uninstall_registration": "PASS", "existing_install_progress_only_update": "PASS", "silent_update_modes": silent_updates, "silent_updates": "PASS", "original_install_location_preserved": "PASS", "uninstall": "PASS", "payload_sha256": expected, "actual_executable_validation": validation, "first_install_seconds": first_elapsed, "existing_install_update_seconds": update_elapsed}
+    result = {"installer": args.installer.name, "sha256": hashlib.sha256(args.installer.read_bytes()).hexdigest(), "chosen_directory_installation": "PASS", "automatic_component_sync": "PASS", "no_manual_component_step": True, "stale_pyinstaller_parent_environment": "PASS", "system_uninstall_registration": "PASS", "existing_install_progress_only_update": "PASS", "silent_update_modes": silent_updates, "silent_updates": "PASS", "automatic_manager_launches": automatic_launches, "original_install_location_preserved": "PASS", "uninstall": "PASS", "payload_sha256": expected, "actual_executable_validation": validation, "first_install_seconds": first_elapsed, "existing_install_update_seconds": update_elapsed}
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=True, indent=2))
 

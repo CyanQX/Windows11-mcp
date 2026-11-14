@@ -119,13 +119,13 @@ def check(installer, payload, root, version):
         current = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
         fresh = InstallerService(settings.backend(ROOT / "skills/windows-mcp", payload), current)
         states = {key: fresh.detector.inspect(key) for key in ("codex", "claude")}
-        assert all(state.detected_version == "1.9.10" and state.receipt_valid for state in states.values())
+        assert all(state.detected_version == current["version"] and state.receipt_valid for state in states.values())
         plans = list((backend.data / "setup/transactions").glob("*/manifest.json"))
         committed = [SetupJournal.open(fresh, path).record for path in plans]
         assert any(row["state"] == "committed" and row["phase"] == "verified" for row in committed)
         assert all(fresh.backend.clients[key].config.read_bytes() == before[key] for key in before)  # Stable MCP command paths.
         run([new_dir / "unins000.exe", "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], env)
-        return {"from_version": version, "to_version": "1.9.10", "actual_legacy_setup_sha256": fingerprint,
+        return {"from_version": version, "to_version": current["version"], "actual_legacy_setup_sha256": fingerprint,
                 "actual_legacy_payload": True, "receipt_fixture": "schema 2, actual legacy Skill and executable",
                 "managed_profiles": ["codex", "claude"], "old_server_was_running": old_server_was_running,
                 "stopped_owned_server": old_server_was_running, "owned_backup": True,
@@ -149,7 +149,8 @@ def main():
         parser.error("Use only on a disposable GitHub runner; this test writes the real project AppId")
     with tempfile.TemporaryDirectory(prefix="actilo-legacy-matrix-", ignore_cleanup_errors=True) as directory:
         rows = [check(args.installer.resolve(), args.payload.resolve(), Path(directory) / version, version) for version in ("1.5.0", "1.6.0", "1.7.0")]
-    args.output.write_text(json.dumps({"version": "1.9.10", "actual_legacy_installers": rows}, indent=2), encoding="utf-8")
+    version = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))["version"]
+    args.output.write_text(json.dumps({"version": version, "actual_legacy_installers": rows}, indent=2), encoding="utf-8")
     print(json.dumps({"actual_legacy_versions": [row["from_version"] for row in rows], "migration": "PASS"}))
 
 

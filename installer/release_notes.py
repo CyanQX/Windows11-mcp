@@ -7,8 +7,13 @@ import time
 from installer.backend import atomic_write
 from installer.storage import ProcessLock, private_directory
 
-TITLE = "🎉 本次重大更新"
-CONTENT = """Actilo v1.9.10｜让 AI 桌面操作更稳定、更流畅。
+TITLE = "本次更新"
+CONTENT = """Actilo v1.9.11｜修复安装完成后的启动时序。
+
+🔄 安装验证完成后再启动
+修复更新时提前打开管理面板，误弹“安装／恢复尚未完成”的问题。安装器统一完成 Skill、MCP 与主程序同步和验证后，才启动一次管理面板，无须再次同步组件。
+
+此前重大更新的功能继续保留：
 
 🚀 启动体验全面优化
 重点修复旧版启动缓慢、点击无响应、窗口重复打开与无限重载等问题，优化初始化流程和单实例运行机制。

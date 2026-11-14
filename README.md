@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Actilo 1.9.10</h1>
+  <h1>Actilo 1.9.11</h1>
   <p>让已连接的 AI 观察、操作并核对真实 Windows 应用</p>
 </div>
 
@@ -14,7 +14,7 @@
 
 Actilo 是运行在本机的 Windows 自动化 MCP 服务。连接 Claude Code、Codex 桌面端、DeepSeek Harness、Gemini CLI、Zcode 或 Trae 后，AI 可以读取真实窗口和控件、操作应用和网页，并通过状态或文件结果核对任务。模型与 AI 客户端由你选择，本项目不提供模型账号或云端算力。
 
-**本次发布目标：v1.9.10，文档更新于 2026-11-14。** 管理器改用随安装部署的运行目录，修复更新进程继承临时 Python 目录导致的 DLL 加载错误；已安装的受管 Skill 与 MCP 随程序自动同步，移除独立组件升级入口。提前占用单实例锁、延迟加载服务依赖、后台检查审批、减少空闲轮询和重复校验，提升启动与交互响应。持续全自动授权、自然鼠标及视觉复核能力继续保留。正式安装包、验证记录与校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整变化见 [CHANGELOG](CHANGELOG.md)。
+**本次发布目标：v1.9.11，文档更新于 2026-11-14。** 修复更新时过早启动管理器，弹出“安装／恢复尚未完成”的问题：安装器先同步 Skill、MCP 与主程序，提交验证成功后再启动一次管理面板，避免重复同步。新增交互更新、`/SILENT` 与 `/VERYSILENT` 三种路径的真实自动启动验收；安装期间的 AI 操作保护继续有效。1.9.10 的启动、授权、鼠标和界面优化继续保留。正式安装包、验证记录与校验值以 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 为准。完整变化见 [CHANGELOG](CHANGELOG.md)。
 
 | 组成 | 负责什么 |
 |---|---|
@@ -170,23 +170,23 @@ OCR 实际识别尚未在当前验收机通过：该机无包标识、无 Tesser
 
 ## 安装指南
 
-**旧版重大升级**：当前版本低于 **1.7.0** 的用户，请从 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 手动下载 `Actilo_1.9.10_setup.exe`。已分发的旧二进制不会因仓库更新而自动获得新弹窗；旧更新器不支持消息或跳转时，以这里及 Release 公告为准。1.7.0 及以上使用统一校验、备份、安装、组件同步与验证链路。
+**旧版重大升级**：当前版本低于 **1.7.0** 的用户，请从 [GitHub Releases](https://github.com/CyanQX/Windows11-mcp/releases/latest) 手动下载 `Actilo_1.9.11_setup.exe`。已分发的旧二进制不会因仓库更新而自动获得新弹窗；旧更新器不支持消息或跳转时，以这里及 Release 公告为准。1.7.0 及以上使用统一校验、备份、安装、组件同步与验证链路。
 
 安装器只处理同一项目 AppId、有效收据及确定目标的旧快捷方式和启动项，逐文件备份并校验；未知或已被个人修改的接入会中止迁移。MCP、Skill 和启动器随新版统一同步，失败不标记成功。恢复资料保存在管理器数据目录 `setup/transactions`，与原有配置/接入事务备份分开保留。
 
 安装完成默认勾选“安装完成后启动 Actilo”和“创建桌面快捷方式”。首次成功显示管理面板后自动打开“本次重大更新”；按 Windows 用户和版本记录可见结果，之后不会再自动出现，“关于”仍可手动查看。
 
-显示品牌和快捷方式统一为 **Actilo**。为兼容既有客户端命令、收据和便携更新协议，暂保留内部 `windows-mcp` MCP 名称／Skill 目录、`Windows-MCP.exe`、`WindowsMCP.bundle.json`、`.windows-mcp` 与旧 AppId；这些是兼容标识，不能据此把其他同名安装视为可删除对象。新增 `actilo` 控制台入口，原 `windows-mcp` 命令保留。仓库 Release 另提供与正式安装包字节完全一致的旧文件名别名，供已分发的 1.7 客户端识别；正式下载仍选择 `Actilo_1.9.10_setup.exe`。兼容便携桥读取旧包内版本，低于 1.7.0 或版本不明时只给出手动安装引导，不替换原程序。
+显示品牌和快捷方式统一为 **Actilo**。为兼容既有客户端命令、收据和便携更新协议，暂保留内部 `windows-mcp` MCP 名称／Skill 目录、`Windows-MCP.exe`、`WindowsMCP.bundle.json`、`.windows-mcp` 与旧 AppId；这些是兼容标识，不能据此把其他同名安装视为可删除对象。新增 `actilo` 控制台入口，原 `windows-mcp` 命令保留。仓库 Release 另提供与正式安装包字节完全一致的旧文件名别名，供已分发的 1.7 客户端识别；正式下载仍选择 `Actilo_1.9.11_setup.exe`。兼容便携桥读取旧包内版本，低于 1.7.0 或版本不明时只给出手动安装引导，不替换原程序。
 
 
 ### Windows x64 安装版与便携版
 
-从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.10/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.9.10；请在发布页核对所下载资产的版本。
+从 [最新正式 Release](https://github.com/CyanQX/Windows11-mcp/releases/latest) 下载对应版本，核对 [SHA256SUMS.txt](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.11/SHA256SUMS.txt)。两种格式均包含管理器、Skill、MCP 服务、Python 运行时及依赖，不必另装 Python。当前页面功能对应 v1.9.11；请在发布页核对所下载资产的版本。
 
 | 格式 | 文件与使用方法 | 数据位置 |
 |---|---|---|
-| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.10/Actilo_1.9.10_setup.exe) | `Actilo_1.9.10_setup.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
-| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.10/Windows-MCP-PortableBundle-v1.9.10-x64.zip) | `Windows-MCP-PortableBundle-v1.9.10-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
+| [安装版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.11/Actilo_1.9.11_setup.exe) | `Actilo_1.9.11_setup.exe`；首次安装向导选择位置，后续更新显示进度页 | 服务数据在 `%LOCALAPPDATA%\WindowsMCP`；管理器设置在 `~/.windows-mcp` |
+| [便携版下载](https://github.com/CyanQX/Windows11-mcp/releases/download/v1.9.11/Windows-MCP-PortableBundle-v1.9.11-x64.zip) | `Windows-MCP-PortableBundle-v1.9.11-x64.zip`；完整解压后运行 Windows-MCP.exe | 程序旁 data，保存配置、日志、备份、收据、运行时与审批数据 |
 
 **安装与接入同步：** 安装新版时会自动同步此实例已经管理的 Skill、MCP 配置与共享服务，并验证真实 stdio 连接；直接打开新版管理器也会检查并补齐版本同步。首次接入新的编程端仍在主界面选择安装。自行修改过的 Skill、外部 MCP 条目或无法确认的引用会保留，并提示使用“智能修复”核对；失败的接入更新按事务快照回滚。正在运行的旧 MCP 连接请重启对应客户端以加载新版。
 
