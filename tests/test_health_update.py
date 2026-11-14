@@ -96,6 +96,18 @@ def test_update_network_failure(tmp_path):
         service.check()
 
 
+@pytest.mark.parametrize("version", ["1.0.0", "1.5.0", "1.6.0", "1.6.99"])
+def test_pre_17_major_upgrade_requires_manual_download_without_staging(tmp_path, version):
+    metadata = {"tag_name": "v1.9.10", "draft": False, "prerelease": False, "assets": [], "body": "Actilo"}
+    service = UpdateService(tmp_path, version, Session(Response(metadata)))
+    result = service.check()
+    assert result["kind"] == "manual" and result["name"] == "Actilo_1.9.10_setup.exe"
+    assert result["url"] == "https://github.com/CyanQX/Windows11-mcp/releases/latest"
+    with pytest.raises(ManagerError, match="MANUAL_UPGRADE_REQUIRED"):
+        service.download(result)
+    assert not (tmp_path / "updates").exists()
+
+
 def test_update_helper_failed_launch_rolls_back_without_killing(tmp_path, monkeypatch):
     import sys
     from installer import updates

@@ -211,6 +211,7 @@ begin
       Exit;
     end;
     TransactionPath := Trim(UTF8Decode(Raw));
+    Log('ACTILO_TRANSACTION=' + TransactionPath);
     Log('ACTILO_PREFLIGHT=PASS');
   except
     Result := GetExceptionMessage;

@@ -57,8 +57,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix="windows-mcp-wizard-check-", ignore_cleanup_errors=True) as temporary:
         destination = Path(temporary) / "chosen-install-location"
         service, isolated_env = integration_fixture(Path(temporary), args.payload)
-        subprocess.run([str(args.installer.resolve()), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOICONS", "/TASKS=", f"/DIR={destination}"], env=isolated_env, check=True, timeout=240)
-        assert all(service.detector.inspect(key).detected_version == service.manifest["version"] for key in ("codex", "claude")), "Installed integrations were not synchronized by setup"
+        first_log = Path(temporary) / "first-install.log"
+        subprocess.run([str(args.installer.resolve()), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/NOICONS", "/TASKS=", f"/DIR={destination}", f"/LOG={first_log}"], env=isolated_env, check=True, timeout=240)
+        states = {key: service.detector.inspect(key) for key in ("codex", "claude")}
+        if not all(state.detected_version == service.manifest["version"] for state in states.values()):
+            print(json.dumps({"states": {key: state.to_dict() for key, state in states.items()}, "home": str(service.backend.home), "data": str(service.backend.data)}, ensure_ascii=True), flush=True)
+            raw = first_log.read_bytes()
+            print(raw.decode("utf-16" if raw.startswith(b"\xff\xfe") else "utf-8-sig", errors="replace")[-16000:], flush=True)
+            raise AssertionError("Installed integrations were not synchronized by setup")
         executable = destination / "Windows-MCP.exe"
         assert hashlib.sha256(executable.read_bytes()).hexdigest() == expected
         uninstaller = destination / "unins000.exe"

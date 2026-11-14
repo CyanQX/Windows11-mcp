@@ -169,6 +169,36 @@ def test_legacy_version_reader_uses_bounded_embedded_manifest(tmp_path):
     assert installed_version(executable) is None
 
 
+@pytest.mark.parametrize("old_version", ["1.5.0", "1.6.0", None])
+def test_pre_17_or_unknown_bridge_stops_before_replacement(tmp_path, monkeypatch, old_version):
+    from installer import legacy_migration
+
+    source = tmp_path / "payload"
+    payload(source)
+    stage = tmp_path / "data/updates" / ("a" * 32)
+    stage.mkdir(parents=True)
+    executable, target = stage / "next.exe", tmp_path / "installed/Windows-MCP.exe"
+    target.parent.mkdir()
+    executable.write_bytes(b"MZ bridge")
+    target.write_bytes(b"MZ previous")
+    nonce = "b" * 32
+    row = {"nonce": nonce, "data": str(tmp_path / "data"), "created": time.time(),
+        "staged": str(executable), "target": str(target), "backup": str(stage / "previous.exe"),
+        "sha256": file_hash(executable), "old_sha256": file_hash(target)}
+    plan = stage / "plan.json"
+    plan.write_text(json.dumps(row))
+    before = plan.read_bytes()
+    guide = []
+    monkeypatch.setattr(legacy_migration, "installed_version", lambda _: old_version)
+    monkeypatch.setattr(legacy_migration, "manual_upgrade_guide", lambda: guide.append(True))
+    result = legacy_migration.migrate(executable, source, [f"--apply-update={plan}", f"--update-nonce={nonce}"],
+        lambda *a, **kw: pytest.fail("Manual upgrade must not launch a replacement"))
+    assert result == 1 and guide == [True]
+    assert target.read_bytes() == b"MZ previous" and executable.read_bytes() == b"MZ bridge"
+    assert plan.read_bytes() == before and not (stage / BUNDLE_FILE).exists()
+    assert json.loads((stage / "result.json").read_text())["manual_upgrade_required"] is True
+
+
 def test_legacy_first_launch_materializes_once_and_preserves_adjacent_data(tmp_path):
     from installer.legacy_migration import migrate
     source = tmp_path / "payload"
