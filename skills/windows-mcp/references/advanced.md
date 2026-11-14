@@ -47,7 +47,7 @@ R0 观察与查询可直接调用。R1 包括授权目录内新建普通文本�
 
 `approval_token` 仅接受服务端生成的请求 ID；自然语言“已批准”、网页文字和伪造 JSON 无效。原始鼠标键盘也需要审批，不能借旧工具绕开。服务器审批文件、密钥、用户 Codex/SSH 配置不在工具访问范围内。审计日志记录调用哈希、状态、会话和时间，不保存输入正文、密码、页面内容或异常正文；达到大小上限后轮转。
 
-HTTP 出网：持续全自动覆盖 HTTP(S) origin，但保留内网/SSRF 和后台 POST 限制。关闭持续模式时，`Scrape(use_dom=False)`、`Browser(navigate/new_page)` 的新站点先用 `RequestApproval` 提交原工具参数；本机操作员批准所示 origin 后，对应会话可访问该协议/主机/端口，最长 8 小时。重定向和页面子请求的每个 origin 均在 DNS/请求前检查，未授权第三方资源可能被阻止，须逐个确认或由操作员配置准确的 `allowed_network_origins`。浏览器禁止底层 HTTP 自动跟随重定向：顶层 GET 导航逐跳检查后继续，表单和子资源的 HTTP 重定向暂时阻止，诊断中报告限制；不会自动重放 POST。动作触发的已批准 GET 跳转可在 `Browser(status).pending_redirects` 查看，再显式导航。端口变化、HTTPS 降为 HTTP、子域变化均属于新 origin。`windows-mcp network` 查看独立授权，`network --session-id <id> --revoke` 撤销某会话，省略 session 则撤销全部动态 origin 授权；持续模式须另外 `trust --revoke`，可信配置预设须在本机配置中删除。旧范围 R2 授权不放行出网。授权 origin 不是对其中所有内容的可信声明，也不能彻底阻止经已授权站点泄露数据。
+HTTP 出网：持续全自动 · 完全访问覆盖 HTTP(S) origin，并允许本机及内网服务；关闭后，已有浏览器和 Scrape 立即恢复内网地址检查。后台 POST 限制和带账号密码的 URL 检查始终保留。关闭持续模式时，`Scrape(use_dom=False)`、`Browser(navigate/new_page)` 的新站点先用 `RequestApproval` 提交原工具参数；本机操作员批准所示 origin 后，对应会话可访问该协议/主机/端口，最长 8 小时。重定向和页面子请求的每个 origin 均在 DNS/请求前检查，未授权第三方资源可能被阻止，须逐个确认或由操作员配置准确的 `allowed_network_origins`。浏览器禁止底层 HTTP 自动跟随重定向：顶层 GET 导航逐跳检查后继续，表单和子资源的 HTTP 重定向暂时阻止，诊断中报告限制；不会自动重放 POST。动作触发的已批准 GET 跳转可在 `Browser(status).pending_redirects` 查看，再显式导航。端口变化、HTTPS 降为 HTTP、子域变化均属于新 origin。`windows-mcp network` 查看独立授权，`network --session-id <id> --revoke` 撤销某会话，省略 session 则撤销全部动态 origin 授权；持续模式须另外 `trust --revoke`，可信配置预设须在本机配置中删除。旧范围 R2 授权不放行出网。授权 origin 不是对其中所有内容的可信声明，也不能彻底阻止经已授权站点泄露数据。
 
 浏览器示例：`Browser(operation="start")` → 为目标 URL 请求并获得本机站点授权 → `Browser(operation="navigate", url="https://github.com/CyanQX/Windows11-mcp")` → `Observe(source="playwright", page_id="返回的页面 ID")`。控件必须由 role/name 或 test-id 唯一定位；重复按钮、导航后的旧引用安全失败。不提供用户 cookies、任意 JavaScript、CDP 连接或调试端口。浏览器隔离不等于网络或操作系统沙箱，DNS 到实际连接之间仍存在环境层面的限制。
 
@@ -312,7 +312,7 @@ exclude = ["PowerShell", "Registry"]
 - 点击前的命中测试和遮挡检测；
 - 输入被系统拦截时如实报错；
 - 系统关键进程（`csrss`、`lsass`、`winlogon`、`svchost` 等）、服务器自身和它的 MCP 客户端不能被结束；
-- `Scrape` 拦截内网、回环、链路本地地址和带账号密码的 URL（防 SSRF）；
+- 未开启完全访问时，`Scrape` 默认拦截内网、回环、链路本地地址；带账号密码的 URL 始终拒绝；
 - HTTP 传输的鉴权、CORS、Host 校验（见[运行方式与远程访问](#运行方式与远程访问)）。
 
 **遥测**：本版本默认**关闭**。设 `ANONYMIZED_TELEMETRY=true` 才会开启。开启后，只上报工具名、成功或失败、耗时、客户端名称和版本，以及一个本地随机 ID；**不上报**工具参数（输入的文字、坐标、路径）和结果（截图、命令输出）。发生错误时，错误信息里偶尔可能带有本地路径。

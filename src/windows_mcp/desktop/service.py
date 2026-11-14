@@ -1033,7 +1033,7 @@ class Desktop:
                 runtime = get_runtime()
                 runtime.current().check()
                 runtime.policy.check_network(runtime.current().session_id, current_url)
-                validate_url(current_url)
+                validate_url(current_url, allow_private=runtime.policy.allow_private_browser)
                 response = requests.get(current_url, timeout=10, allow_redirects=False)
                 if not response.is_redirect:
                     break

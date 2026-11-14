@@ -84,7 +84,9 @@ class PlaywrightBackend:
         else:
             policy = self.network_policy
         policy.check_network(session_id, url)
-        await asyncio.wait_for(asyncio.to_thread(validate_url, url, allow_private=self.allow_private), timeout=5)
+        await asyncio.wait_for(asyncio.to_thread(
+            validate_url, url, allow_private=self.allow_private or policy.allow_private_browser,
+        ), timeout=5)
 
     def _add_page(self, browser: ManagedBrowser, page) -> str:
         for page_id, known in browser.pages.items():

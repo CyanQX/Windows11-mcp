@@ -6,6 +6,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'src/**'
       - 'installer/**'
       - 'skills/**'
       - 'scripts/build_setup.py'

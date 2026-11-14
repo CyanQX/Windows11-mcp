@@ -68,7 +68,7 @@ def test_scrape_checks_each_redirect_before_dns_or_http(secured, monkeypatch):
     from windows_mcp.desktop import service
 
     requests, dns = [], []
-    monkeypatch.setattr(service, "validate_url", lambda url: dns.append(url))
+    monkeypatch.setattr(service, "validate_url", lambda url, **kwargs: dns.append(url))
     monkeypatch.setattr(service.requests, "get", lambda url, **kwargs: requests.append(url) or SimpleNamespace(
         is_redirect=True, headers={"Location": "https://unapproved.test/?data=private"}))
     with runtime.bind("local") as session:
@@ -86,6 +86,40 @@ async def test_browser_checks_origin_before_dns_even_when_r2_trust_is_active(sec
     backend = playwright_backend.PlaywrightBackend(network_policy=runtime.policy)
     with pytest.raises(PolicyBlocked, match="Network origin"):
         await backend._url("https://unapproved.test", "owner")
+
+
+async def test_existing_browser_and_scrape_follow_full_access_enable_and_revoke(secured):
+    from windows_mcp.browser.playwright_backend import PlaywrightBackend
+    from windows_mcp.desktop.service import Desktop
+    from unittest.mock import patch
+
+    runtime, _, _ = secured
+    backend = PlaywrightBackend(network_policy=runtime.policy)
+    url = "http://127.0.0.1:8765/"
+    # Keep this origin independently authorized so revocation must also restore
+    # private-address protection, rather than merely rejecting the origin.
+    runtime.policy.network.grant("owner", [url])
+    with pytest.raises(ValueError, match="addresses are blocked"):
+        await backend._url(url, "owner")
+    runtime.policy.trust.grant_automatic(full_access=True)
+    await backend._url(url, "owner")
+    from windows_mcp.tools.semantic import _browser
+
+    opened_while_full = _browser(runtime)
+    await opened_while_full._url(url, "owner")
+    response = SimpleNamespace(is_redirect=False, text="<p>local service</p>", raise_for_status=lambda: None)
+    with runtime.bind("local") as session, patch("windows_mcp.desktop.service.requests.get", return_value=response) as http:
+        runtime.policy.network.grant(session.session_id, [url])
+        assert "local service" in Desktop.scrape(SimpleNamespace(), url)
+        assert http.call_count == 1
+        runtime.policy.trust.revoke()
+        with pytest.raises(ValueError, match="addresses are blocked"):
+            Desktop.scrape(SimpleNamespace(), url)
+        assert http.call_count == 1
+    with pytest.raises(ValueError, match="addresses are blocked"):
+        await backend._url(url, "owner")
+    with pytest.raises(ValueError, match="addresses are blocked"):
+        await opened_while_full._url(url, "owner")
 
 
 def test_network_allowlist_round_trips_and_does_not_disable_private_address_protection(tmp_path):

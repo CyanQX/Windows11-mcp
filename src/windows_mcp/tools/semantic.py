@@ -29,7 +29,7 @@ def _browser(runtime):
     if runtime.browser is None:
         from windows_mcp.browser.playwright_backend import PlaywrightBackend
 
-        runtime.browser = PlaywrightBackend(allow_private=runtime.policy.allow_private_browser, network_policy=runtime.policy)
+        runtime.browser = PlaywrightBackend(network_policy=runtime.policy)
     return runtime.browser
 
 

@@ -151,7 +151,7 @@ profile 只决定公布哪些工具，不授予额外权限。精简 profile 的
 | HTTP(S) 出网 | 持续全自动覆盖 HTTP(S) origin；关闭时按协议、主机、端口独立授权 |
 | 文件 | 完全访问时可访问当前 Windows 账户允许的文件；关闭时恢复 workspace_roots，签名审批存储保持保护 |
 
-浏览器导航、重定向和子资源均检查网络策略；内网/SSRF 保护保留，顶层 GET 可逐跳检查后继续，表单和子资源的 HTTP 重定向当前会被阻止。真正有待决定的人工审批才暂停 MCP 桌面输入，空页面或已被持续全自动覆盖的旧请求不会暂停；审批设置本身及所属弹窗始终禁止 MCP 操作。已进入 UIA provider 的动作无法由 Python 强制取消；`ACTION_IN_PROGRESS` 后用 Session 查询完成，独立核对后再 acknowledge，cancel/resume 不隐式清除未决动作。
+浏览器导航、重定向和子资源均检查网络策略；关闭完全访问时默认拦截内网地址，开启后允许访问本机及内网 HTTP(S) 服务，关闭后立即恢复地址检查；带账号密码的 URL 仍会拒绝。顶层 GET 可逐跳检查后继续，表单和子资源的 HTTP 重定向当前会被阻止。真正有待决定的人工审批才暂停 MCP 桌面输入，空页面或已被持续全自动覆盖的旧请求不会暂停；审批设置本身及所属弹窗始终禁止 MCP 操作。已进入 UIA provider 的动作无法由 Python 强制取消；`ACTION_IN_PROGRESS` 后用 Session 查询完成，独立核对后再 acknowledge，cancel/resume 不隐式清除未决动作。
 
 这些措施降低本机自动化风险，不构成操作系统沙箱；普通权限无法绕过 UAC、安全桌面、锁屏或管理员窗口边界。默认关闭 PostHog 遥测。完整处理规则与离线政策见管理器“关于”和 [按需参考](skills/windows-mcp/references/advanced.md)。
 
