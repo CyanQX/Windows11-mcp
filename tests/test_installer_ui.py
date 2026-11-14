@@ -612,6 +612,79 @@ def test_invalid_legacy_wake_does_not_block_signed_approval_poll(monkeypatch, tm
 
 
 @pytest.fixture
+def isolated_closing_manager(tmp_path):
+    app = application()
+    settings = SettingsService(tmp_path / "home", env={"LOCALAPPDATA": str(tmp_path / "home/appdata")})
+    manager = MainWindow(ROOT, settings, Path(sys.executable), service=make_service(tmp_path / "service"), auto_scan=False)
+    manager.show()
+    app.processEvents()
+    yield manager
+    manager.close()
+    app.processEvents()
+
+
+def test_one_close_waits_without_modal_and_exits_after_chained_safe_work(isolated_closing_manager, tmp_path):
+    manager = isolated_closing_manager
+    entered, release, rollback_entered, rollback_release = (threading.Event() for _ in range(4))
+    marker = tmp_path / "completed.txt"
+
+    def work():
+        entered.set()
+        assert release.wait(5)
+        return True
+
+    def rollback():
+        rollback_entered.set()
+        assert rollback_release.wait(5)
+        marker.write_text("safely completed")
+        return True
+
+    try:
+        manager.run(work, lambda _: manager.run(rollback, rescan=False), rescan=False)
+        assert entered.wait(3)
+        assert not manager.close()  # Returns immediately, without a message box.
+        assert manager.isVisible() and manager.close_requested and not marker.exists()
+        release.set()
+        deadline = time.monotonic() + 3
+        while not rollback_entered.is_set() and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert rollback_entered.is_set() and manager.isVisible() and manager.close_requested
+        rollback_release.set()
+        deadline = time.monotonic() + 3
+        while manager.isVisible() and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert not manager.isVisible() and not manager.busy
+        assert marker.read_text() == "safely completed"
+    finally:
+        release.set()
+        rollback_release.set()
+
+
+def test_failed_work_retains_error_instead_of_silently_closing(isolated_closing_manager, monkeypatch):
+    manager = isolated_closing_manager
+    entered, release = threading.Event(), threading.Event()
+    errors = []
+    monkeypatch.setattr(manager, "error", lambda title, message: errors.append((title, message)))
+
+    def fail():
+        entered.set()
+        assert release.wait(5)
+        raise RuntimeError("preserved recovery information")
+
+    try:
+        manager.run(fail, rescan=False)
+        assert entered.wait(3)
+        assert not manager.close() and manager.close_requested
+        release.set()
+        deadline = time.monotonic() + 3
+        while manager.busy and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert errors and manager.isVisible() and not manager.busy and not manager.close_requested
+    finally:
+        release.set()
+
+
+@pytest.fixture
 def operator_dialog(window, tmp_path, monkeypatch):
     from installer.ui.operator_dialog import OperatorCenter
     from windows_mcp.infrastructure.approvals import ApprovalStore

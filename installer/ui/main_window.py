@@ -8,7 +8,7 @@ import traceback
 
 from PySide6.QtCore import QTimer, QVariantAnimation, QEasingCurve, Signal
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QAbstractButton, QMainWindow, QWidget, QMessageBox, QApplication, QScrollArea, QFrame
+from PySide6.QtWidgets import QAbstractButton, QMainWindow, QWidget, QApplication, QScrollArea, QFrame
 
 from installer.diagnostics import EventLog
 from installer.health import HealthChecker
@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         self.theme = Theme(settings, base)
         self.theme.apply()
         self.events, self.busy, self.selection = queue.Queue(), False, SelectionModel()
+        self.close_requested = False
         self.service = service
         self.approval_store, self.wake_path = approval_store, wake_path
         self.wake_signal, self.review_pending = wake_signal, False
@@ -228,7 +229,7 @@ class MainWindow(QMainWindow):
             self.progress_animation.setEndValue(target)
             self.progress_animation.setDuration(260)
             self.progress_animation.start()
-        self.status_label.setText(self.task_progress.message)
+        self.status_label.setText(("正在安全退出 · " if self.close_requested else "") + self.task_progress.message)
 
     def poll(self):
         self.poll_activation()
@@ -267,6 +268,7 @@ class MainWindow(QMainWindow):
                 self.operation_changed.emit(False)
                 self.install_cancel = None
                 if kind == "error":
+                    self.close_requested = False
                     self.task_progress.complete(False)
                     self.task_strip.complete(False)
                     self.error("操作未完成", value)
@@ -274,6 +276,8 @@ class MainWindow(QMainWindow):
                     result, states, callback = value
                     cancelled = isinstance(result, list) and bool(result) and all(isinstance(item, dict) and item.get("cancelled") for item in result)
                     failed = result is False or isinstance(result, list) and any(isinstance(item, dict) and item.get("ok") is False and not item.get("cancelled") for item in result)
+                    if failed:
+                        self.close_requested = False
                     self.task_progress.complete(not failed)
                     if cancelled:
                         self.task_progress.message = "安装已撤销，已恢复到安装前"
@@ -287,6 +291,8 @@ class MainWindow(QMainWindow):
                         except Exception as exc:
                             self.error("结果页面未能打开", str(exc))
                 self.update_controls()
+                if self.close_requested and not self.busy:
+                    QTimer.singleShot(0, self.close)
                 progress_changed = True
         if logs:
             self.logs.append_rows(logs)
@@ -466,9 +472,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.busy:
-            QMessageBox.information(self, "正在安全处理", "请等待当前维护任务完成，避免中断写入或回滚。")
+            # Keep the original close request without a nested modal event loop.
+            # Completion (including a chained rollback) closes us exactly once.
+            self.close_requested = True
+            self.render_progress()
             event.ignore()
             return
+        self.close_requested = False
         try:
             self.settings.save({**self.settings.value, "layout": self.workspace.snapshot()})
         except Exception as exc:
