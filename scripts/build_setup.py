@@ -21,6 +21,10 @@ def main():
     parser.add_argument("--with-ocr", action="store_true", help="Bundle optional OCR bindings; an engine/package identity is still required")
     parser.add_argument("--compat-out", type=Path, help="Also build the one-time bridge used by older portable updaters")
     args = parser.parse_args()
+    # PyInstaller resolves resource paths relative to the spec directory.
+    args.out, args.work = args.out.resolve(), args.work.resolve()
+    if args.compat_out:
+        args.compat_out = args.compat_out.resolve()
     if sys.platform != "win32":
         parser.error("Windows EXE must be built on Windows")
     import struct

@@ -29,6 +29,14 @@ def main():
         bundle = Path(temporary) / portable_root(version)
         executable = bundle / "Windows-MCP.exe"
         assert hashlib.sha256(executable.read_bytes()).hexdigest() == result["payload_sha256"]
+        import win32api
+        language, codepage = win32api.GetFileVersionInfo(str(executable), r"\VarFileInfo\Translation")[0]
+        key = rf"\StringFileInfo\{language:04x}{codepage:04x}"
+        product = win32api.GetFileVersionInfo(str(executable), key + r"\ProductName")
+        file_version = win32api.GetFileVersionInfo(str(executable), key + r"\ProductVersion")
+        assert product == "Actilo" and file_version in {version, version + ".0"}
+        result["executable_product"] = product
+        result["executable_version"] = file_version
         contract = Path(temporary) / "portable-contract.json"
         completed = subprocess.run([str(executable), "--portable-check", str(contract)], timeout=90)
         if completed.returncode:
