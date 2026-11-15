@@ -9,10 +9,16 @@ from installer.storage import ProcessLock, private_directory
 from windows_mcp.infrastructure.runtime_paths import CONFIG_DIRNAME
 
 TITLE = "本次更新"
-CONTENT = """Actilo v1.9.11｜修复安装完成后的启动时序。
+CONTENT = """Actilo v1.9.13｜统一核心模块，减少重复逻辑。
 
-🔄 安装验证完成后再启动
-修复更新时提前打开管理面板，误弹“安装／恢复尚未完成”的问题。安装器统一完成 Skill、MCP 与主程序同步和验证后，才启动一次管理面板，无须再次同步组件。
+🧩 核心模块整理
+拆分命令入口和服务生命周期，统一工具注册、参数解析、权限预处理、桌面区域裁剪与节点元数据处理，改善代码维护与一致性。
+
+💾 安装与授权数据写入
+共用原子写入，保留临时文件排他创建、落盘同步和失败清理，防止覆盖其他写入者的数据。
+
+🔄 安装与更新继续自动完成
+安装器同步并验证 Skill、MCP 与主程序后，再启动一次管理面板。受管组件随版本升级，无须手动操作组件升级。
 
 此前重大更新的功能继续保留：
 

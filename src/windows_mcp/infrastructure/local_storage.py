@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-import secrets
+import tempfile
 import time
 from pathlib import Path
 
@@ -13,16 +13,21 @@ def atomic_write_bytes(path: Path, content: bytes, *, fsync: bool = False) -> No
 
     The temporary sibling keeps the ``.tmp`` suffix that ``ApprovalStore.prune`` sweeps.
     """
-    temporary = path.with_suffix(f".{secrets.token_hex(8)}.tmp")
+    temporary = None
     try:
-        with temporary.open("wb") as stream:
+        # Exclusive creation preserves other writers' files, even on a name
+        # collision, and closes the handle before Windows replaces the target.
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".actilo-",
+                                         suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
             stream.write(content)
             if fsync:
                 stream.flush()
                 os.fsync(stream.fileno())
         os.replace(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def private_directory(path: Path) -> None:
